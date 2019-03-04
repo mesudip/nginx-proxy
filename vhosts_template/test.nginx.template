@@ -1,0 +1,9 @@
+{%for server in virtual_servers%}
+server{
+    listen 80;
+    server_name {{server_name}};
+    location {{location}} {
+        proxy_pass http://{{host}}:{{port}}/{{path}};
+    }
+}
+{%endfor%}

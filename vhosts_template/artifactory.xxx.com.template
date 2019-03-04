@@ -1,0 +1,20 @@
+server {
+    server_name artifactory.xxx.com;
+    listen;
+    if ($http_x_forwarded_proto = '') {
+        set $http_x_forwarded_proto  $scheme;
+    }
+    rewrite ^/$ /webapp/ redirect;
+    rewrite ^/?(/webapp)?$ /webapp/ redirect;
+    chunked_transfer_encoding on;
+    client_max_body_size 0;
+    location / {
+        proxy_read_timeout  900;
+        proxy_cookie_path   ~*^/.* /;
+        if ( $request_uri ~ ^/(.*)$ ) {
+            proxy_pass     http://{{upstream}}/artifactory/$1;
+        }
+        proxy_pass         http://{{upstream}}/artifactory/;
+        proxy_redirect off;
+    }
+}

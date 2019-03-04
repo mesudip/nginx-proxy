@@ -1,0 +1,3 @@
+docker==3.7.0
+Jinja2==2.10
+acme-nginx==0.2.0
