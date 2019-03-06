@@ -6,7 +6,8 @@ from jinja2 import Template
 import sys
 import json
 import copy
-
+from subprocess import call, run
+import subprocess
 
 class WebServer():
     def __init__(self, client: DockerClient, *args):
@@ -14,17 +15,42 @@ class WebServer():
         self.containers = set()
         self.services = set()
         self.networks = {}
-        network = client.networks.get("frontend")
-        self.conf_file_name="/etc/nginx/sites-available/default"
-        self.networks[network.id] = network
-        self.networks[network.short_id] = network
-        self.networks[network.name] = network
+        self.conf_file_name="/etc/nginx/conf.d/default.conf"
+
         self.host_file="/etc/hosts"
         self.hosts = {}
         file = open("default.conf.template")
         self.template = Template(file.read())
         file.close()
+        self.learn_yourself()
         self.scan_live_containers()
+
+    def learn_yourself(self):
+        try:
+            file=open("/proc/self/cgroup")
+            self.id=[l for l in file.read().split("\n") if l.find("cpu") != -1][0].split("/")[-1]
+            self.container=self.client.containers.get(self.id)
+            self.networks=[a for a in self.container.attrs["NetworkSettings"]["Networks"]["frontend"].keys()]
+            self.networks.append([ self.client.networks.get(a).id for a in self.networks])
+            file.close()
+        except Exception as e:
+            network = self.client.networks.get("frontend")
+            self.networks[network.id] = network
+            self.networks[network.short_id] = network
+            self.networks[network.name] = network
+            print("Couldn't determine it's own id from the list of containers",file=sys.stderr)
+
+    def reload_nginx(self):
+        test_result=subprocess.run(["nginx", "-t"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if test_result.returncode is not 0:
+            print("Nginx configtest failed!",file=sys.stderr)
+            print(test_result.stderr.decode("utf-8"),file=sys.stderr)
+        else:
+            reload_result=subprocess.run(["nginx","-s","reload"],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+            if reload_result is not 0:
+                print("This is chaos",file=sys.stderr)
+                print(reload_result.stderr.decode("utf-8"),file=sys.stderr)
+
 
     def scan_live_containers(self):
         containers = self.client.containers.list()
@@ -85,6 +111,7 @@ class WebServer():
         file=open(self.conf_file_name,"w")
         file.write(output)
         file.close()
+        self.reload_nginx()
         # l=[ x for x in output.split("\n") if not (x.startswith("//") and len(x) <5 )]
         #
         print(output)

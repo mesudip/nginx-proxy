@@ -56,4 +56,4 @@ server{
          proxy_redirect $scheme://$http_host{% if location.path!="/" %}{{ location.path }}{% endif%} $scheme://$http_host{{location.location}};
         {% endif %}
     }{% endfor %}
-    }{% endfor %}
+}{% endfor %}
