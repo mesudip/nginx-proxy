@@ -35,20 +35,21 @@ class Location():
 
 
 class Host():
-    def __init__(self, client: DockerClient, id, network, external_hostname, external_port):
+    def __init__(self, client: DockerClient, id, network, external_hostname, external_port,ssl_host=None):
         self.client = client
         self.id = id
         self.network = network
         self.port = external_port
         self.server_name = external_hostname
         self.locations = {}
+        self.ssl_host=ssl_host
 
     def set_external_parameters(self, host, port):
         self.server_name = host
         self.port = port
 
-    def add_location(self, host_id, location, internal_host, internal_port, internal_path=None, internal_scheme=None):
-        self.locations[location] = Location(location, host_id, internal_host, internal_port, internal_path,
+    def add_location(self, host_id, location, container_host, container_port, container_path=None, internal_scheme=None):
+        self.locations[location] = Location(location, host_id, container_host, container_port, container_path,
                                             internal_scheme)
 
     def __eq__(self, other):
@@ -108,20 +109,19 @@ class Host():
         # first we get the list of tuples each containing data in form (key, value)
         env_list = [x.split("=", 1) for x in container.attrs['Config']['Env']]
         # convert the environment list into map
-        env_map = {x[0]: x[1] for x in env_list if len(x) is 2}
+        env_map = {x[0]: x[1].strip() for x in env_list if len(x) is 2 and x[1].strip()}
 
         # see if VIRTUAL_HOST entry is present
         if "VIRTUAL_HOST" in env_map:
-            host_entry = env_map["VIRTUAL_HOST"].strip()
-            if host_entry:
-                external_host, internal_host = Host._parse_host_entry(host_entry)
-            else:
-                return None
+             external_host, internal_host = Host._parse_host_entry(env_map["VIRTUAL_HOST"])
         else:
             return None
+        ssl_host=env_map["LETSENCRYPT_HOST"] if "LETSENCRYPT_HOST" in env_map else None
+
+
         # now let's see the legacy VIRTUAL_PORT if port is not provided in the VIRTUAL_HOST entry, we use this entry.
         if (not internal_host["port"]) and "VIRTUAL_PORT" in env_map:
-            internal_host["port"] = env_map["VIRTUAL_PORT"].strip()
+            internal_host["port"] = env_map["VIRTUAL_PORT"]
 
         # if the  legacy VIRTUAL_PORT is also not provided let's try using the exposed port int he host.
         if (not internal_host["port"]) and len(network_settings["Ports"]) is 1:
@@ -131,21 +131,22 @@ class Host():
         for name, detail in network_settings["Networks"].items():
             if detail["NetworkID"] in known_networks:
                 internal_host["host"] = detail["Aliases"][len(detail["Aliases"]) - 1]
-                ipAddress = detail["IPAddress"]
+                ip_address = detail["IPAddress"]
                 network = name
                 break
         else:
             return
-        host = Host(container.client,
-                    container.id if service_id is None else service_id,
-                    network,
-                    external_host["host"] if external_host["host"] else container.id,
-                    external_host["port"] if external_host["port"] else "80")
+        host = Host(client=container.client,
+                    id=container.id if service_id is None else service_id,
+                    network=network,
+                    external_hostname=external_host["host"] if external_host["host"] else container.id,
+                    external_port=external_host["port"] if external_host["port"] else "80",
+                    ssl_host=ssl_host)
         host.add_location(host.id,
-                          external_host["location"] if external_host["location"] else "/",
-                          internal_host["host"],
-                          internal_host["port"] if internal_host["port"] else "80",
-                          internal_host["location"] if internal_host["location"] else "/", )
+                          location=external_host["location"] if external_host["location"] else "/",
+                          container_host=internal_host["host"],
+                          container_port=internal_host["port"] if internal_host["port"] else "80",
+                          container_path=internal_host["location"] if internal_host["location"] else "/", )
         return host
 
     def isManaged(self):
