@@ -29,6 +29,10 @@ hosts = containers.WebServer(client)
 def eventLoop():
     client.containers.list()
     for e in client.events():
+        try:
+            e = e.decode()
+        except AttributeError:
+            pass
         event = json.loads(e)
         eventType = event["Type"]
 

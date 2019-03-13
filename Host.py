@@ -130,7 +130,8 @@ class Host():
         known_networks = set(known_networks)
         for name, detail in network_settings["Networks"].items():
             if detail["NetworkID"] in known_networks:
-                internal_host["host"] = detail["Aliases"][len(detail["Aliases"]) - 1]
+#              internal_host["host"] = detail["Aliases"][len(detail["Aliases"]) - 1]
+                internal_host["host"] = detail["IPAddress"]
                 ip_address = detail["IPAddress"]
                 network = name
                 break

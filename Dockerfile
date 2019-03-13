@@ -5,4 +5,4 @@ COPY ./requirements.txt /requirements.txt
 RUN pip install --no-cache-dir -r /requirements.txt && rm -f /requirements.txt
 COPY . /app/
 WORKDIR /app
-CMD ["python3", "main.py"]
+CMD ["python3","-u" ,"main.py"]

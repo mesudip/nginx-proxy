@@ -11,7 +11,7 @@ class WebServer():
     def __init__(self, client: DockerClient, *args):
         self.client = client
         self.nginx = Nginx("/etc/nginx/conf.d/default.conf")
-        self.ssl=SSL("/etc/ssl/private","/etc/nginx/conf.d")
+        self.ssl=SSL("/etc/ssl/private","/etc/nginx/conf.d/acme-nginx.conf")
         self.containers = {}
         self.services = set()
         self.networks = {}
@@ -29,14 +29,14 @@ class WebServer():
                 print("ERROR: Config test succeded but nginx failed to start",file=sys.stderr)
                 print("Exiting .....",file=sys.stderr)
             self.reload()
-        elif not self.reload(forced=True):
-            print("ERROR: Existing nginx configuration has error", file=sys.stderr)
-            print("ERROR: New generated configuration also has error",file=sys.stderr)
-            print("Please check the configuration of your containers and restart this container",file=sys.stderr)
-            print("EXITING .....",file=sys.stderr)
-            exit(1)
         else:
-            print("WARNING: Existing nginx configuration had error, so it was overridden",file=sys.stderr)
+            print ("ERROR: Existing nginx configuration has error, trying to override with new configuration")
+            if not self.reload(forced=True):
+                print("ERROR: Existing nginx configuration has error", file=sys.stderr)
+                print("ERROR: New generated configuration also has error",file=sys.stderr)
+                print("Please check the configuration of your containers and restart this container",file=sys.stderr)
+                print("EXITING .....",file=sys.stderr)
+                exit(1)
 
 
     def learn_yourself(self):
@@ -71,8 +71,6 @@ class WebServer():
                         new_host.locations[location] = location_content
                 new_host.ssl_host = existing_host.ssl_host if existing_host.ssl_host is not None else new_host.ssl_host
             self.hosts[new_host.server_name] = new_host
-            if new_host.ssl_host:
-                self.ssl.registerCertificate(new_host.ssl_host)
 
             return True
         return False
@@ -104,6 +102,8 @@ class WebServer():
         hosts = set()
         for host in host_list:
             host.locations = list(host.locations.values())
+            if host.ssl_host:
+                self.ssl.registerCertificate(host.ssl_host)
         output = self.template.render(virtual_servers=host_list)
         if forced:
             return self.nginx.forced_update(output)

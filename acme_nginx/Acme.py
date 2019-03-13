@@ -62,7 +62,7 @@ class Acme(object):
 
     def _reload_nginx(self):
         """ signal nginx master process to reload configuration """
-        if subprocess.run(["nginx", "-s", "reload"], stdout=subprocess.DEVNULL).returncode is not 0:
+        if subprocess.run(["nginx", "-s", "reload"]).returncode is not 0:
             raise Exception("Nginx is either not running or configtest failed!")
 
     def _write_vhost(self):
