@@ -103,7 +103,7 @@ class WebServer():
         for host in host_list:
             host.locations = list(host.locations.values())
             if host.ssl_host:
-                self.ssl.registerCertificate(host.ssl_host)
+                self.ssl.register_certificate(host.ssl_host)
         output = self.template.render(virtual_servers=host_list)
         if forced:
             return self.nginx.forced_update(output)

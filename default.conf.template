@@ -1,57 +1,46 @@
-# If we receive X-Forwarded-Proto, pass it through; otherwise, pass along the
-# scheme used to connect to this server
-map $http_x_forwarded_proto $proxy_x_forwarded_proto {
-  default $http_x_forwarded_proto;
-  ''      $scheme;
-}
-# If we receive X-Forwarded-Port, pass it through; otherwise, pass along the
-# server port the client connected to
-map $http_x_forwarded_port $proxy_x_forwarded_port {
-  default $http_x_forwarded_port;
-  ''      $server_port;
-}
-# If we receive Upgrade, set Connection to "upgrade"; otherwise, delete any
-# Connection header that may have been passed to this server
-map $http_upgrade $proxy_connection {
-  default upgrade;
-  '' close;
-}
-# Default dhparam
-ssl_dhparam /etc/nginx/dhparam/dhparam.pem;
-# Set appropriate X-Forwarded-Ssl header
-map $scheme $proxy_x_forwarded_ssl {
-  default off;
-  https on;
-}
-gzip_types text/plain text/css application/javascript application/json application/x-javascript text/xml application/xml application/xml+rss text/javascript;
-log_format vhost '$host $remote_addr - $remote_user [$time_local] '
-                 '"$request" $status $body_bytes_sent '
-                 '"$http_referer" "$http_user_agent"';
-access_log off;
-resolver 127.0.0.11;
-# HTTP 1.1 support
-proxy_http_version 1.1;
-proxy_buffering off;
-proxy_set_header Host $http_host;
-proxy_set_header Upgrade $http_upgrade;
-proxy_set_header Connection $proxy_connection;
-proxy_set_header X-Real-IP $remote_addr;
-proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-proxy_set_header X-Forwarded-Proto $proxy_x_forwarded_proto;
-proxy_set_header X-Forwarded-Ssl $proxy_x_forwarded_ssl;
-proxy_set_header X-Forwarded-Port $proxy_x_forwarded_port;
-# Mitigate httpoxy attack (see README for details)
-proxy_set_header Proxy "";
-
 {% for server in virtual_servers%}
+
 server{
-    listen 80;
-    server_name {{ server.server_name }};
+        listen 80;
+        server_name {{ server.server_name }};
+    {% if server.ssl_host %}
+        return 301 https://$host$request_uri;
+    {% else %}
+        {% for location in server.locations %}
+        location {{ location.location }} {
+            proxy_pass http://{{ location.host }}:{{ location.port }}{{ location.path }};
+            {% if location.location != '/' %}
+             proxy_redirect $scheme://$http_host{% if location.path!="/" %}{{ location.path }}{% endif%} $scheme://$http_host{{location.location}};
+            {% endif %}
+        }{% endfor %}
+     {% endif %}
+ }
+
+{% if server.ssl_host %}
+        server_name {{ server.server_name }};
+        listen 443 ssl http2 ;
+        access_log /var/log/nginx/access.log;
+        ssl_protocols TLSv1 TLSv1.1 TLSv1.2 TLSv1.3;
+        ssl_ciphers 'ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES128-SHA:ECDHE-ECDSA-AES256-SHA384:ECDHE-ECDSA-AES256-SHA:ECDHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA:DHE-RSA-AES256-SHA256:DHE-RSA-AES256-SHA:AES128-GCM-SHA256:AES256-GCM-SHA384:AES128-SHA256:AES256-SHA256:AES128-SHA:AES256-SHA:!DSS';
+        ssl_prefer_server_ciphers on;
+        ssl_session_timeout 5m;
+        ssl_session_cache shared:SSL:50m;
+        ssl_session_tickets off;
+        ssl_certificate /etc/ssl/certs/{{ server.ssl_host }}.crt;
+        ssl_certificate_key /etc/ssl/private/zabbix.sireto.com.key;
+        ssl_stapling on;
+        ssl_stapling_verify on;
+        add_header Strict-Transport-Security "max-age=31536000" always;
+        include /etc/nginx/vhost.d/default;
     {% for location in server.locations %}
-    location {{ location.location }} {
-        proxy_pass http://{{ location.host }}:{{ location.port }}{{ location.path }};
-        {% if location.location != '/' %}
-         proxy_redirect $scheme://$http_host{% if location.path!="/" %}{{ location.path }}{% endif%} $scheme://$http_host{{location.location}};
-        {% endif %}
+        location {{ location.location }} {
+            proxy_pass http://{{ location.host }}:{{ location.port }}{{ location.path }};
+            {% if location.location != '/' %}
+             proxy_redirect $scheme://$http_host{% if location.path!="/" %}{{ location.path }}{% endif%} $scheme://$http_host{{location.location}};
+            {% endif %}
     }{% endfor %}
-}{% endfor %}
+
+{% endif %}
+
+{% endfor %}
+

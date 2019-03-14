@@ -62,7 +62,7 @@ def process_container_event(action, event):
 def process_network_event(action, event):
     if action == "create":
         print("network created")
-    elif event["Actor"]["Attributes"]["container"]:
+    elif "container" in event["Actor"]["Attributes"]:
         if action == "disconnect":
             print("network disconnect")
             hosts.disconnect(network=event["Actor"]["ID"],container=event["Actor"]["Attributes"]["container"],scope=event["scope"])
