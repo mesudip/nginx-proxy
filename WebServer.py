@@ -11,7 +11,7 @@ class WebServer():
     def __init__(self, client: DockerClient, *args):
         self.client = client
         self.nginx = Nginx("/etc/nginx/conf.d/default.conf")
-        self.ssl=SSL("/etc/ssl/private","/etc/nginx/conf.d/acme-nginx.conf")
+        self.ssl=SSL("/etc/ssl","/etc/nginx/conf.d/acme-nginx.conf")
         self.containers = {}
         self.services = set()
         self.networks = {}
