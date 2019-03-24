@@ -85,7 +85,7 @@ class WebServer():
         if container["id"] in self.containers:
             del self.containers[container]
             for host in self.hosts.values():
-                a:Host=host
+                a: Host = host
                 if a.remove_container(self.containers[container]):
                     break
             else:
@@ -104,23 +104,27 @@ class WebServer():
         now = datetime.datetime.now()
         for host in host_list:
             host.locations = list(host.locations.values())
-            host.upstreams={}
-            for i,location in enumerate(host.locations):
+            host.upstreams = {}
+            for i, location in enumerate(host.locations):
                 location.container = list(location.containers)[0]
-                if len(location.containers)>1:
-                    location.upstream=host.hostname+"-"+host.port+"-"+str(i+1)
-                    host.upstreams[location.upstream]=location.containers
+                if len(location.containers) > 1:
+                    location.upstream = host.hostname + "-" + host.port + "-" + str(i + 1)
+                    host.upstreams[location.upstream] = location.containers
                 else:
-                    location.upstream=False
-            host.upstreams=[ {"id":x,"containers":y} for x,y in host.upstreams.items()]
+                    location.upstream = False
+            host.upstreams = [{"id": x, "containers": y} for x, y in host.upstreams.items()]
             if host.scheme == "https":
+                if host.port == 80 or host.port == 443 or host.port is None:
+                    host.ssl_redirect = True
+                    host.port = 443
+                host.ssl_host = True
                 expiry = self.ssl.expiry_time(host.hostname)
                 remain = expiry - now
                 if remain.days < 5:
                     self.ssl.register_certificate(host.hostname)
-                    self.hosts[host].ssl_expiry=self.ssl.expiry_time(host.hostname)
+                    self.hosts[host].ssl_expiry = self.ssl.expiry_time(host.hostname)
                 else:
-                    self.hosts[host].ssl_expiry=expiry
+                    self.hosts[host].ssl_expiry = expiry
                 if next_reload:
                     if next_reload > expiry:
                         next_reload = expiry

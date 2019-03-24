@@ -1,3 +1,6 @@
+from urllib.parse import urlparse
+
+
 class UnconfiguredContainer(Exception):
     pass
 
@@ -43,39 +46,25 @@ class Container():
 
         def split_url(entry_string: str):
             # Tried parsing urls with urllib.parse.urlparse but it doesn't work quiet
-            # well when scheme( eg: "https://") is missing
+            # well when scheme( eg: "https://") is missing eg "example.com"
+            # it says that example.com is path not the hostname.
+            split_scheme = entry_string.strip().split("://", 1)
+            scheme, host_part = split_scheme if len(split_scheme) is 2 else (None, split_scheme[0])
+            host_entries = host_part.split("/", 1)
+            hostport, location = (host_entries[0], "/" + host_entries[1]) if len(host_entries) is 2 else (
+            host_entries[0], None)
+            hostport_entries = hostport.split(":", 1)
+            host, port = hostport_entries if len(hostport_entries) is 2 else (hostport_entries[0], None)
 
-            # split the host entry string from the first occurance of "/"
-            entries = entry_string.strip().split("/", 1)
-
-            if len(entries) is 1:
-                # this means that the host string has no "/" in it.
-                # This is the case when only hostname is given without location.
-                location = None
-            else:  # we have the location entry and it's the second part in the splitted list.
-                location = "/" + entries[1]
-
-            # now lets again split the host part to find if it contains a port definition.
-            host_entries = entries[0].split(":")
-            if len(host_entries) is 1:  # means that it doesn't contain the port information it's only the host part.
-                port = None
-            else:
-                port = host_entries[1] if len(host_entries[1].strip()) > 0 else None
-
-            host = host_entries[0] if len(host_entries[0].strip()) > 0 else None
             return {
-                "scheme": "http",
-                "host": host,
+                "scheme": scheme,
+                "host": host if host else None,
                 "port": port,
-                "location": location if location else ""
+                "location": location
             }
-
         host_list = entry_string.strip().split("->")
-        external_entry = split_url(host_list[0])
-        internal_entry = {"scheme": "http", "host": None, "port": None, "location": ""} if len(
-            host_list) is 1 else split_url(
-            host_list[1])
-        return external_entry, internal_entry
+        external, internal = host_list if len(host_list) is 2 else (host_list[0], "")
+        return split_url(external), split_url(internal)
 
     @staticmethod
     def get_contaier_info(container, service_id: str = None, known_networks: set = {}):
@@ -121,12 +110,12 @@ class Container():
             raise UnreachableNetwork()
 
         c.address = internal_host["host"]
-        c.scheme = "http"
+        c.scheme = internal_host["scheme"] if internal_host["scheme"] else "http"
         c.port = internal_host["port"] if internal_host["port"] else "80"
         c.path = internal_host["location"] if internal_host["location"] else "/"
 
         return (
-            "https" if ssl_host else "http",
+            external_host["scheme"] if external_host["scheme"] else "http",
             external_host["host"] if external_host["host"] else container.id,
             external_host["port"] if external_host["port"] else "80",
             external_host["location"] if external_host["location"] else "/",

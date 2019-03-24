@@ -2,21 +2,10 @@
     upstream {{ upstream.id }} { {% for container in upstream.containers %}
         server  {{ container.address }}:{{ container.port }};   {% endfor %}
     }{% endfor %}
-
-server{
-        listen 80;
-        server_name {{ server.hostname }};{% if server.ssl_host %}
-        return 301 https://$host$request_uri;{% else %}{% for location in server.locations %}
-        location {{ location.name }} { {% if location.upstream %}
-                proxy_pass {{ location.scheme }}://{{ location.upstream }}{{location.container.path}};{% else %}
-                proxy_pass {{location.scheme }}://{{ location.container.address }}:{{ location.container.port }}{{ location.container.path }};{% endif %}{% if location.name != '/' %}
-            proxy_redirect $scheme://$http_host{% if location.container.path!="/" %}{{ location.container.path }}{% endif%} $scheme://$http_host{{location.name}};{% endif %}
-        }{% endfor %}{% endif %}
- }
 {% if server.ssl_host %}
 server{
         server_name {{ server.hostname }};
-        listen 443 ssl http2 ;
+        listen {[ server.port }} ssl http2 ;
         access_log /var/log/nginx/access.log;
         ssl_protocols TLSv1 TLSv1.1 TLSv1.2 TLSv1.3;
         ssl_ciphers 'ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES128-SHA:ECDHE-ECDSA-AES256-SHA384:ECDHE-ECDSA-AES256-SHA:ECDHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA:DHE-RSA-AES256-SHA256:DHE-RSA-AES256-SHA:AES128-GCM-SHA256:AES256-GCM-SHA384:AES128-SHA256:AES256-SHA256:AES128-SHA:AES256-SHA:!DSS';
@@ -29,13 +18,27 @@ server{
         ssl_stapling on;
         ssl_stapling_verify on;
         add_header Strict-Transport-Security "max-age=31536000" always;
-    {% for location in server.locations %}
-        location {{ location.name }} {
-            proxy_pass http://{{ location.container.address }}:{{ location.container.port }}{{ location.container.path }};
-            {% if location.name != '/' %}
-             proxy_redirect $scheme://$http_host{% if location.container.path!="/" %}{{ location.container.path }}{% endif%} $scheme://$http_host{{location.name}};
-            {% endif %}
-    }{% endfor %}
-}{% endif %}
+        {% for location in server.locations %}
+        location {{ location.name }} { {% if location.upstream %}
+                proxy_pass {{ location.container.scheme }}://{{ location.upstream }}{{location.container.path}};{% else %}
+                proxy_pass {{location.container.scheme }}://{{ location.container.address }}:{{ location.container.port }}{{ location.container.path }};{% endif %}{% if location.name != '/' %}
+            proxy_redirect $scheme://$http_host{% if location.container.path!="/" %}{{ location.container.path }}{% endif%} $scheme://$http_host{{location.name}};{% endif %}
+        }{% endfor %}
+    }
+}{% else %}
+server{
+        listen {{ server.port }};
+        server_name {{ server.hostname }};{% for location in server.locations %}
+        location {{ location.name }} { {% if location.upstream %}
+                proxy_pass {{ location.container.scheme }}://{{ location.upstream }}{{location.container.path}};{% else %}
+                proxy_pass {{location.container.scheme }}://{{ location.container.address }}:{{ location.container.port }}{{ location.container.path }};{% endif %}{% if location.name != '/' %}
+            proxy_redirect $scheme://$http_host{% if location.container.path!="/" %}{{ location.container.path }}{% endif%} $scheme://$http_host{{location.name}};{% endif %}
+        }{% endfor %}
+ }{% endif %}{% if server.ssl_redirect %}
+server {
+        listen 80;
+        return 301 https://$host$request_uri;
+}
+{% endif %}
 {% endfor %}
 
