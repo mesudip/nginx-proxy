@@ -3,6 +3,8 @@ import os
 import logging
 import OpenSSL
 import datetime
+
+
 class SSL:
     def __init__(self, ssl_path, vhost_path):
         self.ssl_path = ssl_path
@@ -14,17 +16,19 @@ class SSL:
         except FileExistsError as e:
             pass
 
+    def expiry_time(self, domain) -> datetime:
+        path = os.path.join(self.ssl_path, "certs", domain + ".crt")
+        if self.cert_exists(domain):
+            with open(path) as file:
+                x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, file.read())
+                return datetime.datetime.strptime(x509.get_notAfter().decode(), "%Y%m%d%H%M%SZ")
+        return datetime.timedelta(days=0)
+
     def cert_exists(self, domain) -> bool:
         if os.path.exists(os.path.join(self.ssl_path, "certs", domain + ".crt")) \
-               and os.path.exists(os.path.join(self.ssl_path, "private", domain + ".key")) \
-               and os.path.exists(os.path.join(self.ssl_path, "accounts", domain+ ".account.key")):
-            x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, cert)
-            expiry=datetime.datetime.strptime(x509.get_notAfter().decode(),"%Y%m%d%H%M%SZ")
-            now=datetime.datetime.now()
-            if (expiry-now).days > 5:
-                return true
-        return false
-
+                and os.path.exists(os.path.join(self.ssl_path, "private", domain + ".key")) \
+                and os.path.exists(os.path.join(self.ssl_path, "accounts", domain + ".account.key")):
+            return True
 
     def register_certificate(self, domain):
         if self.cert_exists(domain):

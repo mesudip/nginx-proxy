@@ -1,22 +1,25 @@
 from docker import DockerClient
-from Host import Host
+
+from nginx_proxy import Container
+from nginx_proxy.Host import Host
 from jinja2 import Template
 import sys
 import copy
 from nginx.Nginx import Nginx
 import requests
-from SSL import SSL
+from nginx_proxy.SSL import SSL
+import datetime
+
 
 class WebServer():
     def __init__(self, client: DockerClient, *args):
         self.client = client
         self.nginx = Nginx("/etc/nginx/conf.d/default.conf")
-        self.ssl=SSL("/etc/ssl","/etc/nginx/conf.d/acme-nginx.conf")
+        self.ssl = SSL("ssl", "/etc/nginx/conf.d/acme-nginx.conf")
         self.containers = {}
         self.services = set()
         self.networks = {}
         self.conf_file_name = "/etc/nginx/conf.d/default.conf"
-
         self.host_file = "/etc/hosts"
         self.hosts = {}
         file = open("default.conf.template")
@@ -24,20 +27,20 @@ class WebServer():
         file.close()
         self.learn_yourself()
         self.rescan_all_container()
+        self.rescan_time = None
         if self.nginx.config_test():
             if not self.nginx.start():
-                print("ERROR: Config test succeded but nginx failed to start",file=sys.stderr)
-                print("Exiting .....",file=sys.stderr)
+                print("ERROR: Config test succeded but nginx failed to start", file=sys.stderr)
+                print("Exiting .....", file=sys.stderr)
             self.reload()
         else:
-            print ("ERROR: Existing nginx configuration has error, trying to override with new configuration")
+            print("ERROR: Existing nginx configuration has error, trying to override with new configuration")
             if not self.reload(forced=True):
                 print("ERROR: Existing nginx configuration has error", file=sys.stderr)
-                print("ERROR: New generated configuration also has error",file=sys.stderr)
-                print("Please check the configuration of your containers and restart this container",file=sys.stderr)
-                print("EXITING .....",file=sys.stderr)
+                print("ERROR: New generated configuration also has error", file=sys.stderr)
+                print("Please check the configuration of your containers and restart this container", file=sys.stderr)
+                print("EXITING .....", file=sys.stderr)
                 exit(1)
-
 
     def learn_yourself(self):
         try:
@@ -56,23 +59,26 @@ class WebServer():
 
     def _register_container(self, container):
         # if it's a service container we can skip it.
-        new_host = Host.from_container(container, known_networks=self.networks.keys())
+        try:
+            scheme, hostname, port, location, mapping = Container.Container.get_contaier_info(container,
+                                                                                              known_networks=self.networks.keys())
 
-        if new_host:
             if "com.docker.swarm.service.name" in container.attrs["Config"]["Labels"]:
                 id = container.attrs["Config"]["Labels"]["com.docker.swarm.service.name"]
                 self.services.add(id)
             else:
-                self.containers[new_host.id] = ""
-            if new_host.server_name in self.hosts:
-                existing_host = self.hosts[new_host.server_name]
-                for location, location_content in existing_host.locations.items():
-                    if location not in new_host.locations:
-                        new_host.locations[location] = location_content
-                new_host.ssl_host = existing_host.ssl_host if existing_host.ssl_host is not None else new_host.ssl_host
-            self.hosts[new_host.server_name] = new_host
+                self.containers[container.id] = ""
 
-            return True
+            if (hostname, port) in self.hosts:
+                host: Host = self.hosts[(hostname, port)]
+                host.add_container(location, mapping)
+            else:
+                host: Host = Host(client=self.client, hostname=hostname, port=port, scheme=scheme)
+                host.add_container(location, mapping)
+                self.hosts[(hostname, port)] = host
+
+        except Container.UnconfiguredContainer as ignore:
+            pass
         return False
 
     def remove_container(self, event):
@@ -92,19 +98,44 @@ class WebServer():
                 del self.hosts[host.server_name]
             self.reload()
 
-    def reload(self,forced=False) -> bool:
+    def reload(self, forced=False) -> bool:
         """
         Creates a new configuration based on current state and signals nginx to reload.
         This is called whenever there's change in container or network state.
         :return:
         """
-        host_list = [copy.copy(host) for host in self.hosts.values()]
-        hosts = set()
+        host_list = [copy.deepcopy(host) for host in self.hosts.values()]
+
+        next_reload = None
+        now = datetime.datetime.now()
         for host in host_list:
             host.locations = list(host.locations.values())
-            if host.ssl_host:
-                self.ssl.register_certificate(host.ssl_host)
+            host.upstreams={}
+            for i,location in enumerate(host.locations):
+                location.container = list(location.containers)[0]
+                if len(location.containers)>1:
+                    location.upstream=host.hostname+"-"+host.port+"-"+str(i+1)
+                    host.upstreams[location.upstream]=location.containers
+                else:
+                    location.upstream=False
+            host.upstreams=[ {"id":x,"containers":y} for x,y in host.upstreams.items()]
+            if host.scheme == "https":
+                expiry = self.ssl.expiry_time(host.hostname)
+                remain = expiry - now
+                if remain.days < 5:
+                    self.ssl.register_certificate(host.hostname)
+                    self.hosts[host].ssl_expiry=self.ssl.expiry_time(host.hostname)
+                else:
+                    self.hosts[host].ssl_expiry=expiry
+                if next_reload:
+                    if next_reload > expiry:
+                        next_reload = expiry
+                else:
+                    next_reload = expiry
+
         output = self.template.render(virtual_servers=host_list)
+        print(self.template.render(virtual_servers=host_list))
+        self.rescan_time = next_reload
         if forced:
             return self.nginx.forced_update(output)
         else:

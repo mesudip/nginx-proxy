@@ -1,6 +1,6 @@
 import docker
 import json
-import WebServer as containers
+from nginx_proxy import WebServer as containers
 import os
 import re
 import subprocess
