@@ -81,21 +81,15 @@ class WebServer():
             pass
         return False
 
-    def remove_container(self, event):
-        if event["id"] in self.containers:
-            del self.containers[event["id"]]
+    def remove_container(self, container):
+        if container["id"] in self.containers:
+            del self.containers[container]
             for host in self.hosts.values():
-                for location, location_content in host.locations.items():
-                    if location_content.host_id == event["id"]:
-                        break
-                else:
-                    continue
-                break
+                a:Host=host
+                if a.remove_container(self.containers[container]):
+                    break
             else:
                 return
-            del host.locations[location]
-            if not len(host.locations):
-                del self.hosts[host.server_name]
             self.reload()
 
     def reload(self, forced=False) -> bool:

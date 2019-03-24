@@ -7,7 +7,7 @@ server{
         listen 80;
         server_name {{ server.hostname }};{% if server.ssl_host %}
         return 301 https://$host$request_uri;{% else %}{% for location in server.locations %}
-        location {{ location.name }} {{% if location.upstream %}
+        location {{ location.name }} { {% if location.upstream %}
                 proxy_pass {{ location.scheme }}://{{ location.upstream }}{{location.container.path}};{% else %}
                 proxy_pass {{location.scheme }}://{{ location.container.address }}:{{ location.container.port }}{{ location.container.path }};{% endif %}{% if location.name != '/' %}
             proxy_redirect $scheme://$http_host{% if location.container.path!="/" %}{{ location.container.path }}{% endif%} $scheme://$http_host{{location.name}};{% endif %}

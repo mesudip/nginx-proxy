@@ -9,6 +9,7 @@ class Host():
         self.port = port
         self.hostname = hostname
         self.locations:dict[str:Location] = {}  # the map of locations.and the container that serve the locations
+        self.container_map={}
         self.scheme = scheme
 
     def set_external_parameters(self, host, port):
@@ -19,9 +20,16 @@ class Host():
         if location not in self.locations:
             self.locations[location] = Location(location)
         self.locations[location].add(container)
+        self.container_map[container.id]=location
 
-    # def __eq__(self, other):
-    #     return self.id == self.id and self.port
+    def remove_container(self,container_id):
+        if container_id in self.container_map:
+            location=self.container_map[container_id]
+            del self.container_map[container_id]
+            return self.locations[location].remove(container_id)
+        return False
+
+
 
     def isManaged(self):
         return False

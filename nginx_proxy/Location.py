@@ -9,7 +9,10 @@ class Location:
         self.containers.add(container)
 
     def remove(self, container: Container):
-        self.containers.remove(container)
+        if container in self.containers:
+            self.containers.remove(container)
+            return True
+        return False
 
     def __eq__(self, other) -> bool:
         if type(other) is Location:

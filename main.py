@@ -56,7 +56,7 @@ def process_container_event(action, event):
         hosts.update_container(event["id"])
     elif action == "die":
         print("container died", event["id"])
-        hosts.remove_container(event)
+        hosts.remove_container(event["id"])
 
 
 def process_network_event(action, event):

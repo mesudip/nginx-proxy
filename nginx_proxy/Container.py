@@ -11,8 +11,8 @@ class NoHostConiguration(UnconfiguredContainer):
 
 
 class Container():
-    def __init__(self,id, scheme=None, address=None, port=None, path=None):
-        self.id=id
+    def __init__(self, id, scheme=None, address=None, port=None, path=None):
+        self.id = id
         self.address = address
         self.port = port
         self.path = path
@@ -23,15 +23,11 @@ class Container():
         self.networks.add(network_id)
 
     def __hash__(self):
-        return hash((self.id,self.port,self.address))
+        return hash(self.id)
 
     def __eq__(self, other) -> bool:
         if type(other) is Container:
-            return self.address == other.address and \
-                   self.port == other.port and \
-                   self.path == other.path and \
-                   self.scheme == other.scheme and \
-                   self.networks == other.networks
+            return self.id == other.id
         return False
 
     def __repr__(self):
@@ -68,7 +64,7 @@ class Container():
 
             host = host_entries[0] if len(host_entries[0].strip()) > 0 else None
             return {
-                "scheme":"http",
+                "scheme": "http",
                 "host": host,
                 "port": port,
                 "location": location if location else ""
@@ -76,7 +72,8 @@ class Container():
 
         host_list = entry_string.strip().split("->")
         external_entry = split_url(host_list[0])
-        internal_entry = {"scheme":"http","host": None, "port": None, "location": ""} if len(host_list) is 1 else split_url(
+        internal_entry = {"scheme": "http", "host": None, "port": None, "location": ""} if len(
+            host_list) is 1 else split_url(
             host_list[1])
         return external_entry, internal_entry
 
