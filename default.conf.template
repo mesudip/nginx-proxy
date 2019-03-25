@@ -24,7 +24,7 @@ server{
                 proxy_pass {{location.container.scheme }}://{{ location.container.address }}:{{ location.container.port }}{{ location.container.path }};{% endif %}{% if location.name != '/' %}
             proxy_redirect $scheme://$http_host{% if location.container.path!="/" %}{{ location.container.path }}{% endif%} $scheme://$http_host{{location.name}};{% endif %}
         }{% endfor %}
-    }
+    
 }{% else %}
 server{
         listen {{ server.port }};

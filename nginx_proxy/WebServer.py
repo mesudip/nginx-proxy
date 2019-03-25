@@ -16,7 +16,7 @@ class WebServer():
     def __init__(self, client: DockerClient, *args):
         self.client = client
         self.nginx = Nginx("/etc/nginx/conf.d/default.conf")
-        self.ssl = SSL("ssl", "/etc/nginx/conf.d/acme-nginx.conf")
+        self.ssl = SSL("/etc/ssl", "/etc/nginx/conf.d/acme-nginx.conf")
         self.containers = {}
         self.services = set()
         self.networks = {}
@@ -74,6 +74,8 @@ class WebServer():
             if (hostname, port) in self.hosts:
                 host: Host = self.hosts[(hostname, port)]
                 host.add_container(location, mapping)
+                if scheme=="https":
+                    host.scheme="https"
             else:
                 host: Host = Host(client=self.client, hostname=hostname, port=port, scheme=scheme)
                 host.add_container(location, mapping)
@@ -119,22 +121,22 @@ class WebServer():
                     location.upstream = False
             host.upstreams = [{"id": x, "containers": y} for x, y in host.upstreams.items()]
             if host.scheme == "https":
-                if int(host.port) == 80 or int(host.port) == 443 or host.port is None:
-                    host.ssl_redirect = True
-                    host.port = 443
                 host.ssl_host = True
                 expiry = self.ssl.expiry_time(host.hostname)
                 remain = expiry - now
                 if remain.days < 5:
                     self.ssl.register_certificate(host.hostname)
-                    self.hosts[host].ssl_expiry = self.ssl.expiry_time(host.hostname)
+                    self.hosts[(host.hostname,host.port)].ssl_expiry = self.ssl.expiry_time(host.hostname)
                 else:
-                    self.hosts[host].ssl_expiry = expiry
+                    self.hosts[(host.hostname,host.port)].ssl_expiry = expiry
                 if next_reload:
                     if next_reload > expiry:
                         next_reload = expiry
                 else:
                     next_reload = expiry
+                if int(host.port) == 80 or int(host.port) == 443 or host.port is None:
+                    host.ssl_redirect = True
+                    host.port = 443
 
         output = self.template.render(virtual_servers=host_list)
         # print(self.template.render(virtual_servers=host_list))
