@@ -1,5 +1,6 @@
 from docker import DockerClient
 
+from nginx.DummnNginx import DummyNginx
 from nginx_proxy import Container
 from nginx_proxy.Host import Host
 from jinja2 import Template
@@ -34,7 +35,8 @@ class WebServer():
                 print("Exiting .....", file=sys.stderr)
             self.reload()
         else:
-            print("ERROR: Existing nginx configuration has error, trying to override with new configuration")
+            print("ERROR: Existing nginx configuration has error, trying to override with new configuration",
+                  file=sys.stderr)
             if not self.reload(forced=True):
                 print("ERROR: Existing nginx configuration has error", file=sys.stderr)
                 print("ERROR: New generated configuration also has error", file=sys.stderr)
@@ -76,21 +78,24 @@ class WebServer():
                 host: Host = Host(client=self.client, hostname=hostname, port=port, scheme=scheme)
                 host.add_container(location, mapping)
                 self.hosts[(hostname, port)] = host
+            return True
 
         except Container.UnconfiguredContainer as ignore:
             pass
         return False
 
     def remove_container(self, container):
-        if container["id"] in self.containers:
-            del self.containers[container]
+        if container in self.containers:
             for host in self.hosts.values():
                 a: Host = host
-                if a.remove_container(self.containers[container]):
+                if a.remove_container(container):
                     break
             else:
                 return
-            self.reload()
+            del self.containers[container]
+            if a.isEmpty():
+                del self.hosts[(a.hostname, a.port)]
+            return self.reload()
 
     def reload(self, forced=False) -> bool:
         """
@@ -108,13 +113,13 @@ class WebServer():
             for i, location in enumerate(host.locations):
                 location.container = list(location.containers)[0]
                 if len(location.containers) > 1:
-                    location.upstream = host.hostname + "-" + host.port + "-" + str(i + 1)
+                    location.upstream = host.hostname + "-" + str(host.port) + "-" + str(i + 1)
                     host.upstreams[location.upstream] = location.containers
                 else:
                     location.upstream = False
             host.upstreams = [{"id": x, "containers": y} for x, y in host.upstreams.items()]
             if host.scheme == "https":
-                if host.port == 80 or host.port == 443 or host.port is None:
+                if int(host.port) == 80 or int(host.port) == 443 or host.port is None:
                     host.ssl_redirect = True
                     host.port = 443
                 host.ssl_host = True
@@ -132,7 +137,7 @@ class WebServer():
                     next_reload = expiry
 
         output = self.template.render(virtual_servers=host_list)
-        print(self.template.render(virtual_servers=host_list))
+        # print(self.template.render(virtual_servers=host_list))
         self.rescan_time = next_reload
         if forced:
             return self.nginx.forced_update(output)
@@ -164,7 +169,7 @@ class WebServer():
         This is usually called in one of the following conditions:
         -- new container was started
         -- an existing container has left a network in which nginx-proxy is connected.
-        -- during container list rescan
+        -- during  full container rescan
         :param container container id to update
         :return: true if container state change affected the nginx configuration else false
         '''

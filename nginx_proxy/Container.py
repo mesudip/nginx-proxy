@@ -1,18 +1,3 @@
-from urllib.parse import urlparse
-
-
-class UnconfiguredContainer(Exception):
-    pass
-
-
-class UnreachableNetwork(UnconfiguredContainer):
-    pass
-
-
-class NoHostConiguration(UnconfiguredContainer):
-    pass
-
-
 class Container():
     def __init__(self, id, scheme=None, address=None, port=None, path=None):
         self.id = id
@@ -31,6 +16,8 @@ class Container():
     def __eq__(self, other) -> bool:
         if type(other) is Container:
             return self.id == other.id
+        if type(other) is str:
+            return self.id == other
         return False
 
     def __repr__(self):
@@ -52,7 +39,7 @@ class Container():
             scheme, host_part = split_scheme if len(split_scheme) is 2 else (None, split_scheme[0])
             host_entries = host_part.split("/", 1)
             hostport, location = (host_entries[0], "/" + host_entries[1]) if len(host_entries) is 2 else (
-            host_entries[0], None)
+                host_entries[0], None)
             hostport_entries = hostport.split(":", 1)
             host, port = hostport_entries if len(hostport_entries) is 2 else (hostport_entries[0], None)
 
@@ -62,6 +49,7 @@ class Container():
                 "port": port,
                 "location": location
             }
+
         host_list = entry_string.strip().split("->")
         external, internal = host_list if len(host_list) is 2 else (host_list[0], "")
         return split_url(external), split_url(internal)
@@ -115,9 +103,22 @@ class Container():
         c.path = internal_host["location"] if internal_host["location"] else "/"
 
         return (
-            external_host["scheme"] if external_host["scheme"] else "http",
+            "https" if ssl_host else (external_host["scheme"] if external_host["scheme"] else "http"),
             external_host["host"] if external_host["host"] else container.id,
             external_host["port"] if external_host["port"] else "80",
             external_host["location"] if external_host["location"] else "/",
             c,
         )
+
+
+class UnconfiguredContainer(Exception):
+    pass
+
+
+class UnreachableNetwork(UnconfiguredContainer):
+    pass
+
+
+class NoHostConiguration(UnconfiguredContainer):
+    pass
+

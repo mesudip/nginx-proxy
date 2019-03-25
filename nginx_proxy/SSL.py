@@ -22,7 +22,7 @@ class SSL:
             with open(path) as file:
                 x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, file.read())
                 return datetime.datetime.strptime(x509.get_notAfter().decode(), "%Y%m%d%H%M%SZ")
-        return datetime.timedelta(days=0)
+        return datetime.datetime.now()
 
     def cert_exists(self, domain) -> bool:
         if os.path.exists(os.path.join(self.ssl_path, "certs", domain + ".crt")) \

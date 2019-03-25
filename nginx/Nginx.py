@@ -65,9 +65,11 @@ class Nginx:
 
             with open(self.config_file_path, "w") as file:
                 file.write(self.last_working_config)
+            return False
         else:
             print(diff)
             self.last_working_config = config_str
+            return True
 
     def reload(self) -> bool:
         """

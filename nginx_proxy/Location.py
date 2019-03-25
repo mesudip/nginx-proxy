@@ -1,5 +1,6 @@
 from nginx_proxy.Container import Container
 
+
 class Location:
     def __init__(self, name):
         self.name = name
@@ -7,6 +8,9 @@ class Location:
 
     def add(self, container: Container):
         self.containers.add(container)
+
+    def isEmpty(self):
+        return len(self.containers) == 0
 
     def remove(self, container: Container):
         if container in self.containers:
