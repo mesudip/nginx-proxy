@@ -115,8 +115,9 @@ class AcmeV2(Acme):
             try:
                 if code > 399:
                     self.log.error("error triggering challenge: {0} {1}".format(code, result))
-                    sys.exit(1)
-                self._verify_challenge(url, domain)
+                    pass
+                if not self._verify_challenge(url, domain):
+                    pass
             finally:
                 self._cleanup(['{0}/{1}'.format(challenge_dir, token), self.vhost, challenge_dir])
                 self._reload_nginx()
@@ -171,7 +172,8 @@ class AcmeV2(Acme):
                 if code > 399:
                     self.log.error("error triggering challenge: {0} {1}".format(code, result))
                     raise Exception(result)
-                self._verify_challenge(url, domain)
+                if not self._verify_challenge(url, domain):
+                    sys.exit(1)
             finally:
                 try:
                     if not self.debug:

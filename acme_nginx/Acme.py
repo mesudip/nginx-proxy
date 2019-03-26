@@ -251,7 +251,7 @@ server {{
             checks_count -= 1
             if checks_count <= 0:
                 self.log.error('reached waiting limit')
-                sys.exit(1)
+                return False
             challenge_status = json.loads(urlopen(url).read().decode('utf8'))
             if challenge_status['status'] == "pending":
                 time.sleep(5)
@@ -260,7 +260,8 @@ server {{
                 self.log.info('{0} verified!'.format(domain))
                 break
             self.log.error('{0} challenge did not pass: {1}'.format(domain, challenge_status))
-            sys.exit(1)
+            return False
+        return True
 
     @staticmethod
     def _get_challenge(challenges, challenge_type):

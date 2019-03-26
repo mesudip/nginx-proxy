@@ -31,6 +31,8 @@ class SSL:
             return True
 
     def register_certificate(self, domain):
+        if type(domain) is str:
+            domain = [domain]
         if self.cert_exists(domain):
             print("Skipped Requesting certificates as they are already present")
         else:
@@ -38,11 +40,11 @@ class SSL:
             acme = AcmeV2(
                 api_url="https://acme-staging-v02.api.letsencrypt.org/directory",
                 logger=logging.getLogger("acme"),
-                domains=[domain],
-                account_key=os.path.join(self.ssl_path, "accounts", domain + ".account.key"),
-                domain_key=os.path.join(self.ssl_path, "private", domain + ".key"),
+                domains=domain,
+                account_key=os.path.join(self.ssl_path, "accounts", domain[0] + ".account.key"),
+                domain_key=os.path.join(self.ssl_path, "private", domain[0] + ".key"),
                 vhost=self.vhost_path,
-                cert_path=os.path.join(self.ssl_path, "certs", domain + ".crt"),
+                cert_path=os.path.join(self.ssl_path, "certs", domain[0] + ".crt"),
                 debug=False,
                 dns_provider=None,
                 skip_nginx_reload=False

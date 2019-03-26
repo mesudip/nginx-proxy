@@ -80,7 +80,8 @@ class AcmeV1(Acme):
                 if code != 202:
                     self.log.error("error triggering challenge: {0} {1}".format(code, result))
                     sys.exit(1)
-                self._verify_challenge(challenge['uri'], domain)
+                if not self._verify_challenge(challenge['uri'], domain):
+                    sys.exit(1)
             finally:
                 self._cleanup(['{0}/{1}'.format(challenge_dir, token), self.vhost, challenge_dir])
                 self._reload_nginx()
