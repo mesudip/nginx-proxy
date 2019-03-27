@@ -3,9 +3,9 @@ import string
 import sys
 import subprocess
 import difflib
-from random import random
+import random
 import requests
-
+import time
 
 class Nginx:
     command_config_test = ["nginx", "-t"]
@@ -41,19 +41,20 @@ class Nginx:
 
         if config_str == self.last_working_config:
             self.config_stack.append(config_str)
-            return True
+            return self.reload()
 
         with open(self.config_file_path, "w") as file:
             file.write(config_str)
         if not self.reload():
             with open(self.config_file_path, "w") as file:
                 file.write(self.config_stack[-1])
+            self.reload()
             return False
         else:
             self.config_stack.append(config_str)
             return True
 
-    def pop_config(self, config_str):
+    def pop_config(self):
         with open(self.config_file_path, "w") as file:
             file.write(self.config_stack.pop())
         return self.reload()
@@ -112,31 +113,34 @@ class Nginx:
             return True
         return False
 
-    def verify_domain(self, domain: list or str):
+    def verify_domain(self, domain:list or str):
         if type(domain) is str:
             domain = [domain]
-        r1 = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
-        r2 = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
-        config = '''{
+        r1="".join([ random.choice(string.ascii_letters + string.digits) for _ in range(32)])
+        r2="".join([ random.choice(string.ascii_letters + string.digits) for _ in range(32)])
+        config = '''server {
                 listen 80 ;
                 server_name %s;
-                location %s {
-                    redirect http://$host/%s
+                location /%s {
+                    return 301 http://$host/%s;
                 }
-            }''' % (r1, r2, " ".join(domain))
+            }''' % (" ".join(domain),r1,r2)
         if self.push_config(config):
+            time.sleep(2)# it appears that "nginx -s reload" reloads immediately. It only signals reload and returns. Reload process may take some time
             success = []
             for d in domain:
-                response = requests.get("http://{}/{}".format(domain, r1), allow_redirects=False)
-                if (response.is_permanent_redirect):
-                    if ("Location" in response.headers):
-                        if response.headers.get("Location").split("/")[-1] == r2:
-                            success.append(d)
-                            continue
+                try:
+                    response = requests.get("http://%s/%s"%(d, r1), allow_redirects=False)
+                    if (response.is_permanent_redirect):
+                        if ("Location" in response.headers):
+                            if response.headers.get("Location").split("/")[-1] == r2:
+                                success.append(d)
+                                continue
+                except requests.exceptions.ConnectionError as e:
+                    pass
                 print("[ERROR] Domain is not owned by this machine :" + d, file=sys.stderr)
         else:
             return False
-        self.pop_config()
         if len(success) == len(domain):
             return True
         return success
