@@ -1,4 +1,5 @@
 import collections
+import re
 import string
 import sys
 import subprocess
@@ -6,6 +7,7 @@ import difflib
 import random
 import requests
 import time
+
 
 class Nginx:
     command_config_test = ["nginx", "-t"]
@@ -113,24 +115,26 @@ class Nginx:
             return True
         return False
 
-    def verify_domain(self, domain:list or str):
+    def verify_domain(self, domain: list or str):
         if type(domain) is str:
             domain = [domain]
-        r1="".join([ random.choice(string.ascii_letters + string.digits) for _ in range(32)])
-        r2="".join([ random.choice(string.ascii_letters + string.digits) for _ in range(32)])
+        domain = [x for x in domain if Nginx.is_valid_hostname(x)] ## when not included, one invalid domain in a list of 100 will make all domains to be unverified due to nginx failing to start.
+        r1 = "".join([random.choice(string.ascii_letters + string.digits) for _ in range(32)])
+        r2 = "".join([random.choice(string.ascii_letters + string.digits) for _ in range(32)])
         config = '''server {
                 listen 80 ;
                 server_name %s;
                 location /%s {
                     return 301 http://$host/%s;
                 }
-            }''' % (" ".join(domain),r1,r2)
+            }''' % (" ".join(domain), r1, r2)
         if self.push_config(config):
-            time.sleep(2)# it appears that "nginx -s reload" reloads immediately. It only signals reload and returns. Reload process may take some time
+            time.sleep(
+                2)  # it appears that "nginx -s reload" reloads immediately. It only signals reload and returns. Reload process may take some time
             success = []
             for d in domain:
                 try:
-                    response = requests.get("http://%s/%s"%(d, r1), allow_redirects=False)
+                    response = requests.get("http://%s/%s" % (d, r1), allow_redirects=False)
                     if (response.is_permanent_redirect):
                         if ("Location" in response.headers):
                             if response.headers.get("Location").split("/")[-1] == r2:
@@ -144,3 +148,24 @@ class Nginx:
         if len(success) == len(domain):
             return True
         return success
+
+    @staticmethod
+    def is_valid_hostname(hostname: str):
+        """
+        https://stackoverflow.com/a/33214423/2804342
+        :return: True if for valid hostname False otherwise
+        """
+        if hostname[-1] == ".":
+            # strip exactly one dot from the right, if present
+            hostname = hostname[:-1]
+        if len(hostname) > 253:
+            return False
+
+        labels = hostname.split(".")
+
+        # the TLD must be not all-numeric
+        if re.match(r"[0-9]+$", labels[-1]):
+            return False
+
+        allowed = re.compile(r"(?!-)[a-z0-9-]{1,63}(?<!-)$", re.IGNORECASE)
+        return all(allowed.match(label) for label in labels)
