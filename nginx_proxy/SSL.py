@@ -33,9 +33,8 @@ class SSL:
     def register_certificate(self, domain):
         if type(domain) is str:
             domain = [domain]
-        if self.cert_exists(domain):
-            print("Skipped Requesting certificates as they are already present")
-        else:
+        domain=[x for x in domain if not self.cert_exists(x) ]
+        if True:
             logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.DEBUG)
             acme = AcmeV2(
                 api_url="https://acme-staging-v02.api.letsencrypt.org/directory",
