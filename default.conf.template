@@ -13,15 +13,15 @@ server{
         ssl_session_timeout 5m;
         ssl_session_cache shared:SSL:50m;
         ssl_session_tickets off;
-        ssl_certificate /etc/ssl/certs/{{ server.hostname }}.crt;
-        ssl_certificate_key /etc/ssl/private/{{ server.hostname }}.key;
+        ssl_certificate /etc/ssl/certs/{{ server.ssl_file }}.crt;
+        ssl_certificate_key /etc/ssl/private/{{ server.ssl_file }}.key;
         ssl_stapling on;
         ssl_stapling_verify on;
         add_header Strict-Transport-Security "max-age=31536000" always;
         {% for location in server.locations %}
         location {{ location.name }} { {% if location.upstream %}
-                proxy_pass {{ location.container.scheme }}://{{ location.upstream }}{{location.container.path}};{% else %}
-                proxy_pass {{location.container.scheme }}://{{ location.container.address }}:{{ location.container.port }}{{ location.container.path }};{% endif %}{% if location.name != '/' %}
+            proxy_pass {{ location.container.scheme }}://{{ location.upstream }}{{location.container.path}};{% else %}
+            proxy_pass {{location.container.scheme }}://{{ location.container.address }}:{{ location.container.port }}{{ location.container.path }};{% endif %}{% if location.name != '/' %}
             proxy_redirect $scheme://$http_host{% if location.container.path!="/" %}{{ location.container.path }}{% endif%} $scheme://$http_host{{location.name}};{% endif %}
         }{% endfor %}
     
@@ -30,8 +30,8 @@ server{
         listen {{ server.port }};
         server_name {{ server.hostname }};{% for location in server.locations %}
         location {{ location.name }} { {% if location.upstream %}
-                proxy_pass {{ location.container.scheme }}://{{ location.upstream }}{{location.container.path}};{% else %}
-                proxy_pass {{location.container.scheme }}://{{ location.container.address }}:{{ location.container.port }}{{ location.container.path }};{% endif %}{% if location.name != '/' %}
+            proxy_pass {{ location.container.scheme }}://{{ location.upstream }}{{location.container.path}};{% else %}
+            proxy_pass {{location.container.scheme }}://{{ location.container.address }}:{{ location.container.port }}{{ location.container.path }};{% endif %}{% if location.name != '/' %}
             proxy_redirect $scheme://$http_host{% if location.container.path!="/" %}{{ location.container.path }}{% endif%} $scheme://$http_host{{location.name}};{% endif %}
         }{% endfor %}
  }{% endif %}{% if server.ssl_redirect %}

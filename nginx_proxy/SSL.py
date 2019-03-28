@@ -3,12 +3,16 @@ import os
 import logging
 import OpenSSL
 import datetime
+import shutil
+
+from nginx.Nginx import Nginx
 
 
 class SSL:
-    def __init__(self, ssl_path, vhost_path):
+    def __init__(self, ssl_path, vhost_path,nginx:Nginx):
         self.ssl_path = ssl_path
         self.vhost_path = vhost_path
+        self.nginx=nginx
         try:
             os.mkdir(os.path.join(ssl_path, "accounts"))
             os.mkdir(os.path.join(ssl_path, "private"))
@@ -30,11 +34,20 @@ class SSL:
                 and os.path.exists(os.path.join(self.ssl_path, "accounts", domain + ".account.key")):
             return True
 
+    def reuse(self, domain1, domain2):
+        shutil.copy2(os.path.join(self.ssl_path, "certs", domain1 + ".crt"),
+                     os.path.join(self.ssl_path, "certs", domain2 + ".crt"))
+        shutil.copy2(os.path.join(self.ssl_path, "private", domain1 + ".key"),
+                     os.path.join(self.ssl_path, "private", domain2 + ".key"))
+        shutil.copy2(os.path.join(self.ssl_path, "accounts", domain1 + ".account.key"),
+                     os.path.join(self.ssl_path, "accounts", domain2 + "account.key"))
+
     def register_certificate(self, domain):
         if type(domain) is str:
             domain = [domain]
-        domain=[x for x in domain if not self.cert_exists(x) ]
-        if True:
+        domain =self.nginx.verify_domain(domain)
+        domain = [x for x in domain if not self.cert_exists(x)]
+        if domain:
             logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.DEBUG)
             acme = AcmeV2(
                 api_url="https://acme-staging-v02.api.letsencrypt.org/directory",
@@ -52,3 +65,6 @@ class SSL:
             directory = acme.register_account()
             print("content in registration detail", directory);
             acme.solve_http_challenge(directory)
+            return domain
+        else:
+            return []

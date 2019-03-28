@@ -16,7 +16,7 @@ class WebServer():
     def __init__(self, client: DockerClient, *args):
         self.client = client
         self.nginx = Nginx("/etc/nginx/conf.d/default.conf")
-        self.ssl = SSL("/etc/ssl", "/etc/nginx/conf.d/acme-nginx.conf")
+        self.ssl = SSL("/etc/ssl", "/etc/nginx/conf.d/acme-nginx.conf",nginx=self.nginx)
         self.containers = {}
         self.services = set()
         self.networks = {}
@@ -74,8 +74,8 @@ class WebServer():
             if (hostname, port) in self.hosts:
                 host: Host = self.hosts[(hostname, port)]
                 host.add_container(location, mapping)
-                if scheme=="https":
-                    host.scheme="https"
+                if scheme == "https":
+                    host.scheme = "https"
             else:
                 host: Host = Host(client=self.client, hostname=hostname, port=port, scheme=scheme)
                 host.add_container(location, mapping)
@@ -109,6 +109,7 @@ class WebServer():
 
         next_reload = None
         now = datetime.datetime.now()
+        ssl_requests = []
         for host in host_list:
             host.locations = list(host.locations.values())
             host.upstreams = {}
@@ -124,11 +125,11 @@ class WebServer():
                 host.ssl_host = True
                 expiry = self.ssl.expiry_time(host.hostname)
                 remain = expiry - now
-                if remain.days < 5:
-                    self.ssl.register_certificate(host.hostname)
-                    self.hosts[(host.hostname,host.port)].ssl_expiry = self.ssl.expiry_time(host.hostname)
+                if remain.days < 15:
+                    ssl_requests.append((host.hostname, host.port))
                 else:
-                    self.hosts[(host.hostname,host.port)].ssl_expiry = expiry
+                    self.hosts[(host.hostname, host.port)].ssl_expiry = expiry
+                    host.ssl_file = host.hostname
                 if next_reload:
                     if next_reload > expiry:
                         next_reload = expiry
@@ -137,6 +138,24 @@ class WebServer():
                 if int(host.port) == 80 or int(host.port) == 443 or host.port is None:
                     host.ssl_redirect = True
                     host.port = 443
+        obtained_certificates = []
+        host_names = list(set([x[0] for x in ssl_requests]))
+        for i in range(0, len(ssl_requests), 50):
+            sub_list = host_names[i:i + 50]
+            obtained = self.ssl.register_certificate(sub_list)
+            domain1 = obtained[0]
+            for x in obtained[1:]:
+                self.ssl.reuse(domain1, x)
+            obtained_certificates.extend(obtained)
+        obtained_certificates = set(obtained_certificates)
+
+        host_names = set(host_names)
+        for host in host_list:
+            if host.hostname in host_names:
+                if host.hostname not in obtained_certificates:
+                    host.ssl_file = "ssl-cert-snakeoil"
+                else:
+                    host.ssl_file=host.hostname
 
         output = self.template.render(virtual_servers=host_list)
         # print(self.template.render(virtual_servers=host_list))

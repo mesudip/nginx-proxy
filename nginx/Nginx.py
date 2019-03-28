@@ -118,7 +118,8 @@ class Nginx:
     def verify_domain(self, domain: list or str):
         if type(domain) is str:
             domain = [domain]
-        domain = [x for x in domain if Nginx.is_valid_hostname(x)] ## when not included, one invalid domain in a list of 100 will make all domains to be unverified due to nginx failing to start.
+        ## when not included, one invalid domain in a list of 100 will make all domains to be unverified due to nginx failing to start.
+        domain = [x for x in domain if Nginx.is_valid_hostname(x)]
         r1 = "".join([random.choice(string.ascii_letters + string.digits) for _ in range(32)])
         r2 = "".join([random.choice(string.ascii_letters + string.digits) for _ in range(32)])
         config = '''server {
@@ -129,8 +130,8 @@ class Nginx:
                 }
             }''' % (" ".join(domain), r1, r2)
         if self.push_config(config):
-            time.sleep(
-                2)  # it appears that "nginx -s reload" reloads immediately. It only signals reload and returns. Reload process may take some time
+            # it appears that "nginx -s reload" doesn't reload immediately. It only signals reload and returns. Reload process may take some time
+            time.sleep(2)
             success = []
             for d in domain:
                 try:
@@ -143,9 +144,11 @@ class Nginx:
                 except requests.exceptions.ConnectionError as e:
                     pass
                 print("[ERROR] Domain is not owned by this machine :" + d, file=sys.stderr)
-        else:
+        elif type(domain) is str:
             return False
-        if len(success) == len(domain):
+        else:
+            return []
+        if type(domain) is str:
             return True
         return success
 
