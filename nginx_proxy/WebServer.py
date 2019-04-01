@@ -178,8 +178,9 @@ class WebServer():
 
     def connect(self, network, container, scope):
         if container == self.id:
-            self.networks[network] = self.client.networks.get(network).name
-            self.rescan_and_reload()
+            if network not in self.networks:
+                self.networks[network] = self.client.networks.get(network).name
+                self.rescan_and_reload()
         elif container not in self.containers and network in self.networks:
             if self.update_container(container):
                 self.reload()
@@ -210,6 +211,8 @@ class WebServer():
         :return:
         '''
         containers = self.client.containers.list()
+        self.containers={}
+        self.hosts={}
         for container in containers:
             self._register_container(container)
 
