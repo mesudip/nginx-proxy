@@ -143,17 +143,20 @@ class WebServer():
         for i in range(0, len(ssl_requests), 50):
             sub_list = host_names[i:i + 50]
             obtained = self.ssl.register_certificate(sub_list)
-            domain1 = obtained[0]
-            for x in obtained[1:]:
-                self.ssl.reuse(domain1, x)
-            obtained_certificates.extend(obtained)
+            if len(obtained):
+                domain1 = obtained[0]
+                for x in obtained[1:]:
+                    self.ssl.reuse(domain1, x)
+                obtained_certificates.extend(obtained)
         obtained_certificates = set(obtained_certificates)
 
         host_names = set(host_names)
         for host in host_list:
             if host.hostname in host_names:
                 if host.hostname not in obtained_certificates:
-                    host.ssl_file = "ssl-cert-snakeoil"
+                    self.ssl.register_certificate_self_sign(host.hostname)
+
+                    host.ssl_file = host.hostname+".selfsigned"
                 else:
                     host.ssl_file=host.hostname
 

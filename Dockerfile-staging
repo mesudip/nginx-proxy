@@ -1,6 +1,8 @@
-# mesudip/python-nginx:alpine is merge of official python and nginx images.
+# Why does this dockerfile exists?
+# because I cannot pass build arguments in dockerHub's autobuild.
+# this dockerfile will build `-staging` docker images.
 FROM mesudip/python-nginx:alpine
-ARG LETSENCRYPT_API="https://acme-v02.api.letsencrypt.org/directory"
+ARG LETSENCRYPT_API="https://acme-staging-v02.api.letsencrypt.org/directory"
 RUN apk add gcc libc-dev openssl-dev linux-headers libffi-dev
 COPY ./requirements.txt /requirements.txt
 RUN pip install --no-cache-dir -r /requirements.txt && rm -f /requirements.txt
