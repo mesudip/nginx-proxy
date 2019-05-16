@@ -117,6 +117,6 @@ class SSL:
     def register_certificate_self_sign(self, domain):
         if type(domain) is str:
             domain = [domain]
-        domain = [x for x in domain if not self.cert_exists_self_signed(domain)]
+        domain = [x for x in domain if not self.cert_exists_self_signed(x)]
         for d in domain:
-            self.self_sign(domain)
+            self.self_sign(d)

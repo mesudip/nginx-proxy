@@ -88,12 +88,14 @@ class Container():
         unknown = True
         for name, detail in network_settings["Networks"].items():
             c.add_network(detail["NetworkID"])
-            if detail["NetworkID"] in known_networks and unknown:
-                internal_host["host"] = detail["Aliases"][len(detail["Aliases"]) - 1]
-                internal_host["host"] = detail["IPAddress"]
-                ip_address = detail["IPAddress"]
-                network = name
-                unknown = not bool(internal_host["host"])
+            # fix for https://trello.com/c/js37t4ld
+            if detail["Aliases"] is not None:
+                if detail["NetworkID"] in known_networks and unknown:
+                    internal_host["host"] = detail["Aliases"][len(detail["Aliases"]) - 1]
+                    internal_host["host"] = detail["IPAddress"]
+                    ip_address = detail["IPAddress"]
+                    network = name
+                    unknown = not bool(internal_host["host"])
         if unknown:
             raise UnreachableNetwork()
 

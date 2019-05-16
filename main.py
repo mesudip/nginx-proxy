@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 import pydevd
+import sys
 
 config = {}
 if "PYTHON_DEBUG_PORT" in os.environ:
@@ -23,7 +24,11 @@ if len(config):
     pydevd.settrace(stdoutToServer=True, stderrToServer=True, **config)
 
 client = docker.from_env()
-
+# fix for https://trello.com/c/dMG5lcTZ
+try:
+    client.version()
+except Exception as e:
+    print("There was error connecting with the docker client \nHave you correctly mounted the docker.sock?",file=sys.stderr)
 hosts = containers.WebServer(client)
 
 
