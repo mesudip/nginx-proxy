@@ -1,4 +1,3 @@
-import collections
 import re
 import string
 import sys
@@ -7,6 +6,7 @@ import difflib
 import random
 import requests
 import time
+from os import path
 
 
 class Nginx:
@@ -16,8 +16,12 @@ class Nginx:
 
     def __init__(self, config_file_path):
         self.config_file_path = config_file_path
-        with open(config_file_path) as file:
-            self.last_working_config = file.read()
+        if path.exists(config_file_path):
+            with open(config_file_path) as file:
+                self.last_working_config = file.read()
+        else:
+            with open(config_file_path, "w") as file:
+                self.last_working_config = ""
         self.config_stack = [self.last_working_config]
 
     def start(self) -> bool:
