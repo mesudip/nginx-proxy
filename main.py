@@ -28,7 +28,8 @@ client = docker.from_env()
 try:
     client.version()
 except Exception as e:
-    print("There was error connecting with the docker client \nHave you correctly mounted the docker.sock?",file=sys.stderr)
+    print("There was error connecting with the docker server \nHave you correctly mounted /var/run/docker.sock?\n"+str(e.args),file=sys.stderr)
+    sys.exit(1)
 hosts = containers.WebServer(client)
 
 

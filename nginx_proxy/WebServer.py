@@ -1,6 +1,5 @@
 from docker import DockerClient
 
-from nginx.DummnNginx import DummyNginx
 from nginx_proxy import Container
 from nginx_proxy.Host import Host
 from jinja2 import Template
@@ -16,7 +15,7 @@ class WebServer():
     def __init__(self, client: DockerClient, *args):
         self.client = client
         self.nginx = Nginx("/etc/nginx/conf.d/default.conf")
-        self.ssl = SSL("/etc/ssl", "/etc/nginx/conf.d/acme-nginx.conf",nginx=self.nginx)
+        self.ssl = SSL("/etc/ssl", "/etc/nginx/conf.d/acme-nginx.conf", nginx=self.nginx)
         self.containers = {}
         self.services = set()
         self.networks = {}
@@ -45,6 +44,11 @@ class WebServer():
                 exit(1)
 
     def learn_yourself(self):
+        """
+            Looks in it's own filesystem to find out the container in which it is running.
+            Recognizing which container this code is running helps us to
+            know the networks accessible from this container and find all other accessible containers.
+        """
         try:
             file = open("/proc/self/cgroup")
             self.id = [l for l in file.read().split("\n") if l.find("cpu") != -1][0].split("/")[-1]
@@ -60,16 +64,20 @@ class WebServer():
             self.networks[network.id] = "frontend"
 
     def _register_container(self, container):
-        # if it's a service container we can skip it.
+        """
+         Find the details about container and register it and return True.
+         If it's not configured with desired settings or is not accessible, return False
+         @:returns True if the container is added to virtual hosts, false otherwise.
+        """
         try:
             scheme, hostname, port, location, mapping = Container.Container.get_contaier_info(container,
                                                                                               known_networks=self.networks.keys())
 
-            if "com.docker.swarm.service.name" in container.attrs["Config"]["Labels"]:
-                id = container.attrs["Config"]["Labels"]["com.docker.swarm.service.name"]
-                self.services.add(id)
-            else:
-                self.containers[container.id] = ""
+            # if "com.docker.swarm.service.name" in container.attrs["Config"]["Labels"]:
+            #     id = container.attrs["Config"]["Labels"]["com.docker.swarm.service.name"]
+            #     self.services.add(id)
+            # else:
+            self.containers[container.id] = ""
 
             if (hostname, port) in self.hosts:
                 host: Host = self.hosts[(hostname, port)]
@@ -86,6 +94,8 @@ class WebServer():
             pass
         return False
 
+    # removes container from the maintained list.
+    # this is called when a caontainer dies or leaves a known network
     def remove_container(self, container):
         if container in self.containers:
             for host in self.hosts.values():
@@ -156,9 +166,9 @@ class WebServer():
                 if host.hostname not in obtained_certificates:
                     self.ssl.register_certificate_self_sign(host.hostname)
 
-                    host.ssl_file = host.hostname+".selfsigned"
+                    host.ssl_file = host.hostname + ".selfsigned"
                 else:
-                    host.ssl_file=host.hostname
+                    host.ssl_file = host.hostname
 
         output = self.template.render(virtual_servers=host_list)
         # print(self.template.render(virtual_servers=host_list))
@@ -214,8 +224,8 @@ class WebServer():
         :return:
         '''
         containers = self.client.containers.list()
-        self.containers={}
-        self.hosts={}
+        self.containers = {}
+        self.hosts = {}
         for container in containers:
             self._register_container(container)
 

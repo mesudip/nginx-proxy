@@ -4,7 +4,12 @@ from nginx_proxy import Container
 from nginx_proxy.Location import Location
 
 
-class Host():
+class Host:
+    """
+    It is equivalent to a nginx Server block.
+    It contains the locations and information about which containers serve the location.
+
+    """
     def __init__(self, client: DockerClient, hostname, port, scheme="http"):
         self.port = port
         self.hostname = hostname
@@ -42,8 +47,6 @@ class Host():
     def is_redirect(self):
         return False
 
-    def registerContainer(self, event):
-        pass
 
     def __repr__(self):
         return str({
