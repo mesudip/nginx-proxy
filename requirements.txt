@@ -1,4 +1,4 @@
 docker==3.7.0
-Jinja2==2.10
+Jinja2==2.10.1
 acme-nginx==0.2.0
 pydevd==1.5.1

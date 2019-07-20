@@ -118,14 +118,14 @@ class Container:
                 override_port=env_map["VIRTUAL_PORT"]
 
         for host_config in virtual_hosts:
-            host,location,container = Container._parse_host_entry(host_config)
-            container.address = ip_address
-            container.id = container.id
+            host, location, container_data = Container._parse_host_entry(host_config)
+            container_data.address = ip_address
+            container_data.id = container.id
             if override_port:
-                    container.port=override_port
+                container_data.port = override_port
             if override_ssl:
                 host.scheme="https"
-            yield (host,location,container)
+            yield (host, location, container_data)
 
 class UnconfiguredContainer(Exception):
     pass

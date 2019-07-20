@@ -1,3 +1,10 @@
-venv/*
-.git/*
+/venv
+/.git
 .gitignore
+.dockerignore
+/.idea
+__pycache__/
+README.md
+Dockerfile
+Dockerfile-staging
+

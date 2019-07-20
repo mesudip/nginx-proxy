@@ -1,10 +1,18 @@
 # mesudip/python-nginx:alpine is merge of official python and nginx images.
 FROM mesudip/python-nginx:alpine
-ARG LETSENCRYPT_API="https://acme-v02.api.letsencrypt.org/directory"
-RUN apk add gcc libc-dev openssl-dev linux-headers libffi-dev
+HEALTHCHECK --interval=10s --timeout=2s --start-period=10s --retries=3 CMD pgrep nginx >> /dev/null || exit 1
 COPY ./requirements.txt /requirements.txt
-RUN pip install --no-cache-dir -r /requirements.txt && rm -f /requirements.txt
-ENV LETSENCRYPT_API=${LETSENCRYPT_API}
+RUN apk --no-cache add  openssl && \
+    apk add --no-cache --virtual .build-deps \
+    gcc libc-dev openssl-dev linux-headers libffi-dev && \
+    pip install --no-cache-dir -r /requirements.txt &&  \
+    rm -f /requirements.txt && apk del .build-deps && \
+    ln -s /app/getssl /bin/getssl
 COPY . /app/
+COPY ./docker-entrypoint.sh /docker-entrypoint.sh
 WORKDIR /app
-CMD ["python3","-u" ,"main.py"]
+VOLUME /etc/nginx/dhparam
+CMD ["sh","-e" ,"/docker-entrypoint.sh"]
+ARG LETSENCRYPT_API="https://acme-v02.api.letsencrypt.org/directory"
+ENV LETSENCRYPT_API=${LETSENCRYPT_API}
+

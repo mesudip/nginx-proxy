@@ -1,11 +1,12 @@
-import docker
-import json
-from nginx_proxy import WebServer as containers
 import os
 import re
 import subprocess
-import pydevd
 import sys
+
+import docker
+import pydevd
+
+from nginx_proxy import WebServer as containers
 
 config = {}
 if "PYTHON_DEBUG_PORT" in os.environ:
@@ -35,12 +36,7 @@ hosts = containers.WebServer(client)
 
 def eventLoop():
     client.containers.list()
-    for e in client.events():
-        try:
-            e = e.decode()
-        except AttributeError:
-            pass
-        event = json.loads(e)
+    for event in client.events(decode=True):
         eventType = event["Type"]
 
         if eventType == "service":

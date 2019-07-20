@@ -1,5 +1,3 @@
-from docker import DockerClient
-
 from nginx_proxy import Container
 from nginx_proxy.Location import Location
 
@@ -15,7 +13,7 @@ class Host:
         self.port = port
         self.hostname = hostname
         self.locations: dict[str:Location] = {}  # the map of locations.and the container that serve the locations
-        self.container_map = {}
+        self.container_map: set = set()
         self.scheme = scheme
 
     def set_external_parameters(self, host, port):
@@ -26,18 +24,19 @@ class Host:
         if location not in self.locations:
             self.locations[location] = Location(location)
         self.locations[location].add(container)
-        self.container_map[container.id] = location
+        self.container_map.add(container.id)
 
     def remove_container(self, container_id):
+        removed = False
+        deletions = []
         if container_id in self.container_map:
-            location = self.container_map[container_id]
-            del self.container_map[container_id]
-            if self.locations[location].remove(container_id):
-                if self.locations[location].isEmpty():
-                    del self.locations[location]
-                return True
-
-        return False
+            for path, location in self.locations.items():
+                removed = location.remove(container_id) or removed
+                if location.isEmpty():
+                    deletions.append(path)
+        for path in deletions:
+            del self.locations[path]
+        return removed
 
     def isEmpty(self):
         return len(self.container_map) == 0

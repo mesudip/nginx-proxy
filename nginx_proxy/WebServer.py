@@ -1,14 +1,15 @@
-from docker import DockerClient
+import copy
+import datetime
+import sys
 
+import requests
+from docker import DockerClient
+from jinja2 import Template
+
+from nginx.Nginx import Nginx
 from nginx_proxy import Container
 from nginx_proxy.Host import Host
-from jinja2 import Template
-import sys
-import copy
-from nginx.Nginx import Nginx
-import requests
 from nginx_proxy.SSL import SSL
-import datetime
 
 
 class WebServer():
@@ -16,7 +17,7 @@ class WebServer():
         self.client = client
         self.nginx = Nginx("/etc/nginx/conf.d/default.conf")
         self.ssl = SSL("/etc/ssl", "/etc/nginx/conf.d/acme-nginx.conf", nginx=self.nginx)
-        self.containers = {}
+        self.containers = set()
         self.services = set()
         self.networks = {}
         self.conf_file_name = "/etc/nginx/conf.d/default.conf"
@@ -84,7 +85,8 @@ class WebServer():
                     else:
                         host.add_container(location, container)
                         self.hosts[(host.hostname, host.port)] = host
-                    found = True
+            found = True
+            self.containers.add(container.id)
 
         except Container.NoHostConiguration:
             print("Skip Container:", "No VIRTUAL_HOST configuration", "Id:" + container.id,
@@ -92,23 +94,24 @@ class WebServer():
         except Container.UnreachableNetwork:
             print("Skip Container:", "Not in any known network      ", "Id:" + container.id,
                   "Name:" + container.attrs["Name"].replace("/", ""), sep="\t")
-
         return found
 
     # removes container from the maintained list.
     # this is called when a caontainer dies or leaves a known network
     def remove_container(self, container):
+        if type(container) is Container:
+            container = container.id
+
         if container in self.containers:
+            removed = False
             for host in self.hosts.values():
-                a: Host = host
-                if a.remove_container(container):
-                    break
-            else:
-                return
-            del self.containers[container]
-            if a.isEmpty():
-                del self.hosts[(a.hostname, a.port)]
-            return self.reload()
+                if host.remove_container(container):
+                    removed = True
+                    if host.isEmpty():
+                        del self.hosts[(host.hostname, host.port)]
+            if removed:
+                self.containers.remove(container)
+                return self.reload()
 
     def reload(self, forced=False) -> bool:
         """
@@ -187,7 +190,7 @@ class WebServer():
                 self.rescan_and_reload()
         elif container in self.containers and network in self.networks:
             if not self.update_container(container):
-                self.remove_container(container)
+                self.remove_container(container.id)
                 self.reload()
 
     def connect(self, network, container, scope):
@@ -225,7 +228,7 @@ class WebServer():
         :return:
         '''
         containers = self.client.containers.list()
-        self.containers = {}
+        self.containers = set()
         self.hosts = {}
         for container in containers:
             self._register_container(container)

@@ -1,12 +1,13 @@
-from acme_nginx.AcmeV2 import AcmeV2
-import os
-import logging
-import OpenSSL
 import datetime
+import logging
+import os
 import shutil
-from OpenSSL import crypto
 from os.path import join
 
+import OpenSSL
+from OpenSSL import crypto
+
+from acme_nginx.AcmeV2 import AcmeV2
 from nginx.Nginx import Nginx
 
 
@@ -86,11 +87,11 @@ class SSL:
         shutil.copy2(os.path.join(self.ssl_path, "accounts", domain1 + ".account.key"),
                      os.path.join(self.ssl_path, "accounts", domain2 + "account.key"))
 
-    def register_certificate(self, domain):
+    def register_certificate(self, domain, no_self_check=False, ignore_existing=False):
         if type(domain) is str:
             domain = [domain]
-        verified_domain = self.nginx.verify_domain(domain)
-        domain = [x for x in verified_domain if not self.cert_exists(x)]
+        verified_domain = domain if no_self_check else self.nginx.verify_domain(domain)
+        domain = verified_domain if ignore_existing else [x for x in verified_domain if not self.cert_exists(x)]
         if len(domain):
             logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.DEBUG)
             acme = AcmeV2(
