@@ -1,4 +1,7 @@
-class Container():
+from nginx_proxy import Host
+
+
+class Container:
     def __init__(self, id, scheme=None, address=None, port=None, path=None):
         self.id = id
         self.address = address
@@ -52,15 +55,31 @@ class Container():
 
         host_list = entry_string.strip().split("->")
         external, internal = host_list if len(host_list) is 2 else (host_list[0], "")
-        return split_url(external), split_url(internal)
+        external, internal = (split_url(external), split_url(internal))
+        c = Container(None,
+                      scheme=internal["scheme"] if internal["scheme"] else "http",
+                      address=None,
+                      port=internal["port"] if internal["port"] else "80",
+                      path=internal["location"] if internal["location"] else "/")
+        h = Host.Host(
+            external["host"] if external["host"] else None,
+            # having https port on 80 will be detected later and used for redirection.
+            external["port"] if external["port"] else "80",
+            scheme=external["scheme"] if external["scheme"] else "http"
+        )
+
+        return (h,
+                external["location"] if external["location"] else "/",
+                c)
+
 
     @staticmethod
-    def get_contaier_info(container, service_id: str = None, known_networks: set = {}):
+    def host_generator(container, service_id: str = None, known_networks: set = {}):
         """
         :param container:
         :param service_id:
         :param known_networks:
-        :return:
+        :return: (Host,str,Container)
         """
         c = Container(container.id)
         network_settings = container.attrs["NetworkSettings"]
@@ -69,21 +88,12 @@ class Container():
         # convert the environment list into map
         env_map = {x[0]: x[1].strip() for x in env_list if len(x) is 2 and x[1].strip()}
 
-        # see if VIRTUAL_HOST entry is present
-        if "VIRTUAL_HOST" in env_map:
-            external_host, internal_host = Container._parse_host_entry(env_map["VIRTUAL_HOST"])
-        else:
+        # List all the environment variables with VIRTUAL_HOST and list them.
+        virtual_hosts = [x[1] for x in env_map.items() if x[0].startswith("VIRTUAL_HOST")]
+        if len(virtual_hosts) is 0:
             raise NoHostConiguration()
-        ssl_host = env_map["LETSENCRYPT_HOST"] if "LETSENCRYPT_HOST" in env_map else None
 
-        # now let's see the legacy VIRTUAL_PORT if port is not provided in the VIRTUAL_HOST entry, we use this entry.
-        if (not internal_host["port"]) and "VIRTUAL_PORT" in env_map:
-            internal_host["port"] = env_map["VIRTUAL_PORT"]
-
-        # if the  legacy VIRTUAL_PORT is also not provided let's try using the exposed port int he host.
-        if (not internal_host["port"]) and len(network_settings["Ports"]) is 1:
-            internal_host["port"] = list(network_settings["Ports"].keys())[0].split("/")[0]
-
+        # Instead of directly processing container details, check whether or not it's accessible through known networks.
         known_networks = set(known_networks)
         unknown = True
         for name, detail in network_settings["Networks"].items():
@@ -91,27 +101,31 @@ class Container():
             # fix for https://trello.com/c/js37t4ld
             if detail["Aliases"] is not None:
                 if detail["NetworkID"] in known_networks and unknown:
-                    internal_host["host"] = detail["Aliases"][len(detail["Aliases"]) - 1]
-                    internal_host["host"] = detail["IPAddress"]
+                    alias = detail["Aliases"][len(detail["Aliases"]) - 1]
                     ip_address = detail["IPAddress"]
                     network = name
-                    unknown = not bool(internal_host["host"])
-        if unknown:
+                    if ip_address:
+                        break
+        else:
             raise UnreachableNetwork()
 
-        c.address = internal_host["host"]
-        c.scheme = internal_host["scheme"] if internal_host["scheme"] else "http"
-        c.port = internal_host["port"] if internal_host["port"] else "80"
-        c.path = internal_host["location"] if internal_host["location"] else "/"
+        override_ssl = False
+        override_port = None
+        if len(virtual_hosts) is 1:
+            if "LETSENCRYPT_HOST" in env_map:
+                override_ssl = True
+            if "VIRTUAL_PORT" in env_map:
+                override_port=env_map["VIRTUAL_PORT"]
 
-        return (
-            "https" if ssl_host else (external_host["scheme"] if external_host["scheme"] else "http"),
-            external_host["host"] if external_host["host"] else container.id,
-            external_host["port"] if external_host["port"] else "80",
-            external_host["location"] if external_host["location"] else "/",
-            c,
-        )
-
+        for host_config in virtual_hosts:
+            host,location,container = Container._parse_host_entry(host_config)
+            container.address = ip_address
+            container.id = container.id
+            if override_port:
+                    container.port=override_port
+            if override_ssl:
+                host.scheme="https"
+            yield (host,location,container)
 
 class UnconfiguredContainer(Exception):
     pass
@@ -123,4 +137,3 @@ class UnreachableNetwork(UnconfiguredContainer):
 
 class NoHostConiguration(UnconfiguredContainer):
     pass
-

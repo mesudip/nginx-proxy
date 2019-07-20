@@ -1,7 +1,11 @@
-from nginx_proxy.Container import Container
+from . import Container
 
 
 class Location:
+    """
+        Location Represents the Location block in 
+    """
+
     def __init__(self, name):
         self.name = name
         self.containers = set()

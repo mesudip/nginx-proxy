@@ -69,30 +69,31 @@ class WebServer():
          If it's not configured with desired settings or is not accessible, return False
          @:returns True if the container is added to virtual hosts, false otherwise.
         """
+        found = False
         try:
-            scheme, hostname, port, location, mapping = Container.Container.get_contaier_info(container,
-                                                                                              known_networks=self.networks.keys())
+            for host, location, container in Container.Container.host_generator(container,
+                                                                                known_networks=self.networks.keys()):
+                # it might return string if there's a error in processing
+                if type(host) is not str:
+                    if (host.hostname, host.port) in self.hosts:
+                        existing_host: Host = self.hosts[(host.hostname, host.port)]
+                        existing_host.add_container(location, container)
+                        ## if any of the containers in for the virtualHost require https, the all others will be redirected to https.
+                        if host.scheme == "https":
+                            existing_host.scheme = "https"
+                    else:
+                        host.add_container(location, container)
+                        self.hosts[(host.hostname, host.port)] = host
+                    found = True
 
-            # if "com.docker.swarm.service.name" in container.attrs["Config"]["Labels"]:
-            #     id = container.attrs["Config"]["Labels"]["com.docker.swarm.service.name"]
-            #     self.services.add(id)
-            # else:
-            self.containers[container.id] = ""
+        except Container.NoHostConiguration:
+            print("Skip Container:", "No VIRTUAL_HOST configuration", "Id:" + container.id,
+                  "Name:" + container.attrs["Name"].replace("/", ""), sep="\t")
+        except Container.UnreachableNetwork:
+            print("Skip Container:", "Not in any known network      ", "Id:" + container.id,
+                  "Name:" + container.attrs["Name"].replace("/", ""), sep="\t")
 
-            if (hostname, port) in self.hosts:
-                host: Host = self.hosts[(hostname, port)]
-                host.add_container(location, mapping)
-                if scheme == "https":
-                    host.scheme = "https"
-            else:
-                host: Host = Host(client=self.client, hostname=hostname, port=port, scheme=scheme)
-                host.add_container(location, mapping)
-                self.hosts[(hostname, port)] = host
-            return True
-
-        except Container.UnconfiguredContainer as ignore:
-            pass
-        return False
+        return found
 
     # removes container from the maintained list.
     # this is called when a caontainer dies or leaves a known network

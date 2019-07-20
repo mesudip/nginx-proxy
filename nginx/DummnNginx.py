@@ -5,7 +5,7 @@ import difflib
 
 class DummyNginx:
 
-    def __init__(self, config_file_path):
+    def __init__(self, config_file_path=None):
         pass
 
     def start(self) -> bool:
@@ -19,6 +19,8 @@ class DummyNginx:
         return True
 
     def forced_update(self, config_str):
+        print("Forced update")
+        print(config_str)
         return True
 
     def update_config(self, config_str) -> bool:
@@ -27,6 +29,8 @@ class DummyNginx:
         :param config_str: string containing configuration to be written into config file
         :return: true if the new config was used false if error or if the new configuration is same as previous
         """
+        print("Normal update")
+        print(config_str)
         return True
 
     def reload(self) -> bool:

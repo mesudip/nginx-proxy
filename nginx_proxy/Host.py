@@ -10,7 +10,8 @@ class Host:
     It contains the locations and information about which containers serve the location.
 
     """
-    def __init__(self, client: DockerClient, hostname, port, scheme="http"):
+
+    def __init__(self, hostname, port, scheme="http"):
         self.port = port
         self.hostname = hostname
         self.locations: dict[str:Location] = {}  # the map of locations.and the container that serve the locations
@@ -46,7 +47,6 @@ class Host:
 
     def is_redirect(self):
         return False
-
 
     def __repr__(self):
         return str({
