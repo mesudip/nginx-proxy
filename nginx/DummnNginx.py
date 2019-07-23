@@ -1,8 +1,3 @@
-import sys
-import subprocess
-import difflib
-
-
 class DummyNginx:
 
     def __init__(self, config_file_path=None):
@@ -17,6 +12,9 @@ class DummyNginx:
         :return: true if config test is successful otherwise false
         """
         return True
+
+    def verify_domain(self, domain):
+        return [domain] if type(domain) is str else domain
 
     def forced_update(self, config_str):
         print("Forced update")
