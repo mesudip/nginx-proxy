@@ -43,9 +43,9 @@ class SSL:
         cert.get_subject().C = "US"
         cert.get_subject().ST = "Subject_st"
         cert.get_subject().L = "Subject_l"
-        cert.get_subject().O = "Subject_o"
-        cert.get_subject().OU = "my organization"
-        cert.get_subject().CN = "Subject_cn"
+        cert.get_subject().O = "Nginx-Proxy - mesudip/nginx-proxy"
+        # cert.get_subject().OU = "my organization"
+        cert.get_subject().CN = domain
         cert.set_serial_number(1000)
         cert.gmtime_adj_notBefore(0)
         cert.gmtime_adj_notAfter(10 * 365 * 24 * 60 * 60)
@@ -59,12 +59,16 @@ class SSL:
             crypto.dump_privatekey(crypto.FILETYPE_PEM, k))
 
     def expiry_time(self, domain) -> datetime:
+
         path = os.path.join(self.ssl_path, "certs", domain + ".crt")
         if self.cert_exists(domain):
             with open(path) as file:
                 x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, file.read())
                 return datetime.datetime.strptime(x509.get_notAfter().decode(), "%Y%m%d%H%M%SZ")
         return datetime.datetime.now()
+
+    def expiry_days_remain(self, domain) -> int:
+        return (self.expiry_time(domain) - datetime.datetime.now()).days
 
     def cert_exists(self, domain) -> bool:
         if os.path.exists(os.path.join(self.ssl_path, "certs", domain + ".crt")) \
@@ -114,6 +118,22 @@ class SSL:
             return [domain[0]] + verified_domain
         else:
             return verified_domain
+
+    def register_certificate_or_selfsign(self, domain, no_self_check=False, ignore_existing=False):
+        obtained_certificates = []
+        for i in range(0, len(domain), 50):
+            # only fifty at a time.
+            sub_list = domain[i:i + 50]
+            obtained = self.register_certificate(sub_list, no_self_check=no_self_check, ignore_existing=ignore_existing)
+            if len(obtained):
+                domain1 = obtained[0]
+                for x in obtained[1:]:
+                    self.reuse(domain1, x)
+                obtained_certificates.extend(obtained)
+        obtained_set = set(obtained_certificates)
+        self_signed = [x for x in domain if x not in obtained_set]
+        self.register_certificate_self_sign(self_signed)
+        return obtained_certificates
 
     def register_certificate_self_sign(self, domain):
         if type(domain) is str:

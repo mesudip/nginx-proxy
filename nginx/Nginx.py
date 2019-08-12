@@ -1,12 +1,13 @@
-import re
-import string
-import sys
-import subprocess
 import difflib
 import random
-import requests
+import re
+import string
+import subprocess
+import sys
 import time
 from os import path
+
+import requests
 
 
 class Nginx:
@@ -66,6 +67,12 @@ class Nginx:
         return self.reload()
 
     def forced_update(self, config_str):
+        """
+        Simply reload the nginx with the configuration, don't check whether or not configuration is changed or not.
+        If change causes nginx to fail, revert to last working config.
+        :param config_str:
+        :return:
+        """
         with open(self.config_file_path, "w") as file:
             file.write(config_str)
         if not self.start():

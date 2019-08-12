@@ -1,6 +1,7 @@
 import copy
 import datetime
 import sys
+import threading
 
 import requests
 from docker import DockerClient
@@ -23,12 +24,19 @@ class WebServer():
         self.conf_file_name = "/etc/nginx/conf.d/default.conf"
         self.host_file = "/etc/hosts"
         self.hosts = {}
-        file = open("default.conf.template")
+        self.ssl_certificates = {}
+        self.self_signed_certificates = set()
+        self.next_ssl_expiry = None
+        file = open("vhosts_template/default.conf.template")
         self.template = Template(file.read())
         file.close()
         self.learn_yourself()
         self.rescan_all_container()
         self.rescan_time = None
+        self.lock = threading.Condition()
+        self.expiry_changed = threading.Event()
+        self.certificate_expiry_thread = threading.Thread(target=self.check_certificate_expiry)
+
         if self.nginx.config_test():
             if not self.nginx.start():
                 print("ERROR: Config test succeded but nginx failed to start", file=sys.stderr)
@@ -43,6 +51,36 @@ class WebServer():
                 print("Please check the configuration of your containers and restart this container", file=sys.stderr)
                 print("EXITING .....", file=sys.stderr)
                 exit(1)
+        self.certificate_expiry_thread.start()
+
+    def check_certificate_expiry(self):
+        self.lock.acquire()
+        while True:
+            if self.next_ssl_expiry is None:
+                print("[SSL Refresh Thread]  Looks like there no ssl certificates, Sleeping until  there's one")
+                self.lock.wait()
+            else:
+                now = datetime.datetime.now()
+                remaining_days = (self.next_ssl_expiry - now).days
+                remaining_days = 30 if remaining_days > 30 else remaining_days
+
+                if remaining_days > 2:
+                    print(
+                        "[SSL Refresh Thread] All the certificates are up to date sleeping for" + str(
+                            remaining_days) + "days.")
+                    self.lock.wait((remaining_days - 2) * 3600 * 24)
+                else:
+                    print("[SSL Refresh Thread] Looks like we nned to refresh certificates that are about to expire")
+                    x = [x for x in self.ssl_certificates if (self.ssl_certificates[x] - now).days < 6]
+                    print("[SSL Refresh Thread] Registring new certficate fo domains:", x)
+                    registered = set(self.ssl.register_certificate_or_selfsign(x))
+                    for host in x:
+                        if host not in registered:
+                            del self.ssl_certificates[host]
+                            self.self_signed_certificates.add(host)
+                        else:
+                            self.ssl_certificates[host] = self.ssl.expiry_time(domain=host)
+                    self.reload(forced=True)
 
     def learn_yourself(self):
         """
@@ -82,9 +120,16 @@ class WebServer():
                         ## if any of the containers in for the virtualHost require https, the all others will be redirected to https.
                         if host.scheme == "https":
                             existing_host.scheme = "https"
+                        host = existing_host
                     else:
                         host.add_container(location, container)
                         self.hosts[(host.hostname, host.port)] = host
+                    if host.scheme == "https":
+                        if host.hostname not in self.ssl_certificates:
+                            host.ssl_expiry = self.ssl.expiry_time(host.hostname)
+                        if (host.ssl_expiry - datetime.datetime.now()).days > 2:
+                            self.ssl_certificates[host.hostname] = host.ssl_expiry
+
             found = True
             self.containers.add(container.id)
 
@@ -104,16 +149,25 @@ class WebServer():
 
         if container in self.containers:
             removed = False
+            deletions = []
             for host in self.hosts.values():
                 if host.remove_container(container):
                     removed = True
                     if host.isEmpty():
-                        del self.hosts[(host.hostname, host.port)]
+                        if host.scheme == "https":
+                            if host.hostname in self.self_signed_certificates:
+                                self.self_signed_certificates.remove(host.hostname)
+                            else:
+                                del self.ssl_certificates[host.host.hostname]
+                        deletions.append((host.hostname, host.port))
             if removed:
+                for d in deletions:
+                    del self.hosts[d]
                 self.containers.remove(container)
                 return self.reload()
 
     def reload(self, forced=False) -> bool:
+        self.lock.acquire()
         """
         Creates a new configuration based on current state and signals nginx to reload.
         This is called whenever there's change in container or network state.
@@ -123,7 +177,7 @@ class WebServer():
 
         next_reload = None
         now = datetime.datetime.now()
-        ssl_requests = []
+        ssl_requests = set()
         for host in host_list:
             host.locations = list(host.locations.values())
             host.upstreams = {}
@@ -136,51 +190,46 @@ class WebServer():
                     location.upstream = False
             host.upstreams = [{"id": x, "containers": y} for x, y in host.upstreams.items()]
             if host.scheme == "https":
-                host.ssl_host = True
-                expiry = self.ssl.expiry_time(host.hostname)
-                remain = expiry - now
-                if remain.days < 15:
-                    ssl_requests.append((host.hostname, host.port))
-                else:
-                    self.hosts[(host.hostname, host.port)].ssl_expiry = expiry
-                    host.ssl_file = host.hostname
-                if next_reload:
-                    if next_reload > expiry:
-                        next_reload = expiry
-                else:
-                    next_reload = expiry
-                if int(host.port) == 80 or int(host.port) == 443 or host.port is None:
+                if int(host.port) in (80, 443):
                     host.ssl_redirect = True
                     host.port = 443
-        obtained_certificates = []
-        host_names = list(set([x[0] for x in ssl_requests]))
-        for i in range(0, len(ssl_requests), 50):
-            sub_list = host_names[i:i + 50]
-            obtained = self.ssl.register_certificate(sub_list)
-            if len(obtained):
-                domain1 = obtained[0]
-                for x in obtained[1:]:
-                    self.ssl.reuse(domain1, x)
-                obtained_certificates.extend(obtained)
-        obtained_certificates = set(obtained_certificates)
+                host.ssl_host = True
 
-        host_names = set(host_names)
-        for host in host_list:
-            if host.hostname in host_names:
-                if host.hostname not in obtained_certificates:
-                    self.ssl.register_certificate_self_sign(host.hostname)
-
+                if host.hostname in self.ssl_certificates:
+                    host.ssl_file = host.hostname
+                elif host.hostname in self.self_signed_certificates:
                     host.ssl_file = host.hostname + ".selfsigned"
                 else:
-                    host.ssl_file = host.hostname
+                    ssl_requests.add(host.hostname)
+
+        if len(ssl_requests):
+            registered = self.ssl.register_certificate_or_selfsign(list(ssl_requests))
+            for host in host_list:
+                if host.hostname in ssl_requests:
+                    if host.hostname not in registered:
+                        self.ssl.register_certificate_self_sign(host.hostname)
+                        host.ssl_file = host.hostname + ".selfsigned"
+                        self.self_signed_certificates.add(host.hostname)
+                    else:
+                        host.ssl_file = host.hostname
+                        self.ssl_certificates[host.hostname] = self.ssl.expiry_time(host.hostname)
+                        host.ssl_expiry = self.ssl_certificates[host.hostname]
+                        if self.next_ssl_expiry:
+                            if self.next_ssl_expiry > host.ssl_expiry:
+                                self.next_ssl_expiry = host.ssl_expiry
+                                self.lock.notify()
+                        else:
+                            self.lock.notify()
+                            self.next_ssl_expiry = host.ssl_expiry
 
         output = self.template.render(virtual_servers=host_list)
         # print(self.template.render(virtual_servers=host_list))
-        self.rescan_time = next_reload
         if forced:
-            return self.nginx.forced_update(output)
+            response = self.nginx.forced_update(output)
         else:
-            return self.nginx.update_config(output)
+            response = self.nginx.update_config(output)
+        self.lock.release()
+        return response
 
     def disconnect(self, network, container, scope):
         if container == self.id:
