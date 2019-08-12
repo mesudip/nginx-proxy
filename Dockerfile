@@ -13,6 +13,7 @@ RUN apk --no-cache add  openssl && \
     ln -s /app/docker-entrypoint.sh /docker-entrypoint.sh
 ARG LETSENCRYPT_API="https://acme-v02.api.letsencrypt.org/directory"
 ENV LETSENCRYPT_API=${LETSENCRYPT_API}
+WORKDIR /app
 COPY . /app/
 
 

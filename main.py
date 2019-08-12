@@ -4,25 +4,27 @@ import subprocess
 import sys
 
 import docker
-import pydevd
 
 from nginx_proxy import WebServer as containers
 
-config = {}
+debug_config = {}
 if "PYTHON_DEBUG_PORT" in os.environ:
     if os.environ["PYTHON_DEBUG_PORT"].strip():
-        config["port"] = int(os.environ["PYTHON_DEBUG_PORT"].strip())
+        debug_config["port"] = int(os.environ["PYTHON_DEBUG_PORT"].strip())
 if "PYTHON_DEBUG_HOST" in os.environ:
-    config["host"] = os.environ["PYTHON_DEBUG_HOST"]
+    debug_config["host"] = os.environ["PYTHON_DEBUG_HOST"]
 if "PYTHON_DEBUG_ENABLE" in os.environ:
     if os.environ["PYTHON_DEBUG_ENABLE"].strip() == "true":
-        if "host" not in config:
-            config["host"] = re.findall("([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)+",
-                                        subprocess.run(["ip", "route"], stdout=subprocess.PIPE).stdout.decode().split(
+        if "host" not in debug_config:
+            debug_config["host"] = re.findall("([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)+",
+                                              subprocess.run(["ip", "route"],
+                                                             stdout=subprocess.PIPE).stdout.decode().split(
                                             "\n")[0])[0]
 
-if len(config):
-    pydevd.settrace(stdoutToServer=True, stderrToServer=True, **config)
+if len(debug_config):
+    import pydevd
+
+    pydevd.settrace(stdoutToServer=True, stderrToServer=True, **debug_config)
 
 client = docker.from_env()
 # fix for https://trello.com/c/dMG5lcTZ

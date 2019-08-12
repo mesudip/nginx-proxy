@@ -5,4 +5,4 @@ then
     echo "Generating new DH Parameters for SSL as it's missing"
     openssl dhparam -out /etc/nginx/dhparam/dhparam.pem ${DHPARAM_SIZE:-2048}
 fi
-python3 -u  main.py
+python3 -u  /app/main.py
