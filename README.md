@@ -49,7 +49,7 @@ To have multiple virtual hosts  out of single container, you can use `VIRTUAL_HO
 ```bash
     docker run -d 
     -e "VIRTUAL_HOST1=https://ethereum.com -> :8545"
-    -e "VIRTUAL_HOST2=https://ethereum.com/wss -> 8546"
+    -e "VIRTUAL_HOST2=https://ethereum.com/wss -> :8546"
     --rpc --rpcaddr "0.0.0.0"  --ws --wsaddr 0.0.0.0
     ethereum/client-go
 
