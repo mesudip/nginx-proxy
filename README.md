@@ -17,9 +17,9 @@ The only thing that matters is that the container shares at least one common net
 environment variable is set. If you have multiple exposed ports in the container, don't forget to 
 mention the container port too. 
 ```
-docker run --network frontend
-          --name test-host
-          -e VIRTUAL_HOST="example.com"
+docker run --network frontend \
+          --name test-host \
+          -e VIRTUAL_HOST="example.com" \
           nginx:alpine
 ```
 
@@ -47,11 +47,11 @@ To have multiple virtual hosts  out of single container, you can use `VIRTUAL_HO
 
 **Example:** setting up a Ethereum geth node.
 ```bash
-    docker run -d 
-    -e "VIRTUAL_HOST1=https://ethereum.com -> :8545"
-    -e "VIRTUAL_HOST2=https://ethereum.com/wss -> 8546"
-    --rpc --rpcaddr "0.0.0.0"  --ws --wsaddr 0.0.0.0
-    ethereum/client-go
+    docker run -d  \
+    -e "VIRTUAL_HOST1=https://ethereum.example.com -> :8545" \
+    -e "VIRTUAL_HOST2=https://ethereum.example.com/wss -> 8546" \
+    --rpc --rpcaddr "0.0.0.0"  --ws --wsaddr 0.0.0.0 \
+    ethereum/client-go 
 
 ```
 
