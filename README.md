@@ -3,7 +3,7 @@ Docker container for automatically creating nginx configuration based on active 
 
 ## Setting up nginx-proxy
 ```
-docker network create frontend;    // create a network for nginx proxy
+docker network create frontend;    # create a network for nginx proxy
 docker run  --network frontend \
             --name nginx \
             -v /var/run/docker.sock:/var/run/docker.sock:ro \
