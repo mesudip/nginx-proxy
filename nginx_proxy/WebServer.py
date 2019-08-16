@@ -158,7 +158,7 @@ class WebServer():
                             if host.hostname in self.self_signed_certificates:
                                 self.self_signed_certificates.remove(host.hostname)
                             else:
-                                del self.ssl_certificates[host.host.hostname]
+                                del self.ssl_certificates[host.hostname]
                         deletions.append((host.hostname, host.port))
             if removed:
                 for d in deletions:
