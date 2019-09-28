@@ -81,4 +81,7 @@ def process_network_event(action, event):
         pass
 
 
-eventLoop()
+try:
+    eventLoop()
+except (KeyboardInterrupt, SystemExit):
+    hosts.cleanup();

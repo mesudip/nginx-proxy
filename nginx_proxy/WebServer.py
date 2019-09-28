@@ -1,5 +1,6 @@
 import copy
 import datetime
+import re
 import sys
 import threading
 
@@ -15,6 +16,7 @@ from nginx_proxy.SSL import SSL
 
 class WebServer():
     def __init__(self, client: DockerClient, *args):
+        self.shouldExit = False
         self.client = client
         self.nginx = Nginx("/etc/nginx/conf.d/default.conf")
         self.ssl = SSL("/etc/ssl", "/etc/nginx/conf.d/acme-nginx.conf", nginx=self.nginx)
@@ -56,6 +58,8 @@ class WebServer():
     def check_certificate_expiry(self):
         self.lock.acquire()
         while True:
+            if self.shouldExit:
+                return
             if self.next_ssl_expiry is None:
                 print("[SSL Refresh Thread]  Looks like there no ssl certificates, Sleeping until  there's one")
                 self.lock.wait()
@@ -92,12 +96,20 @@ class WebServer():
         try:
             file = open("/proc/self/cgroup")
             self.id = [l for l in file.read().split("\n") if l.find("cpu") != -1][0].split("/")[-1]
+            if len(self.id) > 64:
+                slice = [x for x in re.split('[^a-fA-F0-9]', self.id) if len(x) is 64]
+                if len(slice) is 1:
+                    self.id = slice[0]
+                else:
+                    print("[ERROR] Couldn't parse container id from value :", self.id, file=sys.stderr)
+                    raise Exception()
             self.container = self.client.containers.get(self.id)
             self.networks = [a for a in self.container.attrs["NetworkSettings"]["Networks"].keys()]
             self.networks = {self.client.networks.get(a).id: a for a in self.networks}
             file.close()
         except Exception as e:
-            print("Couldn't determine container ID of this container. Is it running in docker environment?",
+            print("[ERROR]Couldn't determine container ID of this container:", e.args,
+                  "\n Is it running in docker environment?",
                   file=sys.stderr)
             print("Falling back to default network", file=sys.stderr)
             network = self.client.networks.get("frontend")
@@ -287,3 +299,9 @@ class WebServer():
     def rescan_and_reload(self):
         self.rescan_all_container()
         return self.reload()
+
+    def cleanup(self):
+        self.lock.acquire()
+        self.shouldExit = True
+        self.lock.notify()
+        self.lock.release()
