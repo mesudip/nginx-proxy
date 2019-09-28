@@ -16,9 +16,10 @@ class SSL:
         self.ssl_path = ssl_path
         self.vhost_path = vhost_path
         self.nginx = nginx
-        x = os.environ.get("LETSENCRPYT_API")
+        x = os.environ.get("LETSENCRYPT_API")
         if x is not None:
             if x.startswith("https://"):
+                print("Using letsencrypt  url :", x)
                 self.api_url = x
             else:
                 self.api_url = "https://acme-staging-v02.api.letsencrypt.org/directory"
@@ -32,6 +33,8 @@ class SSL:
         except FileExistsError as e:
             pass
 
+    def get_cert_file(self, domain):
+        return os.path.join(self.ssl_path, "certs", domain + ".crt")
     def self_sign(self, domain):
         CERT_FILE = domain + ".selfsigned.crt"
         KEY_FILE = domain + ".selfsigned.key"
@@ -60,9 +63,8 @@ class SSL:
 
     def expiry_time(self, domain) -> datetime:
 
-        path = os.path.join(self.ssl_path, "certs", domain + ".crt")
         if self.cert_exists(domain):
-            with open(path) as file:
+            with open(self.get_cert_file(domain)) as file:
                 x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, file.read())
                 return datetime.datetime.strptime(x509.get_notAfter().decode(), "%Y%m%d%H%M%SZ")
         return datetime.datetime.now()
@@ -89,7 +91,7 @@ class SSL:
         shutil.copy2(os.path.join(self.ssl_path, "private", domain1 + ".key"),
                      os.path.join(self.ssl_path, "private", domain2 + ".key"))
         shutil.copy2(os.path.join(self.ssl_path, "accounts", domain1 + ".account.key"),
-                     os.path.join(self.ssl_path, "accounts", domain2 + "account.key"))
+                     os.path.join(self.ssl_path, "accounts", domain2 + ".account.key"))
 
     def register_certificate(self, domain, no_self_check=False, ignore_existing=False):
         if type(domain) is str:
@@ -112,14 +114,13 @@ class SSL:
             )
 
             directory = acme.register_account()
-            print("content in registration detail", directory);
             acme.solve_http_challenge(directory)
-            verified_domain.remove(domain[0])
-            return [domain[0]] + verified_domain
+            return domain
         else:
             return verified_domain
 
     def register_certificate_or_selfsign(self, domain, no_self_check=False, ignore_existing=False):
+        print("[CertificateOrSelfSign] Adding domains:", domain)
         obtained_certificates = []
         for i in range(0, len(domain), 50):
             # only fifty at a time.
@@ -132,6 +133,8 @@ class SSL:
                 obtained_certificates.extend(obtained)
         obtained_set = set(obtained_certificates)
         self_signed = [x for x in domain if x not in obtained_set]
+        if len(self_signed):
+            print("[Self Signing certificates]", self_signed)
         self.register_certificate_self_sign(self_signed)
         return obtained_certificates
 

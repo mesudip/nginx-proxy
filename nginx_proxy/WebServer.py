@@ -70,12 +70,13 @@ class WebServer():
                             remaining_days) + "days.")
                     self.lock.wait((remaining_days - 2) * 3600 * 24)
                 else:
-                    print("[SSL Refresh Thread] Looks like we nned to refresh certificates that are about to expire")
+                    print("[SSL Refresh Thread] Looks like we need to refresh certificates that are about to expire")
+                    for x in self.ssl_certificates:
+                        print("Remaining days :", x, ":", (self.ssl_certificates[x] - now).days)
                     x = [x for x in self.ssl_certificates if (self.ssl_certificates[x] - now).days < 6]
-                    print("[SSL Refresh Thread] Registring new certficate fo domains:", x)
-                    registered = set(self.ssl.register_certificate_or_selfsign(x))
+                    acme_ssl_certificates = set(self.ssl.register_certificate_or_selfsign(x, ignore_existing=True))
                     for host in x:
-                        if host not in registered:
+                        if host not in acme_ssl_certificates:
                             del self.ssl_certificates[host]
                             self.self_signed_certificates.add(host)
                         else:
@@ -127,6 +128,8 @@ class WebServer():
                     if host.scheme == "https":
                         if host.hostname not in self.ssl_certificates:
                             host.ssl_expiry = self.ssl.expiry_time(host.hostname)
+                        else:
+                            host.ssl_expiry = self.ssl_certificates[host.host.hostname]
                         if (host.ssl_expiry - datetime.datetime.now()).days > 2:
                             self.ssl_certificates[host.hostname] = host.ssl_expiry
 
@@ -137,7 +140,7 @@ class WebServer():
             print("Skip Container:", "No VIRTUAL_HOST configuration", "Id:" + container.id,
                   "Name:" + container.attrs["Name"].replace("/", ""), sep="\t")
         except Container.UnreachableNetwork:
-            print("Skip Container:", "Not in any known network      ", "Id:" + container.id,
+            print("Skip Container:", "UNREACHABLE Network           ", "Id:" + container.id,
                   "Name:" + container.attrs["Name"].replace("/", ""), sep="\t")
         return found
 
@@ -223,7 +226,6 @@ class WebServer():
                             self.next_ssl_expiry = host.ssl_expiry
 
         output = self.template.render(virtual_servers=host_list)
-        # print(self.template.render(virtual_servers=host_list))
         if forced:
             response = self.nginx.forced_update(output)
         else:

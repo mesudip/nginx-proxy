@@ -59,7 +59,7 @@ class Container:
         c = Container(None,
                       scheme=internal["scheme"] if internal["scheme"] else "http",
                       address=None,
-                      port=internal["port"] if internal["port"] else "80",
+                      port=internal["port"] if internal["port"] else None,
                       path=internal["location"] if internal["location"] else "/")
         h = Host.Host(
             external["host"] if external["host"] else None,
@@ -123,6 +123,11 @@ class Container:
             container_data.id = container.id
             if override_port:
                 container_data.port = override_port
+            elif container_data.port is None:
+                if len(network_settings["Ports"]) is 1:
+                    container_data.port = list(network_settings["Ports"].keys())[0].split("/")[0]
+                else:
+                    container_data.port = "80"
             if override_ssl:
                 host.scheme="https"
             yield (host, location, container_data)
