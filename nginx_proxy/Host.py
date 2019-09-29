@@ -20,9 +20,11 @@ class Host:
         self.hostname = host
         self.port = port
 
-    def add_container(self, location: str, container: Container):
+    def add_container(self, location: str, container: Container, websocket=False):
         if location not in self.locations:
-            self.locations[location] = Location(location)
+            self.locations[location] = Location(location, is_websocket_backend=websocket)
+        elif websocket:
+            self.locations[location].websocket = True
         self.locations[location].add(container)
         self.container_set.add(container.id)
 
@@ -51,6 +53,7 @@ class Host:
 
     def __repr__(self):
         return str({
+            "scheme": self.scheme,
             "locations": self.locations,
             "server_name": self.hostname,
             "port": self.port})

@@ -125,23 +125,28 @@ class WebServer():
         try:
             for host, location, container in Container.Container.host_generator(container,
                                                                                 known_networks=self.networks.keys()):
+                websocket = host.scheme in ("ws", "wss")
+                if host.scheme == "ws":
+                    host.scheme = "http"
+                elif host.scheme == "wss":
+                    host.scheme = "https"
                 # it might return string if there's a error in processing
                 if type(host) is not str:
                     if (host.hostname, host.port) in self.hosts:
                         existing_host: Host = self.hosts[(host.hostname, host.port)]
-                        existing_host.add_container(location, container)
+                        existing_host.add_container(location, container, websocket=websocket)
                         ## if any of the containers in for the virtualHost require https, the all others will be redirected to https.
                         if host.scheme == "https":
                             existing_host.scheme = "https"
                         host = existing_host
                     else:
-                        host.add_container(location, container)
+                        host.add_container(location, container, websocket=websocket)
                         self.hosts[(host.hostname, host.port)] = host
                     if host.scheme == "https":
                         if host.hostname not in self.ssl_certificates:
                             host.ssl_expiry = self.ssl.expiry_time(host.hostname)
                         else:
-                            host.ssl_expiry = self.ssl_certificates[host.host.hostname]
+                            host.ssl_expiry = self.ssl_certificates[host.hostname]
                         if (host.ssl_expiry - datetime.datetime.now()).days > 2:
                             self.ssl_certificates[host.hostname] = host.ssl_expiry
 

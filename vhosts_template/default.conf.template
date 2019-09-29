@@ -22,7 +22,10 @@ server{
         location {{ location.name }} { {% if location.upstream %}
             proxy_pass {{ location.container.scheme }}://{{ location.upstream }}{{location.container.path}};{% else %}
             proxy_pass {{location.container.scheme }}://{{ location.container.address }}:{{ location.container.port }}{{ location.container.path }};{% endif %}{% if location.name != '/' %}
-            proxy_redirect $scheme://$http_host{% if location.container.path!="/" %}{{ location.container.path }}{% endif%} $scheme://$http_host{{location.name}};{% endif %}
+            proxy_redirect $scheme://$http_host{% if location.container.path!="/" %}{{ location.container.path }}{% endif%} $scheme://$http_host{{location.name}};{% endif %} {% if location.websocket %}
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "Upgrade";{% endif %}
         }{% endfor %}
     
 }{% else %}
@@ -32,7 +35,10 @@ server{
         location {{ location.name }} { {% if location.upstream %}
             proxy_pass {{ location.container.scheme }}://{{ location.upstream }}{{location.container.path}};{% else %}
             proxy_pass {{location.container.scheme }}://{{ location.container.address }}:{{ location.container.port }}{{ location.container.path }};{% endif %}{% if location.name != '/' %}
-            proxy_redirect $scheme://$http_host{% if location.container.path!="/" %}{{ location.container.path }}{% endif%} $scheme://$http_host{{location.name}};{% endif %}
+            proxy_redirect $scheme://$http_host{% if location.container.path!="/" %}{{ location.container.path }}{% endif%} $scheme://$http_host{{location.name}};{% endif %}  {% if location.websocket %}
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "Upgrade";{% endif %}
         }{% endfor %}
  }{% endif %}{% if server.ssl_redirect %}
 server {

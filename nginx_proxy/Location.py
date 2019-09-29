@@ -6,7 +6,8 @@ class Location:
         Location Represents the Location block in 
     """
 
-    def __init__(self, name):
+    def __init__(self, name, is_websocket_backend=False):
+        self.websocket = is_websocket_backend
         self.name = name
         self.containers = set()
 
@@ -26,3 +27,6 @@ class Location:
         if type(other) is Location:
             return other.name == self.name
         return False
+
+    def __repr__(self):
+        return str({"name": self.name, "conatiners": self.containers, "websocket": self.websocket})

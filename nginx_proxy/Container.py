@@ -129,7 +129,10 @@ class Container:
                 else:
                     container_data.port = "80"
             if override_ssl:
-                host.scheme="https"
+                if host.scheme is "ws":
+                    host.scheme = "wss"
+                else:
+                    host.scheme = "https"
             yield (host, location, container_data)
 
 class UnconfiguredContainer(Exception):
