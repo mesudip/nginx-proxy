@@ -85,6 +85,7 @@ class WebServer():
                             self.self_signed_certificates.add(host)
                         else:
                             self.ssl_certificates[host] = self.ssl.expiry_time(domain=host)
+                    self.next_ssl_expiry = min(self.ssl_certificates.values())
                     self.reload(forced=True)
 
     def learn_yourself(self):
