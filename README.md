@@ -90,5 +90,5 @@ so in order to preserve it, you can create a volume or mount it to a host direct
 
 #### Compatibility with jwilder/nginx-proxy
 This nginx-proxy supports `VIRTUAL_HOST` `LETSENCRYPT_HOST` AND `VIRTUAL_PORT` like in jwilder/nginx-proxy.
-But comma separated `VURTIAL_HOST` is not supported. It's still missing a lot of other feature of jwilder/nginx-proxy 
+But comma separated `VIRTUAL_HOST` is not supported. It's still missing a lot of other feature of jwilder/nginx-proxy 
 hopefully they will be available in future versions.
