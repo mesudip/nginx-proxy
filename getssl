@@ -4,19 +4,26 @@ import sys
 from nginx import Nginx
 from nginx_proxy import SSL
 
-if __name__=="__main__":
+
+def print_usage():
+    print("Usage:")
+    print()
+    print("       getssl [--options]  <hostname1>  [ hostname2 hostname3 ...]")
+    print()
+    print("Available options")
+    print("    --skip-dns-check    Do not perform check if dns points to this machine")
+    print("    --new               Override if certificate already exists")
+    print("    --force             Do no perform any check and call acme directly")
+    exit(1)
+
+
+if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage:")
-        print()
-        print("       getssl [--options]  <hostname1>  [ hostname2 hostname3 ...]")
-        print()
-        print("Available options")
-        print("    --skip-dns-check    Do not perform check if dns points to this machine")
-        print("    --new               Override if certificate already exists")
-        print("    --force             Do no perform any check and call acme directly")
-        exit(1)
+        print_usage()
     arg_set = set(sys.argv[1:])
     kwargs = {}
+    if "-h" in arg_set or "--help" in arg_set or "-help" in arg_set or "help" in arg_set:
+        print_usage()
     if "--force" in arg_set:
         kwargs["no_self_check"] = True
         kwargs["ignore_existing"] = True
@@ -26,4 +33,4 @@ if __name__=="__main__":
         kwargs["no_self_check"] = True
     nginx = Nginx.Nginx("/etc/nginx/conf.d/gen-ssl-direct.conf")
     ssl = SSL.SSL("/etc/ssl", "/etc/nginx/conf.d/gen-ssl-direct.conf", nginx=nginx)
-    ssl.register_certificate(sys.argv[1:], **kwargs)
+    ssl.register_certificate([x for x in sys.argv[1:] if not x.startswith("-")], **kwargs)

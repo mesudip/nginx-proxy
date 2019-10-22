@@ -74,7 +74,7 @@ class WebServer():
                             remaining_days) + "days.")
                     self.lock.wait((remaining_days - 2) * 3600 * 24)
                 else:
-                    print("[SSL Refresh Thread] Looks like we need to refresh certificates that are about to expire")
+                    print("[SSL Recfresh Thread] Looks like we need to refresh certificates that are about to expire")
                     for x in self.ssl_certificates:
                         print("Remaining days :", x, ":", (self.ssl_certificates[x] - now).days)
                     x = [x for x in self.ssl_certificates if (self.ssl_certificates[x] - now).days < 6]
