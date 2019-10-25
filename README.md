@@ -42,16 +42,21 @@ example.com/<span></span>api | http://<span></span>example.com/api |/ | exposed 
 example.com/<span></span>api -> :8080/api | http://<span></span>example.com/api | /api | 8080
 https://<span></span>example.com/<span></span>api/v1:5001  -> :8080/api | https://<span></span>example.com/<span></span>api/v1:5001 | /api | 8080
 wss://example.com/websocket | wss://example.com/websocket | / | exposed port
+## Support for websocket
+Exposing websocket requires the websocket endpoint to be explicitly configured via virtual host. The websocket endpoint can be `ws://` or `wss://`.
+If you want to use both websocket and non-websocket endpoints you will have to use multiple hosts
+
+`-e "VIRTUAL_HOST=wss://ws.example.com -> :8080/websocket"`
 ## Multiple Virtual Hosts on same container
 To have multiple virtual hosts  out of single container, you can use `VIRTUAL_HOST1`, `VIRTUAL_HOST2`, `VIRTUAL_HOST3` and so on. In fact the only thing it matters is that the environment variable starts with `VIRTUAL_HOST`.
 
-**Example:** setting up a Ethereum geth node.
+**Example:** setting up an Ethereum geth node.
 ```bash
     docker run -d  \
     -e "VIRTUAL_HOST1=https://ethereum.example.com -> :8545" \
     -e "VIRTUAL_HOST2=wss://ethereum.example.com/ws -> :8546" \
-    --rpc --rpcaddr "0.0.0.0"  --ws --wsaddr 0.0.0.0 \
-    ethereum/client-go 
+    ethereum/client-go \  
+    --rpc --rpcaddr "0.0.0.0"  --ws --wsaddr 0.0.0.0
 
 ```
 
