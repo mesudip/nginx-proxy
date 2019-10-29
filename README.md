@@ -72,7 +72,7 @@ generated instead.
  directoy `/etc/ssl/private`
  
 ##### Manually obtaining certificate.
- You can manually obtain Let's encrypt certificate using the nginx-proxy container when `VIRTUL_HOST` begins with `https.//`
+ You can manually obtain Let's encrypt certificate using the nginx-proxy container when `VIRTUAL_HOST` begins with `https://`
  or has port `443`. 
  Note that you must set ip in  DNS entry to point the correct server.
  
