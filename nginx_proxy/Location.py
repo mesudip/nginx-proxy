@@ -6,7 +6,8 @@ class Location:
         Location Represents the Location block in 
     """
 
-    def __init__(self, name, is_websocket_backend=False):
+    def __init__(self, name, is_websocket_backend=False, is_http_backend=True):
+        self.http = is_http_backend
         self.websocket = is_websocket_backend
         self.name = name
         self.containers = set()

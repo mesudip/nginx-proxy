@@ -47,7 +47,7 @@ class Container:
             host, port = hostport_entries if len(hostport_entries) is 2 else (hostport_entries[0], None)
 
             return {
-                "scheme": scheme,
+                "scheme": set([x for x in scheme.split("+") if x]) if scheme else [],
                 "host": host if host else None,
                 "port": port,
                 "location": location
@@ -129,10 +129,10 @@ class Container:
                 else:
                     container_data.port = "80"
             if override_ssl:
-                if host.scheme is "ws":
-                    host.scheme = "wss"
+                if "ws" in host.scheme:
+                    host.scheme = {"wss", "https"}
                 else:
-                    host.scheme = "https"
+                    host.scheme = {"https", }
             yield (host, location, container_data)
 
 class UnconfiguredContainer(Exception):

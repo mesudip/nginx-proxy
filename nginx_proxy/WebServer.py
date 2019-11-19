@@ -126,24 +126,24 @@ class WebServer():
         try:
             for host, location, container in Container.Container.host_generator(container,
                                                                                 known_networks=self.networks.keys()):
-                websocket = host.scheme in ("ws", "wss")
-                if host.scheme == "ws":
-                    host.scheme = "http"
-                elif host.scheme == "wss":
-                    host.scheme = "https"
+                websocket = "ws" in host.scheme or "wss" in host.scheme
+                secured = 'https' in host.scheme or 'wss' in host.scheme
+                http = 'http' in host.scheme or 'https' in host.scheme
                 # it might return string if there's a error in processing
                 if type(host) is not str:
                     if (host.hostname, host.port) in self.hosts:
                         existing_host: Host = self.hosts[(host.hostname, host.port)]
-                        existing_host.add_container(location, container, websocket=websocket)
+                        existing_host.add_container(location, container, websocket=websocket, http=http)
                         ## if any of the containers in for the virtualHost require https, the all others will be redirected to https.
-                        if host.scheme == "https":
-                            existing_host.scheme = "https"
+                        if secured:
+                            existing_host.secured = True
                         host = existing_host
                     else:
-                        host.add_container(location, container, websocket=websocket)
+                        host.secured = secured
+                        host.add_container(location, container, websocket=websocket, http=http)
                         self.hosts[(host.hostname, host.port)] = host
-                    if host.scheme == "https":
+
+                    if host.secured:
                         if host.hostname not in self.ssl_certificates:
                             host.ssl_expiry = self.ssl.expiry_time(host.hostname)
                         else:
@@ -210,7 +210,7 @@ class WebServer():
                 else:
                     location.upstream = False
             host.upstreams = [{"id": x, "containers": y} for x, y in host.upstreams.items()]
-            if host.scheme == "https":
+            if host.secured:
                 if int(host.port) in (80, 443):
                     host.ssl_redirect = True
                     host.port = 443

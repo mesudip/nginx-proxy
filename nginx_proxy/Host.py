@@ -20,11 +20,12 @@ class Host:
         self.hostname = host
         self.port = port
 
-    def add_container(self, location: str, container: Container, websocket=False):
+    def add_container(self, location: str, container: Container, websocket=False, http=True):
         if location not in self.locations:
-            self.locations[location] = Location(location, is_websocket_backend=websocket)
+            self.locations[location] = Location(location, is_websocket_backend=websocket, is_http_backend=http)
         elif websocket:
-            self.locations[location].websocket = True
+            self.locations[location].websocket = self.locations[location].websocket or websocket
+            self.locations[location].http = self.locations[location].http or http
         self.locations[location].add(container)
         self.container_set.add(container.id)
 

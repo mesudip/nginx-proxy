@@ -1,8 +1,13 @@
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    '' close;
+}
+
 {% for server in virtual_servers%}{% for upstream in server.upstreams %}
     upstream {{ upstream.id }} { {% for container in upstream.containers %}
         server  {{ container.address }}:{{ container.port }};   {% endfor %}
     }{% endfor %}
-{% if server.ssl_host %}
+{% if server.secured %}
 server{
         server_name {{ server.hostname }};
         listen {{ server.port }} ssl http2 ;
@@ -22,10 +27,14 @@ server{
         location {{ location.name }} { {% if location.upstream %}
             proxy_pass {{ location.container.scheme }}://{{ location.upstream }}{{location.container.path}};{% else %}
             proxy_pass {{location.container.scheme }}://{{ location.container.address }}:{{ location.container.port }}{{ location.container.path }};{% endif %}{% if location.name != '/' %}
-            proxy_redirect $scheme://$http_host{% if location.container.path!="/" %}{{ location.container.path }}{% endif%} $scheme://$http_host{{location.name}};{% endif %} {% if location.websocket %}
+            proxy_redirect $scheme://$http_host{% if location.container.path!="/" %}{{ location.container.path }}{% endif%} $scheme://$http_host{{location.name}};{% endif %} {% if location.websocket  and location.http %}
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;{% elif location.websocket %}
             proxy_http_version 1.1;
             proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection "Upgrade";{% endif %}
+            proxy_set_header Connection "Upgrade";
+            proxy_read_timeout  7d;
+            proxy_send_timeout 7d;{% endif %}
         }{% endfor %}
     
 }{% else %}
@@ -35,8 +44,12 @@ server{
         location {{ location.name }} { {% if location.upstream %}
             proxy_pass {{ location.container.scheme }}://{{ location.upstream }}{{location.container.path}};{% else %}
             proxy_pass {{location.container.scheme }}://{{ location.container.address }}:{{ location.container.port }}{{ location.container.path }};{% endif %}{% if location.name != '/' %}
-            proxy_redirect $scheme://$http_host{% if location.container.path!="/" %}{{ location.container.path }}{% endif%} $scheme://$http_host{{location.name}};{% endif %}  {% if location.websocket %}
+            proxy_redirect $scheme://$http_host{% if location.container.path!="/" %}{{ location.container.path }}{% endif%} $scheme://$http_host{{location.name}};{% endif %}  {% if location.websocket and location.http %}
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;{% elif location.websocket %}
             proxy_http_version 1.1;
+            proxy_read_timeout  7d;
+            proxy_send_timeout 7d;
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection "Upgrade";{% endif %}
         }{% endfor %}
