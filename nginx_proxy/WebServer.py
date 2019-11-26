@@ -259,7 +259,7 @@ class WebServer():
                 self.rescan_and_reload()
         elif container in self.containers and network in self.networks:
             if not self.update_container(container):
-                self.remove_container(container.id)
+                self.remove_container(container)
                 self.reload()
 
     def connect(self, network, container, scope):
