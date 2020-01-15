@@ -22,15 +22,16 @@ if __name__ == "__main__":
         print_usage()
     arg_set = set(sys.argv[1:])
     kwargs = {}
-    if "-h" in arg_set or "--help" in arg_set or "-help" in arg_set or "help" in arg_set:
+    if 'h' in arg_set or "-h" in arg_set or "--help" in arg_set or "-help" in arg_set or "help" in arg_set:
         print_usage()
-    if "--force" in arg_set:
-        kwargs["no_self_check"] = True
-        kwargs["ignore_existing"] = True
-    if "--new" in arg_set:
-        kwargs["ignore_existing"] = True
-    if "--skip-dns-check" in arg_set:
-        kwargs["no_self_check"] = True
-    nginx = Nginx.Nginx("/etc/nginx/conf.d/gen-ssl-direct.conf")
-    ssl = SSL.SSL("/etc/ssl", "/etc/nginx/conf.d/gen-ssl-direct.conf", nginx=nginx)
-    ssl.register_certificate([x for x in sys.argv[1:] if not x.startswith("-")], **kwargs)
+    else:
+        if "--force" in arg_set:
+            kwargs["no_self_check"] = True
+            kwargs["ignore_existing"] = True
+        if "--new" in arg_set:
+            kwargs["ignore_existing"] = True
+        if "--skip-dns-check" in arg_set:
+            kwargs["no_self_check"] = True
+        nginx = Nginx.Nginx("/etc/nginx/conf.d/gen-ssl-direct.conf")
+        ssl = SSL.SSL("/etc/ssl", "/etc/nginx/conf.d/gen-ssl-direct.conf", nginx=nginx)
+        ssl.register_certificate([x for x in sys.argv[1:] if not x.startswith("-")], **kwargs)

@@ -1,15 +1,14 @@
-import Crypto.PublicKey.RSA
-import OpenSSL
 import base64
 import binascii
 import hashlib
 import json
 import os
-import platform
+import pathlib
 import subprocess
-import sys
-import tempfile
 import time
+
+import Crypto.PublicKey.RSA
+import OpenSSL
 
 try:
     from urllib.request import urlopen, Request  # Python 3
@@ -31,7 +30,9 @@ class Acme(object):
             cert_path='/etc/ssl/private/letsencrypt-domain.pem',
             dns_provider=None,
             skip_nginx_reload=False,
-            debug=False):
+            debug=False,
+            challenge_dir="/tmp/acme-challenge",
+    ):
         """
         Params:
             api_url, str, Letsencrypt API URL
@@ -59,37 +60,19 @@ class Acme(object):
         self.chain = "https://letsencrypt.org/certs/lets-encrypt-x3-cross-signed.pem"
         self.dns_provider = dns_provider
         self.skip_nginx_reload = skip_nginx_reload
+        path = pathlib.Path(challenge_dir)
+        self.challenge_dir = path
+        if not path.exists():
+            path.mkdir(parents=True)
 
     def _reload_nginx(self):
         """ signal nginx master process to reload configuration """
         if subprocess.run(["nginx", "-s", "reload"]).returncode is not 0:
             raise Exception("Nginx is either not running or configtest failed!")
 
-    def _write_vhost(self):
-        """ Write virtual host configuration for http """
-        challenge_file = tempfile.mkdtemp()
-        self.log.info('created challenge file into {0}'.format(challenge_file))
-        os.chmod(challenge_file, 0o777)
-        vhost_data = """
-server {{
-    listen 80;
-    listen [::]:80;
-    server_name {domain};
-    location /.well-known/acme-challenge/ {{
-        alias {alias}/;
-        try_files $uri =404;
-    }}
-}}""".format(domain=' '.join(self.domains), alias=challenge_file)
-        self.log.info('writing virtual host into {0}'.format(self.vhost))
-        with open(self.vhost, 'w') as fd:
-            fd.write(vhost_data)
-        os.chmod(self.vhost, 0o644)
-        self._reload_nginx()
-        return challenge_file
-
-    def _write_challenge(self, challenge_dir, token, thumbprint):
+    def _write_challenge(self, token, thumbprint):
         self.log.info('writing challenge file into {0}'.format(self.vhost))
-        with open('{0}/{1}'.format(challenge_dir, token), 'w') as fd:
+        with open(os.path.join(self.challenge_dir, token), 'w') as fd:
             fd.write("{0}.{1}".format(token, thumbprint))
 
     def create_key(self, key_path, key_type=OpenSSL.crypto.TYPE_RSA, bits=2048):

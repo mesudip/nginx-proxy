@@ -92,6 +92,10 @@ class AcmeV2(Acme):
             payload=order_payload,
             directory=directory
         )
+        if code > 299 or code < 200:
+            self.log.error("Unexpected response: " + code + " ->" + order)
+            # TODO: return properly here.
+            return
         self.log.debug(order)
         order = json.loads(order)
         self.log.info('order created')
@@ -105,8 +109,7 @@ class AcmeV2(Acme):
             thumbprint = self._thumbprint()
             self.log.info('adding nginx virtual host and completing challenge')
             try:
-                challenge_dir = self._write_vhost()
-                self._write_challenge(challenge_dir, token, thumbprint)
+                self._write_challenge(token, thumbprint)
             except Exception as e:
                 self.log.error('error adding virtual host {0} {1}'.format(type(e).__name__, e))
                 sys.exit(1)
@@ -119,7 +122,7 @@ class AcmeV2(Acme):
                 if not self._verify_challenge(url, domain):
                     pass
             finally:
-                self._cleanup(['{0}/{1}'.format(challenge_dir, token), self.vhost, challenge_dir])
+                self._cleanup(['{0}/{1}'.format(self.challenge_dir, token), self.vhost])
                 self._reload_nginx()
         self._sign_certificate(order, directory)
 
