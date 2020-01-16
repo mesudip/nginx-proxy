@@ -122,7 +122,7 @@ class AcmeV2(Acme):
                 if not self._verify_challenge(url, domain):
                     pass
             finally:
-                self._cleanup(['{0}/{1}'.format(self.challenge_dir, token), self.vhost])
+                self._cleanup(['{0}/{1}'.format(self.challenge_dir, token)])
                 self._reload_nginx()
         self._sign_certificate(order, directory)
 

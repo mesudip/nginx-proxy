@@ -12,19 +12,18 @@ from nginx.Nginx import Nginx
 
 
 class SSL:
-    def __init__(self, ssl_path, vhost_path, nginx: Nginx):
+    def __init__(self, ssl_path, nginx: Nginx):
         self.ssl_path = ssl_path
-        self.vhost_path = vhost_path
         self.nginx = nginx
         x = os.environ.get("LETSENCRYPT_API")
         if x is not None:
             if x.startswith("https://"):
-                print("Using letsencrypt  url :", x)
                 self.api_url = x
             else:
                 self.api_url = "https://acme-staging-v02.api.letsencrypt.org/directory"
         else:
             self.api_url = "https://acme-v02.api.letsencrypt.org/directory"
+        print("Using letsencrypt  url :", self.api_url)
 
         try:
             os.mkdir(os.path.join(ssl_path, "accounts"))
@@ -35,6 +34,7 @@ class SSL:
 
     def get_cert_file(self, domain):
         return os.path.join(self.ssl_path, "certs", domain + ".crt")
+
     def self_sign(self, domain):
         CERT_FILE = domain + ".selfsigned.crt"
         KEY_FILE = domain + ".selfsigned.key"
@@ -106,11 +106,11 @@ class SSL:
                 domains=domain,
                 account_key=os.path.join(self.ssl_path, "accounts", domain[0] + ".account.key"),
                 domain_key=os.path.join(self.ssl_path, "private", domain[0] + ".key"),
-                vhost=self.vhost_path,
                 cert_path=os.path.join(self.ssl_path, "certs", domain[0] + ".crt"),
                 debug=False,
                 dns_provider=None,
-                skip_nginx_reload=False
+                skip_nginx_reload=False,
+                challenge_dir=self.nginx.challenge_dir
             )
 
             directory = acme.register_account()

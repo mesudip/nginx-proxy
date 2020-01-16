@@ -1,0 +1,28 @@
+#!/usr/bin/env python3
+
+import sys
+
+from nginx import Nginx
+
+
+def print_usage():
+    print("Verify that the current machine or swarm owns a domain name")
+    print("Usage:")
+    print()
+    print("       verify  <hostname1>  [ hostname2 hostname3 ...]")
+    print()
+    exit(1)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print_usage()
+    arg_set = set(sys.argv[1:])
+    kwargs = {}
+    if 'h' in arg_set or "-h" in arg_set or "--help" in arg_set or "-help" in arg_set or "help" in arg_set:
+        print_usage()
+    else:
+        nginx = Nginx.Nginx("/etc/nginx/conf.d/dummy.conf")
+        domains = [x for x in sys.argv[1:] if not x.startswith("-")]
+        result = nginx.verify_domain(domains)
+        print("Owned Domains:" + str(result))

@@ -1,10 +1,11 @@
 import difflib
+import os
+import pathlib
 import random
 import re
 import string
 import subprocess
 import sys
-import time
 from os import path
 
 import requests
@@ -15,7 +16,8 @@ class Nginx:
     command_reload = ["nginx", "-s", "reload"]
     command_start = ["nginx"]
 
-    def __init__(self, config_file_path):
+    def __init__(self, config_file_path, challenge_dir="/tmp/acme-challenges/"):
+        self.challenge_dir = challenge_dir
         self.config_file_path = config_file_path
         if path.exists(config_file_path):
             with open(config_file_path) as file:
@@ -24,6 +26,8 @@ class Nginx:
             with open(config_file_path, "w") as file:
                 self.last_working_config = ""
         self.config_stack = [self.last_working_config]
+        if not os.path.exists(challenge_dir):
+            pathlib.Path(self.challenge_dir).mkdir(parents=True)
 
     def start(self) -> bool:
         start_result = subprocess.run(Nginx.command_start, stderr=subprocess.PIPE)
@@ -126,42 +130,41 @@ class Nginx:
             return True
         return False
 
-    def verify_domain(self, domain: list or str):
-        if type(domain) is str:
-            domain = [domain]
+    def verify_domain(self, _domain: list or str):
+        domain = [_domain] if type(_domain) is str else _domain
         ## when not included, one invalid domain in a list of 100 will make all domains to be unverified due to nginx failing to start.
         domain = [x for x in domain if Nginx.is_valid_hostname(x)]
-        r1 = "".join([random.choice(string.ascii_letters + string.digits) for _ in range(32)])
-        r2 = "".join([random.choice(string.ascii_letters + string.digits) for _ in range(32)])
-        config = '''server {
-                listen 80 ;
-                server_name %s;
-                location /%s {
-                    return 301 http://$host/%s;
-                }
-            }''' % (" ".join(domain), r1, r2)
-        if self.push_config(config):
-            # it appears that "nginx -s reload" doesn't reload immediately. It only signals reload and returns. Reload process may take some time
-            time.sleep(2)
-            success = []
+        success = []
+        while True:
+            r1 = "".join([random.choice(string.ascii_letters + string.digits) for _ in range(32)])
+            file = os.path.join(self.challenge_dir, r1)
+            if path.exists(file):
+                continue
+            r2 = "".join([random.choice(string.ascii_letters + string.digits) for _ in range(256)])
+            with open(file, mode="wt") as file_descriptor:
+                file_descriptor.write(r2)
             for d in domain:
                 try:
-                    response = requests.get("http://%s/%s" % (d, r1), allow_redirects=False)
-                    if (response.is_permanent_redirect):
-                        if ("Location" in response.headers):
-                            if response.headers.get("Location").split("/")[-1] == r2:
-                                success.append(d)
-                                continue
-                except requests.exceptions.ConnectionError as e:
-                    pass
-                print("[ERROR] Domain is not owned by this machine :" + d, file=sys.stderr)
-        elif type(domain) is str:
-            return False
+                    url = "http://%s/.well-known/acme-challenge/%s" % (d, r1)
+                    response = requests.get(url, allow_redirects=False, timeout=3)
+                    if response.status_code == 200:
+                        if response.content.decode("utf-8") == r2:
+                            success.append(d)
+                            continue
+                    print("[ERROR] " + url + "\n" + "Status Code :" + str(response.status_code), file=sys.stderr)
+                    if len(response.content) > 0:
+                        print(response.content.decode("utf-8"), file=sys.stderr)
+                    continue
+                except requests.exceptions.RequestException as e:
+                    print("[ERROR] Domain is not owned by this machine :" + d, file=sys.stderr)
+                    print("Reason: " + str(e))
+                    continue
+            os.remove(file)
+            break
+        if type(_domain) is str:
+            return len(success) > 0
         else:
-            return []
-        if type(domain) is str:
-            return True
-        return success
+            return success
 
     @staticmethod
     def is_valid_hostname(hostname: str):

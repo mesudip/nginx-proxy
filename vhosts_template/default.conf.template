@@ -54,7 +54,7 @@ server{
             proxy_set_header Connection "Upgrade";{% endif %}
         }{% endfor %}
         location /.well-known/acme-challenge/ {
-            alias /tmp/acme-challenge/;
+            alias {{ challenge_dir }};
             try_files $uri =404;
         }
  }{% endif %}{% if server.ssl_redirect %}
@@ -62,7 +62,7 @@ server {
         listen 80;
         server_name {{ server.hostname }};
         location /.well-known/acme-challenge/ {
-            alias /tmp/acme-challenge/;
+            alias {{ challenge_dir }};
             try_files $uri =404;
         }
         location /{
@@ -74,7 +74,7 @@ server{
         listen 80 default_server;
         server_name _ ;
         location /.well-known/acme-challenge/ {
-            alias /tmp/acme-challenge/;
+            alias {{ challenge_dir }};
             try_files $uri =404;
         }
         location / {

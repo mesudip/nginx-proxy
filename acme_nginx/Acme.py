@@ -31,7 +31,7 @@ class Acme(object):
             dns_provider=None,
             skip_nginx_reload=False,
             debug=False,
-            challenge_dir="/tmp/acme-challenge",
+            challenge_dir="/tmp/acme-challenges",
     ):
         """
         Params:
@@ -71,7 +71,6 @@ class Acme(object):
             raise Exception("Nginx is either not running or configtest failed!")
 
     def _write_challenge(self, token, thumbprint):
-        self.log.info('writing challenge file into {0}'.format(self.vhost))
         with open(os.path.join(self.challenge_dir, token), 'w') as fd:
             fd.write("{0}.{1}".format(token, thumbprint))
 
