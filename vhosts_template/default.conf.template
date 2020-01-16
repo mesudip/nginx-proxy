@@ -53,9 +53,31 @@ server{
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection "Upgrade";{% endif %}
         }{% endfor %}
+        location /.well-known/acme-challenge/ {
+            alias {{ challenge_dir }};
+            try_files $uri =404;
+        }
  }{% endif %}{% if server.ssl_redirect %}
 server {
         listen 80;
         server_name {{ server.hostname }};
-        return 301 https://$host$request_uri;
+        location /.well-known/acme-challenge/ {
+            alias {{ challenge_dir }};
+            try_files $uri =404;
+        }
+        location /{
+                return 301 https://$host$request_uri;
+        }
 }{% endif %}{% endfor %}
+
+server{
+        listen 80 default_server;
+        server_name _ ;
+        location /.well-known/acme-challenge/ {
+            alias {{ challenge_dir }};
+            try_files $uri =404;
+        }
+        location / {
+            return 503;
+        }
+}

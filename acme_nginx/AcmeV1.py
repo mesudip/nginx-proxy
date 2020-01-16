@@ -65,8 +65,7 @@ class AcmeV1(Acme):
             thumbprint = self._thumbprint()
             self.log.info('adding nginx virtual host and completing challenge')
             try:
-                challenge_dir = self._write_vhost()
-                self._write_challenge(challenge_dir, token, thumbprint)
+                self._write_challenge(token, thumbprint)
             except Exception as e:
                 self.log.error('error adding virtual host {0} {1}'.format(type(e).__name__, e))
                 sys.exit(1)

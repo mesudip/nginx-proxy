@@ -1,5 +1,6 @@
 import copy
 import datetime
+import os
 import re
 import sys
 import threading
@@ -18,8 +19,10 @@ class WebServer():
     def __init__(self, client: DockerClient, *args):
         self.shouldExit = False
         self.client = client
-        self.nginx = Nginx("/etc/nginx/conf.d/default.conf")
-        self.ssl = SSL("/etc/ssl", "/etc/nginx/conf.d/acme-nginx.conf", nginx=self.nginx)
+        challenge_dir = os.environ.get("CHALLENGE_DIR")
+        conf_file = "/etc/nginx/conf.d/default.conf"
+        self.nginx = Nginx(conf_file, challenge_dir=challenge_dir) if challenge_dir else Nginx(conf_file)
+        self.ssl = SSL("/etc/ssl", self.nginx)
         self.containers = set()
         self.services = set()
         self.networks = {}
@@ -243,7 +246,7 @@ class WebServer():
                             self.lock.notify()
                             self.next_ssl_expiry = host.ssl_expiry
 
-        output = self.template.render(virtual_servers=host_list)
+        output = self.template.render(virtual_servers=host_list, challenge_dir=self.nginx.challenge_dir)
         if forced:
             response = self.nginx.forced_update(output)
         else:
