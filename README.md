@@ -71,6 +71,10 @@ generated instead.
  It is saved under directory `/etc/ssl/certs` and the private key is located inside
  directoy `/etc/ssl/private`
  
+ ***DHPARAM_SIZE :***
+ Default size of DH key used for https connection is `2048`bits. The key size can be changed by changing `DHPARAM_SIZE` environment variable
+ 
+ 
 ##### Manually obtaining certificate.
  You can manually obtain Let's encrypt certificate using the nginx-proxy container when `VIRTUAL_HOST` begins with `https://`
  or has port `443`. 
