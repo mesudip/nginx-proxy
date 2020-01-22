@@ -77,7 +77,7 @@ class WebServer():
                             remaining_days) + "days.")
                     self.lock.wait((remaining_days - 2) * 3600 * 24)
                 else:
-                    print("[SSL Recfresh Thread] Looks like we need to refresh certificates that are about to expire")
+                    print("[SSL Refresh Thread] Looks like we need to refresh certificates that are about to expire")
                     for x in self.ssl_certificates:
                         print("Remaining days :", x, ":", (self.ssl_certificates[x] - now).days)
                     x = [x for x in self.ssl_certificates if (self.ssl_certificates[x] - now).days < 6]
@@ -85,7 +85,8 @@ class WebServer():
                     for host in x:
                         if host not in acme_ssl_certificates:
                             del self.ssl_certificates[host]
-                            self.self_signed_certificates.add(host)
+                            if not self.ssl.cert_exists_wildcard(host):
+                                self.self_signed_certificates.add(host)
                         else:
                             self.ssl_certificates[host] = self.ssl.expiry_time(domain=host)
                     self.next_ssl_expiry = min(self.ssl_certificates.values())
@@ -147,12 +148,13 @@ class WebServer():
                         self.hosts[(host.hostname, host.port)] = host
 
                     if host.secured:
+
                         if host.hostname not in self.ssl_certificates:
                             host.ssl_expiry = self.ssl.expiry_time(host.hostname)
+                            if (host.ssl_expiry - datetime.datetime.now()).days > 2:
+                                self.ssl_certificates[host.hostname] = host.ssl_expiry
                         else:
                             host.ssl_expiry = self.ssl_certificates[host.hostname]
-                        if (host.ssl_expiry - datetime.datetime.now()).days > 2:
-                            self.ssl_certificates[host.hostname] = host.ssl_expiry
 
             found = True
             self.containers.add(container.id)
@@ -218,7 +220,11 @@ class WebServer():
                     host.ssl_redirect = True
                     host.port = 443
                 host.ssl_host = True
-
+                wildcard = self.ssl.wildcard_domain_name(host.hostname)
+                if wildcard is not None:
+                    if self.ssl.cert_exists(wildcard):
+                            host.ssl_file = wildcard
+                            continue
                 if host.hostname in self.ssl_certificates:
                     host.ssl_file = host.hostname
                 elif host.hostname in self.self_signed_certificates:

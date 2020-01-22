@@ -23,8 +23,7 @@ class Nginx:
             with open(config_file_path) as file:
                 self.last_working_config = file.read()
         else:
-            with open(config_file_path, "w") as file:
-                self.last_working_config = ""
+            self.last_working_config = ""
         self.config_stack = [self.last_working_config]
         if not os.path.exists(challenge_dir):
             pathlib.Path(self.challenge_dir).mkdir(parents=True)
