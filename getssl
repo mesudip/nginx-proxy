@@ -3,10 +3,11 @@ import sys
 
 from nginx import Nginx
 from nginx_proxy import SSL
+import os
 
 
 def print_usage():
-    print("Usage:")
+    print("Usage: Obtain Let'sEncrypt ssl certificate for a domain or multiple domains ")
     print()
     print("       getssl [--options]  <hostname1>  [ hostname2 hostname3 ...]")
     print()
@@ -32,6 +33,9 @@ if __name__ == "__main__":
             kwargs["ignore_existing"] = True
         if "--skip-dns-check" in arg_set:
             kwargs["no_self_check"] = True
-        nginx = Nginx.Nginx("/etc/nginx/conf.d/gen-ssl-direct.conf")
-        ssl = SSL.SSL("/etc/ssl", "/etc/nginx/conf.d/gen-ssl-direct.conf", nginx=nginx)
+        config = "/etc/nginx/conf.d/gen-ssl-direct.conf"
+        nginx = Nginx.Nginx(config)
+        ssl = SSL.SSL("/etc/ssl", nginx=nginx)
         ssl.register_certificate([x for x in sys.argv[1:] if not x.startswith("-")], **kwargs)
+        if os.path.exists(config):
+            os.remove(config)

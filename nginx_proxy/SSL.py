@@ -72,18 +72,21 @@ class SSL:
     def expiry_days_remain(self, domain) -> int:
         return (self.expiry_time(domain) - datetime.datetime.now()).days
 
-    def cert_exists(self, domain) -> bool:
-        if os.path.exists(os.path.join(self.ssl_path, "certs", domain + ".crt")) \
-                and os.path.exists(os.path.join(self.ssl_path, "private", domain + ".key")) \
-                and os.path.exists(os.path.join(self.ssl_path, "accounts", domain + ".account.key")):
-            return True
-        return False
+    def cert_exists(self, domain):
+        return os.path.exists(os.path.join(self.ssl_path, "certs", domain + ".crt")) \
+               and os.path.exists(os.path.join(self.ssl_path, "private", domain + ".key"))
+
+    def cert_exists_wildcard(self, domain):
+        return self.wildcard_domain_name(domain) is not None
+
+    def wildcard_domain_name(self, domain):
+        slices = domain.split('.')
+        if len(slices) > 2:
+            return '*.' + ('.'.join(slices[1:len(slices)]))
+        return None
 
     def cert_exists_self_signed(self, domain) -> bool:
-        if os.path.exists(os.path.join(self.ssl_path, "certs", "domain" + ".selfsigned.crt")) \
-                and os.path.exists(os.path.join(self.ssl_path, "private", domain + ".selfsigned.key")):
-            return True
-        return False
+        return self.cert_exists((domain + ".selfsigned"))
 
     def reuse(self, domain1, domain2):
         shutil.copy2(os.path.join(self.ssl_path, "certs", domain1 + ".crt"),
@@ -98,6 +101,8 @@ class SSL:
             domain = [domain]
         verified_domain = domain if no_self_check else self.nginx.verify_domain(domain)
         domain = verified_domain if ignore_existing else [x for x in verified_domain if not self.cert_exists(x)]
+        domain = [d for d in domain if
+                  '.' in domain]  # when the domain doesn't have '.' it shouldn't be requested for letsencrypt certificate.
         if len(domain):
             logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.DEBUG)
             acme = AcmeV2(
