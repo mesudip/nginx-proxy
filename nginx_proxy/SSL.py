@@ -102,7 +102,7 @@ class SSL:
         verified_domain = domain if no_self_check else self.nginx.verify_domain(domain)
         domain = verified_domain if ignore_existing else [x for x in verified_domain if not self.cert_exists(x)]
         domain = [d for d in domain if
-                  '.' in domain]  # when the domain doesn't have '.' it shouldn't be requested for letsencrypt certificate.
+                  '.' in d]  # when the domain doesn't have '.' it shouldn't be requested for letsencrypt certificate.
         if len(domain):
             logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.DEBUG)
             acme = AcmeV2(
