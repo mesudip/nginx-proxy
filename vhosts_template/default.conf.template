@@ -22,6 +22,7 @@ server{
         ssl_certificate_key /etc/ssl/private/{{ server.ssl_file }}.key;
         ssl_stapling on;
         ssl_stapling_verify on;
+        client_max_body_size 9999m;
         add_header Strict-Transport-Security "max-age=31536000" always;
         {% for location in server.locations %}
         location {{ location.name }} { {% if location.upstream %}
@@ -34,14 +35,14 @@ server{
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection "Upgrade";
             proxy_read_timeout  7d;
-            proxy_send_timeout 7d;
-            client_max_body_size 9999m;{% endif %}
+            proxy_send_timeout 7d;{% endif %}
         }{% endfor %}
 
 }{% else %}
 server{
         listen {{ server.port }};
         server_name {{ server.hostname }};{% for location in server.locations %}
+        client_max_body_size 9999m;
         location {{ location.name }} { {% if location.upstream %}
             proxy_pass {{ location.container.scheme }}://{{ location.upstream }}{{location.container.path}};{% else %}
             proxy_pass {{location.container.scheme }}://{{ location.container.address }}:{{ location.container.port }}{{ location.container.path }};{% endif %}{% if location.name != '/' %}
@@ -52,8 +53,7 @@ server{
             proxy_read_timeout  7d;
             proxy_send_timeout 7d;
             proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection "Upgrade";
-            client_max_body_size 9999m;{% endif %}
+            proxy_set_header Connection "Upgrade";{% endif %}
         }{% endfor %}
         location /.well-known/acme-challenge/ {
             alias {{ challenge_dir }};
