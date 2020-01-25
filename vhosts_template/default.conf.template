@@ -34,9 +34,10 @@ server{
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection "Upgrade";
             proxy_read_timeout  7d;
-            proxy_send_timeout 7d;{% endif %}
+            proxy_send_timeout 7d;
+            client_max_body_size 9999m;{% endif %}
         }{% endfor %}
-    
+
 }{% else %}
 server{
         listen {{ server.port }};
@@ -51,7 +52,8 @@ server{
             proxy_read_timeout  7d;
             proxy_send_timeout 7d;
             proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection "Upgrade";{% endif %}
+            proxy_set_header Connection "Upgrade";
+            client_max_body_size 9999m;{% endif %}
         }{% endfor %}
         location /.well-known/acme-challenge/ {
             alias {{ challenge_dir }};

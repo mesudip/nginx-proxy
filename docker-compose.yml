@@ -1,0 +1,6 @@
+version: "3.6"
+
+services:
+  nginx-proxy:
+    build: .
+    image: mattipaksula/nginx-proxy:v2
