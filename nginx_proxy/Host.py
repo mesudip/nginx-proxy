@@ -1,3 +1,5 @@
+from typing import Set, Dict, Union
+
 from nginx_proxy import Container
 from nginx_proxy.Location import Location
 
@@ -9,12 +11,14 @@ class Host:
 
     """
 
-    def __init__(self, hostname, port, scheme="http"):
-        self.port = port
-        self.hostname = hostname
-        self.locations: dict[str:Location] = {}  # the map of locations.and the container that serve the locations
-        self.container_set: set = set()
-        self.scheme = scheme
+    def __init__(self, hostname: str, port: int, scheme: str = 'http'):
+        self.port: int = port
+        self.hostname: str = hostname
+        self.locations: Dict[str, Location] = {}  # the map of locations.and the container that serve the locations
+        self.container_set: Set[str] = set()
+        self.scheme: str = scheme
+        self.secured: bool = scheme == 'https' or scheme == 'wss'
+        self.full_redirect: Union[str, None] = None
 
     def set_external_parameters(self, host, port):
         self.hostname = host
@@ -50,7 +54,7 @@ class Host:
         return False
 
     def is_redirect(self):
-        return False
+        return self.full_redirect
 
     def __repr__(self):
         return str({

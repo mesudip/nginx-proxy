@@ -2,10 +2,11 @@ import os
 import re
 import subprocess
 import sys
+import traceback
 
 import docker
 
-from nginx_proxy import WebServer as containers
+from nginx_proxy.WebServer import WebServer
 
 debug_config = {}
 if "PYTHON_DEBUG_PORT" in os.environ:
@@ -19,7 +20,7 @@ if "PYTHON_DEBUG_ENABLE" in os.environ:
             debug_config["host"] = re.findall("([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)+",
                                               subprocess.run(["ip", "route"],
                                                              stdout=subprocess.PIPE).stdout.decode().split(
-                                            "\n")[0])[0]
+                                                  "\n")[0])[0]
 
 if len(debug_config):
     import pydevd
@@ -31,9 +32,11 @@ try:
     client = docker.from_env()
     client.version()
 except Exception as e:
-    print("There was error connecting with the docker server \nHave you correctly mounted /var/run/docker.sock?\n"+str(e.args),file=sys.stderr)
+    print(
+        "There was error connecting with the docker server \nHave you correctly mounted /var/run/docker.sock?\n" + str(
+            e.args), file=sys.stderr)
     sys.exit(1)
-hosts = containers.WebServer(client)
+server = WebServer(client)
 
 
 def eventLoop():
@@ -47,7 +50,9 @@ def eventLoop():
             elif eventType == "container":
                 process_container_event(event["Action"], event)
         except Exception as e:
-            print("Unexpected error :" + e.__class__.__name__ + str(e))
+            print("Unexpected error :" + e.__class__.__name__ + ' -> ' + str(e), file=sys.stderr)
+            traceback.print_exc(limit=10)
+
 
 def process_service_event(action, event):
     if action == "create":
@@ -57,10 +62,10 @@ def process_service_event(action, event):
 def process_container_event(action, event):
     if action == "start":
         # print("container started", event["id"])
-        hosts.update_container(event["id"])
+        server.update_container(event["id"])
     elif action == "die":
         # print("container died", event["id"])
-        hosts.remove_container(event["id"])
+        server.remove_container(event["id"])
 
 
 def process_network_event(action, event):
@@ -70,12 +75,12 @@ def process_network_event(action, event):
     elif "container" in event["Actor"]["Attributes"]:
         if action == "disconnect":
             # print("network disconnect")
-            hosts.disconnect(network=event["Actor"]["ID"], container=event["Actor"]["Attributes"]["container"],
-                             scope=event["scope"])
+            server.disconnect(network=event["Actor"]["ID"], container=event["Actor"]["Attributes"]["container"],
+                              scope=event["scope"])
         elif action == "connect":
             # print("network connect")
-            hosts.connect(network=event["Actor"]["ID"], container=event["Actor"]["Attributes"]["container"],
-                          scope=event["scope"])
+            server.connect(network=event["Actor"]["ID"], container=event["Actor"]["Attributes"]["container"],
+                           scope=event["scope"])
     elif action == "destroy":
         # print("network destryed")
         pass
@@ -84,4 +89,4 @@ def process_network_event(action, event):
 try:
     eventLoop()
 except (KeyboardInterrupt, SystemExit):
-    hosts.cleanup();
+    server.cleanup()

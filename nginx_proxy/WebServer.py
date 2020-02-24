@@ -1,18 +1,20 @@
 import copy
-import datetime
 import os
 import re
 import sys
-import threading
+from typing import List
 
 import requests
 from docker import DockerClient
+from docker.models.containers import Container as DockerContainer
 from jinja2 import Template
 
+import nginx_proxy.post_processors as post_processors
+import nginx_proxy.pre_processors as pre_processors
+from nginx import ProxyConfigData
 from nginx.Nginx import Nginx
 from nginx_proxy import Container
 from nginx_proxy.Host import Host
-from nginx_proxy.SSL import SSL
 
 
 class WebServer():
@@ -22,25 +24,19 @@ class WebServer():
         challenge_dir = os.environ.get("CHALLENGE_DIR")
         conf_file = "/etc/nginx/conf.d/default.conf"
         self.nginx = Nginx(conf_file, challenge_dir=challenge_dir) if challenge_dir else Nginx(conf_file)
-        self.ssl = SSL("/etc/ssl", self.nginx)
-        self.containers = set()
+        self.config_data = ProxyConfigData()
         self.services = set()
         self.networks = {}
         self.conf_file_name = "/etc/nginx/conf.d/default.conf"
         self.host_file = "/etc/hosts"
-        self.hosts = {}
-        self.ssl_certificates = {}
-        self.self_signed_certificates = set()
-        self.next_ssl_expiry = None
         file = open("vhosts_template/default.conf.template")
         self.template = Template(file.read())
         file.close()
         self.learn_yourself()
         self.rescan_all_container()
         self.rescan_time = None
-        self.lock = threading.Condition()
-        self.expiry_changed = threading.Event()
-        self.certificate_expiry_thread = threading.Thread(target=self.check_certificate_expiry)
+        self.ssl_processor = post_processors.SslCertificateProcessor(self.nginx, self)
+        self.basic_auth_processor = post_processors.BasicAuthProcessor()
 
         if self.nginx.config_test():
             if not self.nginx.start():
@@ -56,41 +52,6 @@ class WebServer():
                 print("Please check the configuration of your containers and restart this container", file=sys.stderr)
                 print("EXITING .....", file=sys.stderr)
                 exit(1)
-        self.certificate_expiry_thread.start()
-
-    def check_certificate_expiry(self):
-        self.lock.acquire()
-        while True:
-            if self.shouldExit:
-                return
-            if self.next_ssl_expiry is None:
-                print("[SSL Refresh Thread]  Looks like there no ssl certificates, Sleeping until  there's one")
-                self.lock.wait()
-            else:
-                now = datetime.datetime.now()
-                remaining_days = (self.next_ssl_expiry - now).days
-                remaining_days = 30 if remaining_days > 30 else remaining_days
-
-                if remaining_days > 2:
-                    print(
-                        "[SSL Refresh Thread] All the certificates are up to date sleeping for" + str(
-                            remaining_days) + "days.")
-                    self.lock.wait((remaining_days - 2) * 3600 * 24)
-                else:
-                    print("[SSL Refresh Thread] Looks like we need to refresh certificates that are about to expire")
-                    for x in self.ssl_certificates:
-                        print("Remaining days :", x, ":", (self.ssl_certificates[x] - now).days)
-                    x = [x for x in self.ssl_certificates if (self.ssl_certificates[x] - now).days < 6]
-                    acme_ssl_certificates = set(self.ssl.register_certificate_or_selfsign(x, ignore_existing=True))
-                    for host in x:
-                        if host not in acme_ssl_certificates:
-                            del self.ssl_certificates[host]
-                            if not self.ssl.cert_exists_wildcard(host):
-                                self.self_signed_certificates.add(host)
-                        else:
-                            self.ssl_certificates[host] = self.ssl.expiry_time(domain=host)
-                    self.next_ssl_expiry = min(self.ssl_certificates.values())
-                    self.reload(forced=True)
 
     def learn_yourself(self):
         """
@@ -100,7 +61,7 @@ class WebServer():
         """
         try:
             file = open("/proc/self/cgroup")
-            self.id = [l for l in file.read().split("\n") if l.find("cpu") != -1][0].split("/")[-1]
+            self.id = [l.strip() for l in file.readlines() if l.find("cpu") != -1][0].split("/")[-1]
             if len(self.id) > 64:
                 slice = [x for x in re.split('[^a-fA-F0-9]', self.id) if len(x) is 64]
                 if len(slice) is 1:
@@ -120,144 +81,59 @@ class WebServer():
             network = self.client.networks.get("frontend")
             self.networks[network.id] = "frontend"
 
-    def _register_container(self, container):
+    def _register_container(self, container: DockerContainer):
         """
          Find the details about container and register it and return True.
          If it's not configured with desired settings or is not accessible, return False
          @:returns True if the container is added to virtual hosts, false otherwise.
         """
-        found = False
-        try:
-            for host, location, container in Container.Container.host_generator(container,
-                                                                                known_networks=self.networks.keys()):
-                websocket = "ws" in host.scheme or "wss" in host.scheme
-                secured = 'https' in host.scheme or 'wss' in host.scheme
-                http = 'http' in host.scheme or 'https' in host.scheme
-                # it might return string if there's a error in processing
-                if type(host) is not str:
-                    if (host.hostname, host.port) in self.hosts:
-                        existing_host: Host = self.hosts[(host.hostname, host.port)]
-                        existing_host.add_container(location, container, websocket=websocket, http=http)
-                        ## if any of the containers in for the virtualHost require https, the all others will be redirected to https.
-                        if secured:
-                            existing_host.secured = True
-                        host = existing_host
-                    else:
-                        host.secured = secured
-                        host.add_container(location, container, websocket=websocket, http=http)
-                        self.hosts[(host.hostname, host.port)] = host
-
-                    if host.secured:
-
-                        if host.hostname not in self.ssl_certificates:
-                            host.ssl_expiry = self.ssl.expiry_time(host.hostname)
-                            if (host.ssl_expiry - datetime.datetime.now()).days > 2:
-                                self.ssl_certificates[host.hostname] = host.ssl_expiry
-                        else:
-                            host.ssl_expiry = self.ssl_certificates[host.hostname]
-
-            found = True
-            self.containers.add(container.id)
-
-        except Container.NoHostConiguration:
-            print("Skip Container:", "No VIRTUAL_HOST configuration", "Id:" + container.id,
-                  "Name:" + container.attrs["Name"].replace("/", ""), sep="\t")
-        except Container.UnreachableNetwork:
-            print("Skip Container:", "UNREACHABLE Network           ", "Id:" + container.id,
-                  "Name:" + container.attrs["Name"].replace("/", ""), sep="\t")
-        return found
+        environments = Container.Container.get_env_map(container)
+        known_networks = set(self.networks.keys())
+        hosts = pre_processors.process_virtual_hosts(container, environments, known_networks)
+        if len(hosts):
+            pre_processors.process_basic_auth(container, environments, hosts)
+            pre_processors.process_redirection(container, environments, hosts)
+            for h in hosts.values():
+                for p in h.values():
+                    self.config_data.add_host(p)
+        return len(hosts) > 0
 
     # removes container from the maintained list.
     # this is called when a caontainer dies or leaves a known network
-    def remove_container(self, container):
-        if type(container) is Container:
-            container = container.id
-
-        if container in self.containers:
-            removed = False
-            deletions = []
-            for host in self.hosts.values():
-                if host.remove_container(container):
-                    removed = True
-                    if host.isEmpty():
-                        if host.scheme == "https":
-                            if host.hostname in self.self_signed_certificates:
-                                self.self_signed_certificates.remove(host.hostname)
-                            else:
-                                del self.ssl_certificates[host.hostname]
-                        deletions.append((host.hostname, host.port))
-            if removed:
-                for d in deletions:
-                    del self.hosts[d]
-                self.containers.remove(container)
-                return self.reload()
+    def remove_container(self, container_id: str):
+        deleted_domain = self.config_data.remove_container(container_id)
+        if len(deleted_domain):
+            self.reload()
 
     def reload(self, forced=False) -> bool:
-        self.lock.acquire()
         """
         Creates a new configuration based on current state and signals nginx to reload.
         This is called whenever there's change in container or network state.
         :return:
         """
-        host_list = [copy.deepcopy(host) for host in self.hosts.values()]
-
-        next_reload = None
-        now = datetime.datetime.now()
-        ssl_requests = set()
-        for host in host_list:
-            host.locations = list(host.locations.values())
+        hosts: List[Host] = []
+        for host_data in self.config_data.host_list():
+            host = copy.deepcopy(host_data)
             host.upstreams = {}
-            for i, location in enumerate(host.locations):
+            host.is_down = host_data.isEmpty()
+            for i, location in enumerate(host.locations.values()):
                 location.container = list(location.containers)[0]
                 if len(location.containers) > 1:
-                    location.upstream = host.hostname + "-" + str(host.port) + "-" + str(i + 1)
+                    location.upstream = host_data.hostname + "-" + str(host.port) + "-" + str(i + 1)
                     host.upstreams[location.upstream] = location.containers
                 else:
                     location.upstream = False
             host.upstreams = [{"id": x, "containers": y} for x, y in host.upstreams.items()]
-            if host.secured:
-                if int(host.port) in (80, 443):
-                    host.ssl_redirect = True
-                    host.port = 443
-                host.ssl_host = True
-                wildcard = self.ssl.wildcard_domain_name(host.hostname)
-                if wildcard is not None:
-                    if self.ssl.cert_exists(wildcard):
-                            host.ssl_file = wildcard
-                            continue
-                if host.hostname in self.ssl_certificates:
-                    host.ssl_file = host.hostname
-                elif host.hostname in self.self_signed_certificates:
-                    host.ssl_file = host.hostname + ".selfsigned"
-                else:
-                    ssl_requests.add(host.hostname)
+            hosts.append(host)
 
-        if len(ssl_requests):
-            registered = self.ssl.register_certificate_or_selfsign(list(ssl_requests))
-            for host in host_list:
-                if host.hostname in ssl_requests:
-                    if host.hostname not in registered:
-                        self.ssl.register_certificate_self_sign(host.hostname)
-                        host.ssl_file = host.hostname + ".selfsigned"
-                        self.self_signed_certificates.add(host.hostname)
-                    else:
-                        host.ssl_file = host.hostname
-                        self.ssl_certificates[host.hostname] = self.ssl.expiry_time(host.hostname)
-                        host.ssl_expiry = self.ssl_certificates[host.hostname]
-                        if self.next_ssl_expiry:
-                            if self.next_ssl_expiry > host.ssl_expiry:
-                                self.next_ssl_expiry = host.ssl_expiry
-                                self.lock.notify()
-                        else:
-                            self.lock.notify()
-                            self.next_ssl_expiry = host.ssl_expiry
+        self.basic_auth_processor.process_basic_auth(hosts)
+        self.ssl_processor.process_ssl_certificates(hosts)
 
-        output = self.template.render(virtual_servers=host_list, challenge_dir=self.nginx.challenge_dir)
+        output = self.template.render(virtual_servers=hosts, challenge_dir=self.nginx.challenge_dir)
         if forced:
             response = self.nginx.forced_update(output)
         else:
             response = self.nginx.update_config(output)
-        self.lock.release()
         return response
 
     def disconnect(self, network, container, scope):
@@ -276,11 +152,10 @@ class WebServer():
             if network not in self.networks:
                 self.networks[network] = self.client.networks.get(network).name
                 self.rescan_and_reload()
-        elif container not in self.containers and network in self.networks:
-            if self.update_container(container):
-                self.reload()
+        elif network in self.networks:
+            self.update_container(container)
 
-    def update_container(self, container):
+    def update_container(self, container_id):
         '''
         Rescan the container to detect changes. And update nginx configuration if necessary.
         This is usually called in one of the following conditions:
@@ -291,8 +166,10 @@ class WebServer():
         :return: true if container state change affected the nginx configuration else false
         '''
         try:
-            if self._register_container(self.client.containers.get(container)):
-                return True
+            if not self.config_data.has_container(container_id):
+                if self._register_container(self.client.containers.get(container_id)):
+                    self.reload()
+                    return True
         except requests.exceptions.HTTPError as e:
             pass
         return False
@@ -316,7 +193,4 @@ class WebServer():
         return self.reload()
 
     def cleanup(self):
-        self.lock.acquire()
         self.shouldExit = True
-        self.lock.notify()
-        self.lock.release()

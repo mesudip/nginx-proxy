@@ -5,7 +5,7 @@ map $http_upgrade $connection_upgrade {
 
 {% for server in virtual_servers%}{% for upstream in server.upstreams %}
     upstream {{ upstream.id }} { {% for container in upstream.containers %}
-        server  {{ container.address }}:{{ container.port }};   {% endfor %}
+        server  {{ container.address }}:{{ container.port }};{% endfor %}
     }{% endfor %}
 {% if server.secured %}
 server{
@@ -22,9 +22,11 @@ server{
         ssl_certificate_key /etc/ssl/private/{{ server.ssl_file }}.key;
         ssl_stapling on;
         ssl_stapling_verify on;
-        add_header Strict-Transport-Security "max-age=31536000" always;
-        {% for location in server.locations %}
-        location {{ location.name }} { {% if location.upstream %}
+        add_header Strict-Transport-Security "max-age=31536000" always;{% if server.is_down %}
+        return 503;{% else %}{% for location in server.locations.values() %}
+        location {{ location.name }} { {% if location.extras.security %}
+            auth_basic "Basic Authorization Enabled ";
+            auth_basic_user_file {{ location.basic_auth_file }};{% endif %} {% if location.upstream %}
             proxy_pass {{ location.container.scheme }}://{{ location.upstream }}{{location.container.path}};{% else %}
             proxy_pass {{location.container.scheme }}://{{ location.container.address }}:{{ location.container.port }}{{ location.container.path }};{% endif %}{% if location.name != '/' %}
             proxy_redirect $scheme://$http_host{% if location.container.path!="/" %}{{ location.container.path }}{% endif%} $scheme://$http_host{{location.name}};{% endif %} {% if location.websocket  and location.http %}
@@ -35,12 +37,12 @@ server{
             proxy_set_header Connection "Upgrade";
             proxy_read_timeout  7d;
             proxy_send_timeout 7d;{% endif %}
-        }{% endfor %}
+        }{% endfor %} {% endif %}
     
 }{% else %}
 server{
         listen {{ server.port }};
-        server_name {{ server.hostname }};{% for location in server.locations %}
+        server_name {{ server.hostname }};{% for location in server.locations.values() %}
         location {{ location.name }} { {% if location.upstream %}
             proxy_pass {{ location.container.scheme }}://{{ location.upstream }}{{location.container.path}};{% else %}
             proxy_pass {{location.container.scheme }}://{{ location.container.address }}:{{ location.container.port }}{{ location.container.path }};{% endif %}{% if location.name != '/' %}

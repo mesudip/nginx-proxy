@@ -102,15 +102,14 @@ class Nginx:
                                                    lineterm='\n'))
         with open(self.config_file_path, "w") as file:
             file.write(config_str)
-        if not self.reload():
-            print(diff, file=sys.stderr)
-            print("ERROR: Above change made nginx to fail. Thus it's rolled back", file=sys.stderr)
+        print(diff)
 
+        if not self.reload():
+            print("ERROR: New change made nginx to fail. Thus it's rolled back", file=sys.stderr)
             with open(self.config_file_path, "w") as file:
                 file.write(self.last_working_config)
             return False
         else:
-            print(diff)
             self.last_working_config = config_str
             return True
 
@@ -150,13 +149,14 @@ class Nginx:
                         if response.content.decode("utf-8") == r2:
                             success.append(d)
                             continue
-                    print("[ERROR] " + url + "\n" + "Status Code :" + str(response.status_code), file=sys.stderr)
-                    if len(response.content) > 0:
-                        print(response.content.decode("utf-8"), file=sys.stderr)
+                    print("[Error] [" + d + "] Not owned by this machine:" + "Status Code[" + str(
+                        response.status_code) + "] -> " + url, file=sys.stderr)
                     continue
                 except requests.exceptions.RequestException as e:
-                    print("[ERROR] Domain is not owned by this machine :" + d, file=sys.stderr)
-                    print("Reason: " + str(e))
+                    if str(e).find("Name does not resolve") > -1:
+                        print("[Error] [" + d + "] Domain Name could not be resolved", file=sys.stderr)
+                    else:
+                        print("[ERROR] Domain is not owned by this machine : Reason: " + str(e))
                     continue
             os.remove(file)
             break

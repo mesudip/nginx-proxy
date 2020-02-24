@@ -1,3 +1,5 @@
+from typing import Dict, Any
+
 from . import Container
 
 
@@ -11,6 +13,20 @@ class Location:
         self.websocket = is_websocket_backend
         self.name = name
         self.containers = set()
+        self.extras: Dict[str, Any] = {}
+
+    def update_extras(self, extras: Dict[str, Any]):
+        for x in extras:
+            if x in self.extras:
+                data = self.extras[x]
+                if type(data) in (dict, set):
+                    self.extras[x].update(extras[x])
+                elif type(data) in list:
+                    self.extras[x].extend(extras[x])
+                else:
+                    self.extras[x] = extras[x]
+            else:
+                self.extras[x] = extras[x]
 
     def add(self, container: Container):
         self.containers.add(container)
