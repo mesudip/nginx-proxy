@@ -11,9 +11,9 @@ from jinja2 import Template
 
 import nginx_proxy.post_processors as post_processors
 import nginx_proxy.pre_processors as pre_processors
-from nginx import ProxyConfigData
 from nginx.Nginx import Nginx
 from nginx_proxy import Container
+from nginx_proxy import ProxyConfigData
 from nginx_proxy.Host import Host
 
 
@@ -37,6 +37,7 @@ class WebServer():
         self.rescan_time = None
         self.ssl_processor = post_processors.SslCertificateProcessor(self.nginx, self)
         self.basic_auth_processor = post_processors.BasicAuthProcessor()
+        self.redirect_processor = post_processors.RedirectProcessor()
 
         if self.nginx.config_test():
             if not self.nginx.start():
@@ -111,11 +112,12 @@ class WebServer():
         This is called whenever there's change in container or network state.
         :return:
         """
+        self.redirect_processor.process_redirection(self.config_data)
         hosts: List[Host] = []
         for host_data in self.config_data.host_list():
             host = copy.deepcopy(host_data)
             host.upstreams = {}
-            host.is_down = host_data.isEmpty()
+            host.is_down = host_data.isempty()
             for i, location in enumerate(host.locations.values()):
                 location.container = list(location.containers)[0]
                 if len(location.containers) > 1:

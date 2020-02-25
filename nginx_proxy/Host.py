@@ -1,5 +1,6 @@
-from typing import Set, Dict, Union
+from typing import Set, Dict, Union, Any
 
+from nginx import Url
 from nginx_proxy import Container
 from nginx_proxy.Location import Location
 
@@ -18,20 +19,41 @@ class Host:
         self.container_set: Set[str] = set()
         self.scheme: str = scheme
         self.secured: bool = scheme == 'https' or scheme == 'wss'
-        self.full_redirect: Union[str, None] = None
+        self.full_redirect: Union[Url, None] = None
+        self.extras: Dict[str, Any] = {}
 
     def set_external_parameters(self, host, port):
         self.hostname = host
         self.port = port
 
+    def update_extras(self, extras: Dict[str, Any]):
+        for x in extras:
+            if x in self.extras:
+                data = self.extras[x]
+                if type(data) in (dict, set):
+                    self.extras[x].update(extras[x])
+                elif type(data) in list:
+                    self.extras[x].extend(extras[x])
+                else:
+                    self.extras[x] = extras[x]
+            else:
+                self.extras[x] = extras[x]
+
     def add_container(self, location: str, container: Container, websocket=False, http=True):
         if location not in self.locations:
             self.locations[location] = Location(location, is_websocket_backend=websocket, is_http_backend=http)
         elif websocket:
-            self.locations[location].websocket = self.locations[location].websocket or websocket
+            self.locations[location].websocket = websocket
             self.locations[location].http = self.locations[location].http or http
         self.locations[location].add(container)
         self.container_set.add(container.id)
+
+    def update_with_host(self, host: 'Host'):
+        for location in host.locations.values():
+            for container in location.containers:
+                self.add_container(location.name, container, location.websocket, location.http)
+                self.container_set.add(container.id)
+            self.locations[location.name].update_extras(location.extras)
 
     def remove_container(self, container_id):
         removed = False
@@ -39,7 +61,7 @@ class Host:
         if container_id in self.container_set:
             for path, location in self.locations.items():
                 removed = location.remove(container_id) or removed
-                if location.isEmpty():
+                if location.isempty():
                     deletions.append(path)
         for path in deletions:
             del self.locations[path]
@@ -47,14 +69,14 @@ class Host:
             self.container_set.remove(container_id)
         return removed
 
-    def isEmpty(self):
+    def isempty(self):
         return len(self.container_set) == 0
 
-    def isManaged(self):
+    def ismanaged(self):
         return False
 
-    def is_redirect(self):
-        return self.full_redirect
+    def isredirect(self):
+        return self.full_redirect is not None
 
     def __repr__(self):
         return str({

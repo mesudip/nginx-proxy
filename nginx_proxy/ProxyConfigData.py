@@ -1,4 +1,4 @@
-from typing import Dict, Set, Generator, Tuple
+from typing import Dict, Set, Generator, Tuple, Union
 
 from nginx_proxy.Host import Host
 
@@ -13,6 +13,12 @@ class ProxyConfigData:
         # map the hostname -> port -> hostCofiguration
         self.config_map: Dict[str, Dict[int, Host]] = {}
         self.containers: Set[str] = set()
+
+    def getHost(self, hostname: str, port: int = 80) -> Union[None, Host]:
+        if hostname in self.config_map:
+            if port in self.config_map[hostname]:
+                return self.config_map[hostname][port]
+        return None
 
     def add_host(self, host: Host) -> None:
         if host.hostname in self.config_map:
@@ -41,7 +47,7 @@ class ProxyConfigData:
             for host in self.host_list():
                 if host.remove_container(container_id):
                     self.containers.remove(container_id)
-                    if host.isEmpty():
+                    if host.isempty():
                         removed_domains.add((host.hostname, host.port))
         return removed_domains
 

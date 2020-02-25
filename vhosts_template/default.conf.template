@@ -22,7 +22,8 @@ server{
         ssl_certificate_key /etc/ssl/private/{{ server.ssl_file }}.key;
         ssl_stapling on;
         ssl_stapling_verify on;
-        add_header Strict-Transport-Security "max-age=31536000" always;{% if server.is_down %}
+        add_header Strict-Transport-Security "max-age=31536000" always;{% if server.is_redirect %}
+            return 301 https://{{ server.full_redirect.hostname }}$request_uri;{% elif server.is_down %}
         return 503;{% else %}{% for location in server.locations.values() %}
         location {{ location.name }} { {% if location.extras.security %}
             auth_basic "Basic Authorization Enabled ";
@@ -67,8 +68,9 @@ server {
             alias {{ challenge_dir }};
             try_files $uri =404;
         }
-        location /{
-                return 301 https://$host$request_uri;
+        location /{ {% if server.is_redirect %}
+                return 301 https://{{ server.full_redirect.hostname }}$request_uri;{% else %}
+                return 301 https://$host$request_uri;{% endif %}
         }
 }{% endif %}{% endfor %}
 

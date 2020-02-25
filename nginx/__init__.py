@@ -1,1 +1,1 @@
-from .ProxyConfigData import ProxyConfigData
+from .Url import Url

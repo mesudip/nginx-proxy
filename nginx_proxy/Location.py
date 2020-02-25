@@ -31,7 +31,7 @@ class Location:
     def add(self, container: Container):
         self.containers.add(container)
 
-    def isEmpty(self):
+    def isempty(self):
         return len(self.containers) == 0
 
     def remove(self, container: Container):

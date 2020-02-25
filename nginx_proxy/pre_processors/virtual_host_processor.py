@@ -67,7 +67,7 @@ def _parse_host_entry(entry_string: str):
     h = Host(
         external["host"] if external["host"] else None,
         # having https port on 80 will be detected later and used for redirection.
-        external["port"] if external["port"] else "80",
+        int(external["port"]) if external["port"] else 80,
         scheme=external["scheme"] if external["scheme"] else {"http"}
     )
 
@@ -124,14 +124,14 @@ def host_generator(container: DockerContainer, service_id: str = None, known_net
             container_data.port = override_port
         elif container_data.port is None:
             if len(network_settings["Ports"]) is 1:
-                container_data.port = list(network_settings["Ports"].keys())[0].split("/")[0]
+                container_data.port = int(list(network_settings["Ports"].keys())[0].split("/")[0])
             else:
-                container_data.port = "80"
+                container_data.port = 80
         if override_ssl:
             if "ws" in host.scheme:
                 host.scheme = {"wss", "https"}
                 host.secured = True
             else:
                 host.scheme = {"https", }
-        host.secured = 'https' in host.scheme or host.port == "443"
+        host.secured = 'https' in host.scheme or host.port == 443
         yield (host, location, container_data)
