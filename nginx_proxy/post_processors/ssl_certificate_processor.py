@@ -1,6 +1,6 @@
 import threading
 from datetime import date, datetime
-from typing import List, Dict, Set
+from typing import List, Dict, Set, Union
 
 from nginx.Nginx import Nginx
 from nginx_proxy import WebServer
@@ -17,45 +17,43 @@ class SslCertificateProcessor():
         self.nginx: Nginx = nginx
         self.ssl: SSL = SSL("/etc/ssl", nginx)
         self.server: WebServer = server
-        # self.certificate_expiry_thread = threading.Thread(target=self.check_certificate_expiry)
-        #         self.certificate_expiry_thread.start()
+        self.next_ssl_expiry: Union[datetime, None] = None
+        self.certificate_expiry_thread: threading.Thread = threading.Thread(target=self.update_ssl_certificates)
+        self.certificate_expiry_thread.start()
 
     def update_ssl_certificates(self):
         self.lock.acquire()
-        while True:
-            if self.shutdown_requested:
-                return
+        while not self.shutdown_requested:
             if self.next_ssl_expiry is None:
                 print("[SSL Refresh Thread]  Looks like there no ssl certificates, Sleeping until  there's one")
                 self.lock.wait()
             else:
                 now = datetime.now()
                 remaining_days = (self.next_ssl_expiry - now).days
-                remaining_days = 30 if remaining_days > 30 else remaining_days
 
                 if remaining_days > 2:
+                    print("[SSL Refresh Thread] SSL certificate status:")
+
+                    max_size = max([len(x) for x in self.cache])
+                    for host in self.cache:
+                        print('{host: <{width}} - {remain} days'.format(host=host, width=max_size + 2,
+                                                                        remain=remaining_days))
+                    sleep_time = (32 if remaining_days > 30 else remaining_days) - 2
                     print(
-                        "[SSL Refresh Thread] All the certificates are up to date sleeping for" + str(
-                            remaining_days) + "days.")
-                    self.lock.wait((remaining_days - 2) * 3600 * 24)
+                        "[SSL Refresh Thread] All the certificates are up to date sleeping for " + str(
+                            sleep_time) + " days.")
+                    self.lock.wait(sleep_time * 3600 * 24 - 10)
                 else:
-                    print("[SSL Refresh Thread] Looks like we need to refresh certificates that are about to expire")
+                    print(
+                        "[SSL Refresh Thread] Looks like we need to refresh certificates that are about to expire")
                     for x in self.cache:
                         print("Remaining days :", x, ":", (self.cache[x] - now).days)
                     x = [x for x in self.cache if (self.cache[x] - now).days < 6]
-                    acme_ssl_certificates = set(self.ssl.register_certificate_or_selfsign(x, ignore_existing=True))
-                    for host in x:
-                        if host not in acme_ssl_certificates:
-                            del self.cache[host]
-                            if not self.ssl.cert_exists_wildcard(host):
-                                self.self_signed.add(host)
-                        else:
-                            self.cache[host] = self.ssl.expiry_time(domain=host)
-                    self.next_ssl_expiry = min(self.cache.values())
-                    self.server.reload(forced=True)
+                    self.server.reload()
 
     def process_ssl_certificates(self, hosts: List[Host]):
         ssl_requests: Set[Host] = set()
+        self.lock.acquire()
         for host in hosts:
             if host.secured:
                 if int(host.port) in (80, 443):
@@ -71,7 +69,7 @@ class SslCertificateProcessor():
                             continue
                     # find the ssl certificate if it exists
                     time = self.ssl.expiry_time(host.hostname)
-                    if (time - datetime.now()).days > 1:
+                    if (time - datetime.now()).days > 2:
                         self.cache[host.hostname] = time
                         host.ssl_file = host.hostname
                     else:
@@ -88,3 +86,16 @@ class SslCertificateProcessor():
                     host.ssl_file = host.hostname
                     self.cache[host.hostname] = self.ssl.expiry_time(host.hostname)
                     host.ssl_expiry = self.cache[host.hostname]
+        if len(self.cache):
+            expiry = min(self.cache.values())
+            if expiry != self.next_ssl_expiry:
+                self.next_ssl_expiry = expiry
+                self.lock.notify()
+        self.lock.release()
+
+    def shutdown(self):
+        self.lock.acquire()
+        self.shutdown_requested = True
+        self.lock.notify()
+        self.lock.release()
+        pass

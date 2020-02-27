@@ -1,4 +1,3 @@
-import difflib
 import os
 import pathlib
 import random
@@ -95,14 +94,13 @@ class Nginx:
         if config_str == self.last_working_config:
             print("Configuration not changed, skipping nginx reload")
             return False
-        diff = str.join("\n", difflib.unified_diff(self.last_working_config.splitlines(),
-                                                   config_str.splitlines(),
-                                                   fromfile='Old Config',
-                                                   tofile='New Config',
-                                                   lineterm='\n'))
+        # diff = str.join("\n", difflib.unified_diff(self.last_working_config.splitlines(),
+        #                                            config_str.splitlines(),
+        #                                            fromfile='Old Config',
+        #                                            tofile='New Config',
+        #                                            lineterm='\n'))
         with open(self.config_file_path, "w") as file:
             file.write(config_str)
-        print(diff)
 
         if not self.reload():
             print("ERROR: New change made nginx to fail. Thus it's rolled back", file=sys.stderr)
@@ -110,6 +108,7 @@ class Nginx:
                 file.write(self.last_working_config)
             return False
         else:
+            print("Nginx Reloaded Successfully")
             self.last_working_config = config_str
             return True
 

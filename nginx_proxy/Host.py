@@ -12,6 +12,10 @@ class Host:
 
     """
 
+    @staticmethod
+    def fromurl(url: Url):
+        return Host(url.hostname, url.port, url.scheme)
+
     def __init__(self, hostname: str, port: int, scheme: str = 'http'):
         self.port: int = port
         self.hostname: str = hostname
@@ -22,24 +26,27 @@ class Host:
         self.full_redirect: Union[Url, None] = None
         self.extras: Dict[str, Any] = {}
 
-    def set_external_parameters(self, host, port):
+    def set_external_parameters(self, host, port) -> None:
         self.hostname = host
         self.port = port
 
-    def update_extras(self, extras: Dict[str, Any]):
+    def update_extras(self, extras: Dict[str, Any]) -> None:
         for x in extras:
-            if x in self.extras:
-                data = self.extras[x]
-                if type(data) in (dict, set):
-                    self.extras[x].update(extras[x])
-                elif type(data) in list:
-                    self.extras[x].extend(extras[x])
-                else:
-                    self.extras[x] = extras[x]
-            else:
-                self.extras[x] = extras[x]
+            self.update_extras_content(x, extras[x])
 
-    def add_container(self, location: str, container: Container, websocket=False, http=True):
+    def update_extras_content(self, key: str, value: Any) -> None:
+        if key in self.extras:
+            data = self.extras[key]
+            if type(data) in (dict, set):
+                self.extras[key].update(value)
+            elif type(data) is list:
+                self.extras[key].extend(value)
+            else:
+                self.extras[key] = value
+        else:
+            self.extras[key] = value
+
+    def add_container(self, location: str, container: Container, websocket=False, http=True) -> None:
         if location not in self.locations:
             self.locations[location] = Location(location, is_websocket_backend=websocket, is_http_backend=http)
         elif websocket:
@@ -48,14 +55,14 @@ class Host:
         self.locations[location].add(container)
         self.container_set.add(container.id)
 
-    def update_with_host(self, host: 'Host'):
+    def update_with_host(self, host: 'Host') -> None:
         for location in host.locations.values():
             for container in location.containers:
                 self.add_container(location.name, container, location.websocket, location.http)
                 self.container_set.add(container.id)
             self.locations[location.name].update_extras(location.extras)
 
-    def remove_container(self, container_id):
+    def remove_container(self, container_id) -> None:
         removed = False
         deletions = []
         if container_id in self.container_set:
@@ -69,13 +76,13 @@ class Host:
             self.container_set.remove(container_id)
         return removed
 
-    def isempty(self):
+    def isempty(self) -> bool:
         return len(self.container_set) == 0
 
-    def ismanaged(self):
+    def ismanaged(self) -> bool:
         return False
 
-    def isredirect(self):
+    def isredirect(self) -> bool:
         return self.full_redirect is not None
 
     def __repr__(self):

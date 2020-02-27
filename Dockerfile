@@ -14,6 +14,7 @@ RUN apk --no-cache add  openssl && \
 ARG LETSENCRYPT_API="https://acme-v02.api.letsencrypt.org/directory"
 ENV LETSENCRYPT_API=${LETSENCRYPT_API} \
     CHALLENGE_DIR=/tmp/acme-challenges/ \
-    DHPARAM_SIZE=2048
+    DHPARAM_SIZE=2048 \
+    MAX_BODY_SIZE=1m
 WORKDIR /app
 COPY . /app/

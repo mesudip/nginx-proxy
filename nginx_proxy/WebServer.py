@@ -19,17 +19,17 @@ from nginx_proxy.Host import Host
 
 class WebServer():
     def __init__(self, client: DockerClient, *args):
+        self.config = self.loadconfig()
         self.shouldExit = False
         self.client = client
-        challenge_dir = os.environ.get("CHALLENGE_DIR")
         conf_file = "/etc/nginx/conf.d/default.conf"
-        self.nginx = Nginx(conf_file, challenge_dir=challenge_dir) if challenge_dir else Nginx(conf_file)
+        self.nginx = Nginx(conf_file, self.config['challenge_dir'])
         self.config_data = ProxyConfigData()
         self.services = set()
         self.networks = {}
         self.conf_file_name = "/etc/nginx/conf.d/default.conf"
         self.host_file = "/etc/hosts"
-        file = open("vhosts_template/default.conf.template")
+        file = open("vhosts_template/default.conf.jinja2")
         self.template = Template(file.read())
         file.close()
         self.learn_yourself()
@@ -92,18 +92,18 @@ class WebServer():
         known_networks = set(self.networks.keys())
         hosts = pre_processors.process_virtual_hosts(container, environments, known_networks)
         if len(hosts):
-            pre_processors.process_basic_auth(container, environments, hosts)
-            pre_processors.process_redirection(container, environments, hosts)
-            for h in hosts.values():
-                for p in h.values():
-                    self.config_data.add_host(p)
+            pre_processors.process_default_server(container, environments, hosts)
+            pre_processors.process_basic_auth(container, environments, hosts.config_map)
+            pre_processors.process_redirection(container, environments, hosts.config_map)
+            for h in hosts.host_list():
+                self.config_data.add_host(h)
         return len(hosts) > 0
 
     # removes container from the maintained list.
     # this is called when a caontainer dies or leaves a known network
     def remove_container(self, container_id: str):
-        deleted_domain = self.config_data.remove_container(container_id)
-        if len(deleted_domain):
+        deleted, deleted_domain = self.config_data.remove_container(container_id)
+        if deleted:
             self.reload()
 
     def reload(self, forced=False) -> bool:
@@ -114,10 +114,16 @@ class WebServer():
         """
         self.redirect_processor.process_redirection(self.config_data)
         hosts: List[Host] = []
+        has_default = False
         for host_data in self.config_data.host_list():
             host = copy.deepcopy(host_data)
             host.upstreams = {}
             host.is_down = host_data.isempty()
+            if 'default_server' in host.extras:
+                if has_default:
+                    del host.extras['default_server']
+                else:
+                    has_default = True
             for i, location in enumerate(host.locations.values()):
                 location.container = list(location.containers)[0]
                 if len(location.containers) > 1:
@@ -130,8 +136,7 @@ class WebServer():
 
         self.basic_auth_processor.process_basic_auth(hosts)
         self.ssl_processor.process_ssl_certificates(hosts)
-
-        output = self.template.render(virtual_servers=hosts, challenge_dir=self.nginx.challenge_dir)
+        output = self.template.render(virtual_servers=hosts, config=self.config, add_default_server=not has_default)
         if forced:
             response = self.nginx.forced_update(output)
         else:
@@ -195,4 +200,10 @@ class WebServer():
         return self.reload()
 
     def cleanup(self):
-        self.shouldExit = True
+        self.ssl_processor.shutdown()
+
+    def loadconfig(self):
+        return {
+            'client_max_body_size': os.getenv("MAX_BODY_SIZE", "1m"),
+            'challenge_dir': os.getenv("CHALLENGE_DIR", "/tmp/acme-challenges")
+        }

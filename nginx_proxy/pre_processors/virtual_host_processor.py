@@ -1,14 +1,11 @@
-from typing import Dict
-
 from docker.models.containers import Container as DockerContainer
 
-from nginx_proxy import Host
+from nginx_proxy import Host, ProxyConfigData
 from nginx_proxy.Container import Container, NoHostConiguration, UnreachableNetwork
 from nginx_proxy.utils import split_url
 
 
-def process_virtual_hosts(container: DockerContainer, environments: map, known_networks: set) -> Dict[
-    str, Dict[int, Host]]:
+def process_virtual_hosts(container: DockerContainer, environments: map, known_networks: set) -> ProxyConfigData:
     """
 
     :param container:
@@ -16,36 +13,27 @@ def process_virtual_hosts(container: DockerContainer, environments: map, known_n
     :param known_networks: networks known to the nginx-proxy container
     :return:
     """
-    hosts = {}
+    hosts = ProxyConfigData()
     try:
-        for host, location, proxied_container in host_generator(container, known_networks=known_networks):
+        for host, location, proxied_container, extras in host_generator(container, known_networks=known_networks):
             websocket = "ws" in host.scheme or "wss" in host.scheme
             secured = 'https' in host.scheme or 'wss' in host.scheme
             http = 'http' in host.scheme or 'https' in host.scheme
             # it might return string if there's a error in processing
             if type(host) is not str:
-                if host.hostname in hosts:
-                    port_map = hosts[host.hostname]
-                    if host.port in port_map:
-                        existing_host: Host = port_map[host.port]
-                        existing_host.add_container(location, proxied_container, websocket=websocket, http=http)
-                        ## if any of the containers in for the virtualHost require https, the all others will be redirected to https.
-                        if secured:
-                            existing_host.secured = True
-                        continue
-                else:
-                    hosts[host.hostname] = {}
-                host.secured = secured
                 host.add_container(location, proxied_container, websocket=websocket, http=http)
-                hosts[host.hostname][host.port] = host
-
+                if len(extras):
+                    host.locations[location].update_extras({'injected': extras})
+                hosts.add_host(host)
         return hosts
     except NoHostConiguration:
-        print("Skip Container:", "No VIRTUAL_HOST configuration", "Id:" + container.id,
+        print("Skip Container     :", "No VIRTUAL_HOST configuration ", "Id:" + container.id,
               "Name:" + container.attrs["Name"].replace("/", ""), sep="\t")
     except UnreachableNetwork:
-        print("Skip Container:", "UNREACHABLE Network           ", "Id:" + container.id,
+        print("Skip Container     :", "UNREACHABLE Network           ", "Id:" + container.id,
               "Name:" + container.attrs["Name"].replace("/", ""), sep="\t")
+    print("Container          :", "Found valid configuration     ", "Id:" + container.id,
+          "Name:" + container.attrs["Name"].replace("/", ""), sep="\t")
     return hosts
 
 
@@ -55,7 +43,14 @@ def _parse_host_entry(entry_string: str):
     :param entry_string:
     :return: (dict,dict)
     """
-
+    configs = entry_string.split(";", 1)
+    extras = set()
+    if len(configs) > 1:
+        entry_string = configs[0]
+        for x in configs[1].split(';'):
+            x = x.strip()
+            if x:
+                extras.add(x)
     host_list = entry_string.strip().split("->")
     external, internal = host_list if len(host_list) is 2 else (host_list[0], "")
     external, internal = (split_url(external), split_url(internal))
@@ -70,10 +65,9 @@ def _parse_host_entry(entry_string: str):
         int(external["port"]) if external["port"] else 80,
         scheme=external["scheme"] if external["scheme"] else {"http"}
     )
-
     return (h,
             external["location"] if external["location"] else "/",
-            c)
+            c, extras)
 
 
 def host_generator(container: DockerContainer, service_id: str = None, known_networks: set = {}):
@@ -81,7 +75,7 @@ def host_generator(container: DockerContainer, service_id: str = None, known_net
     :param container:
     :param service_id:
     :param known_networks:
-    :return: (Host,str,Container)
+    :return: (Host,str,Container,set)
     """
     c = Container(container.id)
     network_settings = container.attrs["NetworkSettings"]
@@ -117,7 +111,7 @@ def host_generator(container: DockerContainer, service_id: str = None, known_net
             override_port = env_map["VIRTUAL_PORT"]
 
     for host_config in virtual_hosts:
-        host, location, container_data = _parse_host_entry(host_config)
+        host, location, container_data, extras = _parse_host_entry(host_config)
         container_data.address = ip_address
         container_data.id = container.id
         if override_port:
@@ -134,4 +128,4 @@ def host_generator(container: DockerContainer, service_id: str = None, known_net
             else:
                 host.scheme = {"https", }
         host.secured = 'https' in host.scheme or host.port == 443
-        yield (host, location, container_data)
+        yield (host, location, container_data, extras)

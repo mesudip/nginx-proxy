@@ -1,5 +1,6 @@
 import os
 import re
+import signal
 import subprocess
 import sys
 import traceback
@@ -49,6 +50,8 @@ def eventLoop():
                 process_network_event(event["Action"], event)
             elif eventType == "container":
                 process_container_event(event["Action"], event)
+        except (KeyboardInterrupt, SystemExit) as e:
+            raise e
         except Exception as e:
             print("Unexpected error :" + e.__class__.__name__ + ' -> ' + str(e), file=sys.stderr)
             traceback.print_exc(limit=10)
@@ -86,7 +89,15 @@ def process_network_event(action, event):
         pass
 
 
+def receiveSignal(signalNumber, frame):
+    print("Received", signalNumber)
+    return
+
+
+signal.signal(signal.SIGTERM, receiveSignal)
+
 try:
     eventLoop()
 except (KeyboardInterrupt, SystemExit):
+    print("Am I killed !!")
     server.cleanup()

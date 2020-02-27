@@ -1,4 +1,6 @@
 class Url:
+    root: 'Url' = None
+
     def __init__(self, scheme: set, hostname: str, port: int, location: str):
         self.scheme = scheme
         self.hostname = hostname
@@ -27,3 +29,6 @@ class Url:
         hostport_entries = hostport.split(":", 1)
         host, port = hostport_entries if len(hostport_entries) is 2 else (hostport_entries[0], default_port)
         return Url(scheme, host if host else None, port, location)
+
+
+Url.root = Url(set(), None, None, '/')

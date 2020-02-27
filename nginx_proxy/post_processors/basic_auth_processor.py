@@ -24,16 +24,24 @@ class BasicAuthProcessor():
                   '0123456789/.'
         return random.choice(letters) + random.choice(letters)
 
+    def generate_htpasswd_file(self, folder, file, securities):
+        data = [user + ':' + crypt.crypt(securities[user]) for user in securities]
+        folder = os.path.join(self.basic_auth_dir, folder)
+        if not os.path.exists(folder):
+            os.mkdir(folder)
+
+        file = os.path.join(folder, file)
+        with open(file, "w") as openfile:
+            openfile.write('\n'.join(data))
+        return file
+
     def process_basic_auth(self, hosts: List[Host]):
         for host in hosts:
+            if 'security' in host.extras:
+                host.extras['security_file'] = self.generate_htpasswd_file(host.hostname, '_', host.extras['security'])
+
             for location in host.locations.values():
                 if 'security' in location.extras:
-                    securities: Dict[str, str] = location.extras['security']
-                    data = [user + ':' + crypt.crypt(securities[user]) for user in securities]
-                    folder = os.path.join(self.basic_auth_dir, host.hostname)
-                    if not os.path.exists(folder):
-                        os.mkdir(folder)
-                    file = os.path.join(folder, location.name.replace('/', '_'))
-                    location.basic_auth_file = file
-                    with open(file, "w") as openfile:
-                        openfile.write('\n'.join(data))
+                    location.extras['security_file'] = self.generate_htpasswd_file(host.hostname,
+                                                                                   location.name.replace('/', '_'),
+                                                                                   location.extras['security'])
