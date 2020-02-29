@@ -9,7 +9,7 @@ from nginx_proxy.SSL import SSL
 
 
 class SslCertificateProcessor():
-    def __init__(self, nginx: Nginx, server: WebServer):
+    def __init__(self, nginx: Nginx, server: WebServer, start_ssl_thread=False):
         self.cache: Dict[str:date] = {}
         self.self_signed: Set[str] = set()
         self.shutdown_requested: bool = False
@@ -19,7 +19,8 @@ class SslCertificateProcessor():
         self.server: WebServer = server
         self.next_ssl_expiry: Union[datetime, None] = None
         self.certificate_expiry_thread: threading.Thread = threading.Thread(target=self.update_ssl_certificates)
-        self.certificate_expiry_thread.start()
+        if start_ssl_thread:
+            self.certificate_expiry_thread.start()
 
     def update_ssl_certificates(self):
         self.lock.acquire()
@@ -36,8 +37,8 @@ class SslCertificateProcessor():
 
                     max_size = max([len(x) for x in self.cache])
                     for host in self.cache:
-                        print('{host: <{width}} - {remain} days'.format(host=host, width=max_size + 2,
-                                                                        remain=remaining_days))
+                        print('  {host: <{width}} - {remain}'.format(host=host, width=max_size + 2,
+                                                                   remain=self.cache[host] - now))
                     sleep_time = (32 if remaining_days > 30 else remaining_days) - 2
                     print(
                         "[SSL Refresh Thread] All the certificates are up to date sleeping for " + str(

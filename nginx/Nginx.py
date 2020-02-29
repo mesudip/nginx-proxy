@@ -1,13 +1,14 @@
 import os
 import pathlib
 import random
-import re
 import string
 import subprocess
 import sys
 from os import path
 
 import requests
+
+from nginx import Url
 
 
 class Nginx:
@@ -130,7 +131,7 @@ class Nginx:
     def verify_domain(self, _domain: list or str):
         domain = [_domain] if type(_domain) is str else _domain
         ## when not included, one invalid domain in a list of 100 will make all domains to be unverified due to nginx failing to start.
-        domain = [x for x in domain if Nginx.is_valid_hostname(x)]
+        domain = [x for x in domain if Url.is_valid_hostname(x)]
         success = []
         while True:
             r1 = "".join([random.choice(string.ascii_letters + string.digits) for _ in range(32)])
@@ -163,24 +164,3 @@ class Nginx:
             return len(success) > 0
         else:
             return success
-
-    @staticmethod
-    def is_valid_hostname(hostname: str):
-        """
-        https://stackoverflow.com/a/33214423/2804342
-        :return: True if for valid hostname False otherwise
-        """
-        if hostname[-1] == ".":
-            # strip exactly one dot from the right, if present
-            hostname = hostname[:-1]
-        if len(hostname) > 253:
-            return False
-
-        labels = hostname.split(".")
-
-        # the TLD must be not all-numeric
-        if re.match(r"[0-9]+$", labels[-1]):
-            return False
-
-        allowed = re.compile(r"(?!-)[a-z0-9-]{1,63}(?<!-)$", re.IGNORECASE)
-        return all(allowed.match(label) for label in labels)

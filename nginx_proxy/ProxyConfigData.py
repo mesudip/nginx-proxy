@@ -50,10 +50,10 @@ class ProxyConfigData:
         removed_domains = set()
         result = False
         if container_id in self.containers:
+            self.containers.remove(container_id)
             for host in self.host_list():
                 if host.remove_container(container_id):
                     result = True
-                    self.containers.remove(container_id)
                     if host.isempty():
                         removed_domains.add((host.hostname, host.port))
         return result, removed_domains
@@ -68,3 +68,38 @@ class ProxyConfigData:
 
     def __len__(self):
         return self._len
+
+    def print(self):
+
+        for host in self.host_list():
+            if host.port != 80:
+                url = "-   " + ("https" if host.secured else "http") + "://" + host.hostname + ":" + str(host.port)
+            else:
+                url = "-   " + ("https" if host.secured else "http") + "://" + host.hostname
+            if host.isredirect():
+                print(url)
+                print("      redirect : ", host.full_redirect)
+            else:
+                if len(host.extras):
+                    print(url)
+                    self.printextra("      ", host.extras)
+                for location in host.locations.values():
+                    print(url + location.name)
+                    print("      Type: ", "Websocket" if location.websocket else "Http")
+                    if len(location.extras):
+                        self.printextra("      ", location.extras)
+
+    @staticmethod
+    def printextra(gap, extra):
+        print(gap + "Extras:")
+        for x in extra:
+            if x is 'security' or type(x) in (set, list):
+                print(gap + "  " + x + ":")
+                for s in extra[x]:
+                    print(gap + "    " + s)
+            elif type(x) is dict:
+                print(gap + "  " + x + ":")
+                for s in extra[x]:
+                    print(gap + "    " + s + ":" + extra[x][s])
+            else:
+                print(gap + "  " + x + " : " + str(extra[x]))

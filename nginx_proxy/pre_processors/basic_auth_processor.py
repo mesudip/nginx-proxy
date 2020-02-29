@@ -38,8 +38,7 @@ def process_basic_auth(container: Container, environments: map, vhost_map: Dict[
             if len(host_list) is 2:
                 url = host_list[0]
                 keys = get_auth_map(host_list[1])
-                print("Host:" + str(url) + " keys:" + str(keys))
-                auth_list.append((Url.parse(url, default_location='/'), keys))
+                auth_list.append((Url.parse(url, default_location='/',default_port=80), keys))
             elif len(host_list) is 1:
                 keys = get_auth_map(auth_entry)
                 if len(keys):
@@ -58,6 +57,7 @@ def process_basic_auth(container: Container, environments: map, vhost_map: Dict[
                 if basic_auth_host.port in port_map:
                     host = port_map[basic_auth_host.port]
                     update_security()
-
+                else:
+                    print("Basic Auth for "+basic_auth_host.hostname+":"+str(basic_auth_host.port)+" in container with "+str(list(vhost_map.keys())))
             else:
-                print("Unparsable entry for PROXY_BASIC_AUTH in container: " + container.name)
+                print("Unknown hostname : "+basic_auth_host.hostname+"+ in PROXY_BASIC_AUTH in container: " + container.name)

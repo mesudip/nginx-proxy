@@ -91,3 +91,10 @@ class Host:
             "locations": self.locations,
             "server_name": self.hostname,
             "port": self.port})
+
+    def __str__(self):
+        hostname= "%s:%s" % (
+                self.hostname if self.hostname else '?',
+                str(self.port) if self.port is not None else '?')
+
+

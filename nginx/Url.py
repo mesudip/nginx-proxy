@@ -1,18 +1,21 @@
+import re
+
+
 class Url:
     root: 'Url' = None
 
     def __init__(self, scheme: set, hostname: str, port: int, location: str):
-        self.scheme = scheme
+        self.scheme:set = scheme
         self.hostname = hostname
         self.port = port
         self.location = location
 
     def __repr__(self):
-        return "%s://%s:%s%s" % \
-               ('+'.join(list(self.scheme)) if len(self.scheme) else '?',
+        return "%s%s%s%s" % \
+               (('+'.join(list(self.scheme)) + '://') if len(self.scheme) else '',
                 self.hostname if self.hostname else '?',
-                str(self.port) if self.port is not None else '?',
-                self.location if self.location else '?')
+                (":" + str(self.port)) if self.port is not None else '?',
+                self.location if self.location else '')
 
     @staticmethod
     def parse(entry_string: str, default_scheme=None, default_port=None, default_location=None) -> 'Url':
@@ -29,6 +32,27 @@ class Url:
         hostport_entries = hostport.split(":", 1)
         host, port = hostport_entries if len(hostport_entries) is 2 else (hostport_entries[0], default_port)
         return Url(scheme, host if host else None, port, location)
+
+    @staticmethod
+    def is_valid_hostname(hostname: str) -> bool:
+        """
+        https://stackoverflow.com/a/33214423/2804342
+        :return: True if for valid hostname False otherwise
+        """
+        if hostname[-1] == ".":
+            # strip exactly one dot from the right, if present
+            hostname = hostname[:-1]
+        if len(hostname) > 253:
+            return False
+
+        labels = hostname.split(".")
+
+        # the TLD must be not all-numeric
+        if re.match(r"[0-9]+$", labels[-1]):
+            return False
+
+        allowed = re.compile(r"(?!-)[a-z0-9-]{1,63}(?<!-)$", re.IGNORECASE)
+        return all(allowed.match(label) for label in labels)
 
 
 Url.root = Url(set(), None, None, '/')

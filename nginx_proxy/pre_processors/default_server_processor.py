@@ -12,19 +12,18 @@ from docker.models.containers import Container
 def process_default_server(container: Container, environments: Dict[str, str], vhosts: ProxyConfigData):
     if 'PROXY_DEFAULT_SERVER' in environments:
         server: str = environments['PROXY_DEFAULT_SERVER']
-        if server.strip().lower() == 'true':
-            url = Url.parse("")
+        url = Url.parse(server, default_port=80)
+        if  url.hostname not in ("true","false","yes") and Url.is_valid_hostname(url.hostname):
+            host = vhosts.getHost(hostname=url.hostname)
+            if host is None:
+                host = Host.fromurl(url)
+                vhosts.add_host(host)
         else:
-            url = Url.parse(server, default_port=80)
-        if url.hostname is None:
             if len(vhosts) is 1:
                 for host in vhosts.host_list():
                     pass
             else:
                 print("DEFAULT_SERVER configured for ", container.name, "but has multiple hosts")
-        else:
-            host = vhosts.getHost(hostname=url.hostname)
-            if host is None:
-                host = Host.fromurl(url)
-                vhosts.add_host(host)
+                return
+
         host.update_extras_content("default_server", "default_server")

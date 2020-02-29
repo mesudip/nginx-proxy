@@ -30,6 +30,7 @@ server{
         ssl_certificate_key /etc/ssl/private/{{ server.ssl_file }}.key;{% if server.is_redirect %}
         return 301 https://{{ server.full_redirect.hostname }}$request_uri;{% elif server.is_down %}
         return 503;{% else %} {% if server.extras.security %}
+        auth_basic "Basic Auth Enabled";
         auth_basic_user_file {{ server.extras.security_file }};{% endif %} {% for location in server.locations.values() %}
         location {{ location.name }} { {% for injection in location.extras.injected %}
             {{ injection }};{% endfor %} {% if location.extras.security %}

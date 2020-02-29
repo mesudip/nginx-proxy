@@ -35,7 +35,7 @@ class WebServer():
         self.learn_yourself()
         self.rescan_all_container()
         self.rescan_time = None
-        self.ssl_processor = post_processors.SslCertificateProcessor(self.nginx, self)
+        self.ssl_processor = post_processors.SslCertificateProcessor(self.nginx, self,start_ssl_thread=False)
         self.basic_auth_processor = post_processors.BasicAuthProcessor()
         self.redirect_processor = post_processors.RedirectProcessor()
 
@@ -53,6 +53,7 @@ class WebServer():
                 print("Please check the configuration of your containers and restart this container", file=sys.stderr)
                 print("EXITING .....", file=sys.stderr)
                 exit(1)
+        self.ssl_processor.certificate_expiry_thread.start()
 
     def learn_yourself(self):
         """
@@ -95,6 +96,7 @@ class WebServer():
             pre_processors.process_default_server(container, environments, hosts)
             pre_processors.process_basic_auth(container, environments, hosts.config_map)
             pre_processors.process_redirection(container, environments, hosts.config_map)
+            hosts.print()
             for h in hosts.host_list():
                 self.config_data.add_host(h)
         return len(hosts) > 0
@@ -204,6 +206,6 @@ class WebServer():
 
     def loadconfig(self):
         return {
-            'client_max_body_size': os.getenv("MAX_BODY_SIZE", "1m"),
+            'client_max_body_size': os.getenv("CLIENT_MAX_BODY_SIZE", "1m"),
             'challenge_dir': os.getenv("CHALLENGE_DIR", "/tmp/acme-challenges")
         }
