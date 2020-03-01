@@ -21,6 +21,8 @@ class AcmeV1(Acme):
         try:
             self.log.info('trying to create account key {0}'.format(self.account_key))
             account_key = self.create_key(self.account_key)
+        except (KeyboardInterrupt, SystemExit) as e:
+            raise e
         except Exception as e:
             self.log.error('creating key {0} {1}'.format(type(e).__name__, e))
             sys.exit(1)
@@ -44,6 +46,8 @@ class AcmeV1(Acme):
         self.register_account()
         try:
             self.create_key(self.domain_key)
+        except (KeyboardInterrupt, SystemExit) as e:
+            raise e
         except Exception as e:
             self.log.error('creating key {0} {1}'.format(type(e).__name__, e))
             sys.exit(1)
@@ -66,6 +70,8 @@ class AcmeV1(Acme):
             self.log.info('adding nginx virtual host and completing challenge')
             try:
                 self._write_challenge(token, thumbprint)
+            except (KeyboardInterrupt, SystemExit) as e:
+                raise e
             except Exception as e:
                 self.log.error('error adding virtual host {0} {1}'.format(type(e).__name__, e))
                 sys.exit(1)
@@ -97,6 +103,8 @@ class AcmeV1(Acme):
                 chain_str = urlopen(self.chain).read()
                 if chain_str:
                     chain_str = chain_str.decode('utf8')
+            except (KeyboardInterrupt, SystemExit) as e:
+                raise e
             except Exception as e:
                 self.log.error('error getting chain: {0} {1}'.format(type(e).__name__, e))
                 sys.exit(1)
@@ -111,6 +119,8 @@ class AcmeV1(Acme):
                             )))
                     )
                     fd.write(chain_str)
+            except (KeyboardInterrupt, SystemExit) as e:
+                raise e
             except Exception as e:
                 self.log.error('error writing cert: {0} {1}'.format(type(e).__name__, e))
                 sys.exit(1)

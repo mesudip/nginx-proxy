@@ -3,8 +3,8 @@ Nginx-Proxy
 Docker container for automatically creating nginx configuration based on active containers in docker host.
 
 - Easy server configuration with environment variables
-- Map mulipple containers to different locations on same server
-- Automatic letsencrypt ssl certificate registration
+- Map multiple containers to different locations on same server
+- Automatic Let's Encrypt ssl certificate registration
 - Basic Authorization
 
 ## Quick Setup  of nginx-proxy
@@ -18,7 +18,7 @@ docker run  --network frontend \
             -v /etc/ssl/dhparam:/etc/nginx/dhparam \
             -p 80:80 \
             -p 443:443 \
-            mesudip/nginx-proxy
+            -d --restart always mesudip/nginx-proxy
 ```
 Configurable environment variables for `nginx-proxy`:
 -   `DHPARAM_SIZE`  Default - `2048` : Set size of dhparam usd for ssl certificates
@@ -30,12 +30,12 @@ environment variable is set. If you have multiple exposed ports in the container
 mention the container port too. 
 ```
 docker run --network frontend \
-          --name test-host \
-          -e VIRTUAL_HOST="example.com" \
-          nginx:alpine
+          --name wordpress-host \
+          -e VIRTUAL_HOST="wordpress.example.com" \
+          wordpress
 ```
 
-Using nginx-proxy
+Details of Using nginx-proxy
 ======================
  - [Volumes in  `nginx-proxy`](#volumes-in-nginx-proxy)
  - [Configure VIRTUAL_HOST in your containers](#configure-virtual_host-in-your-containers)
@@ -51,9 +51,9 @@ Using nginx-proxy
 Following directries can be made into volumes to persist configurations
 - `/etc/nginx/conf.d` nginx configuration directory. You can add your own server configurations here
 - `/etc/nginx/dhparam` the directory for storing DH parameter for ssl connections
-- `/etc/ssl` directory for storing ssl certificates, ssl private key and letsencrypt account key.
+- `/etc/ssl` directory for storing ssl certificates, ssl private key and Let's Encrypt account key.
 - `/var/log/nginx` directory nginx logs 
-- `/tmp/acme-challenges` directory for storing challenge content when registring letsencrypt certificate
+- `/tmp/acme-challenges` directory for storing challenge content when registering Let's Encrypt certificate
 
 ## Configure environment`VIRTUAL_HOST` in your containers
 When you want a container's to be hosted on a domain set `VIRTUAL_HOST` environment variable to desired `server_name` entry.
@@ -164,11 +164,8 @@ When request comes for a server name that is not registered in `nginx-proxy`, It
 If you want the requested to be passed to a container instead, when setting up the container you can add `PROXY_DEFAULT_SERVER=true` environment along with `VIRTUAL_HOST`.
 
 This much is sufficient for http connections, but for https connections, you might want to setup
-[wildcard certificates](#using-your-own-ssl-certificate) too 
+[wildcard certificates](#using-your-own-ssl-certificate) too so that your users dont get invalid ssl certificate errors.
 ## Basic Authorization
 Basic Auth can be enabled on the container with environment variable `PROXY_BASIC_AUTH`
 - `PROXY_BASIC_AUTH=user1:password1,user2:password2,user3:password3` adds basic auth feature to your configured `VIRTUAL_HOST` server root.
 - `PROXY_BASIC_AUTH=example.com/api/v1/admin -> admin1:password1,admin2:password2` adds basic auth only to the location starting from `api/v1/admin`
-
-## Example setup of `docker-registry`
-**Step 1 :** Setup `frontend` network and `nginx-proxy` 

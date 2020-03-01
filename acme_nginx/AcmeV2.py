@@ -22,6 +22,8 @@ class AcmeV2(Acme):
         try:
             self.log.info('trying to create account key {0}'.format(self.account_key))
             self.create_key(self.account_key)
+        except (KeyboardInterrupt, SystemExit) as e:
+            raise e
         except Exception as e:
             self.log.error('creating key {0} {1}'.format(type(e).__name__, e))
             sys.exit(1)
@@ -50,6 +52,8 @@ class AcmeV2(Acme):
         try:
             self.log.info('trying to create domain key')
             self.create_key(self.domain_key)
+        except (KeyboardInterrupt, SystemExit) as e:
+            raise e
         except Exception as e:
             self.log.error('creating key {0} {1}'.format(type(e).__name__, e))
             sys.exit(1)
@@ -73,6 +77,8 @@ class AcmeV2(Acme):
         try:
             with open(self.cert_path, 'w') as fd:
                 fd.write(certificate_pem)
+        except (KeyboardInterrupt, SystemExit) as e:
+            raise e
         except Exception as e:
             self.log.error('error writing cert: {0} {1}'.format(type(e).__name__, e))
         if not self.skip_nginx_reload:
@@ -110,6 +116,8 @@ class AcmeV2(Acme):
             self.log.info('adding nginx virtual host and completing challenge')
             try:
                 self._write_challenge(token, thumbprint)
+            except (KeyboardInterrupt, SystemExit) as e:
+                raise e
             except Exception as e:
                 self.log.error('error adding virtual host {0} {1}'.format(type(e).__name__, e))
                 sys.exit(1)
@@ -160,6 +168,8 @@ class AcmeV2(Acme):
                     domain=domain,
                     name='_acme-challenge.{0}.'.format(domain.lstrip('*.').rstrip('.')),
                     data=txt_record)
+            except (KeyboardInterrupt, SystemExit) as e:
+                raise e
             except Exception as e:
                 self.log.error('error creating dns record')
                 self.log.error(e)
@@ -182,6 +192,8 @@ class AcmeV2(Acme):
                     if not self.debug:
                         self.log.info('delete dns record')
                         client.delete_record(domain=domain, record=record)
+                except (KeyboardInterrupt, SystemExit) as e:
+                    raise e
                 except Exception as e:
                     self.log.error('error deleting dns record')
                     self.log.error(e)

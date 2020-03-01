@@ -26,14 +26,14 @@ def process_virtual_hosts(container: DockerContainer, environments: map, known_n
                     host.locations[location].update_extras({'injected': extras})
                 hosts.add_host(host)
         print("Valid configuration   ", "Id:" + container.id[:12],
-              "   Name:" + container.attrs["Name"].replace("/", ""), sep="\t")
+              "    " + container.attrs["Name"].replace("/", ""), sep="\t")
         return hosts
     except NoHostConiguration:
         print("No VIRTUAL_HOST       ", "Id:" + container.id[:12],
-              "   Name:" + container.attrs["Name"].replace("/", ""), sep="\t")
+              "    " + container.attrs["Name"].replace("/", ""), sep="\t")
     except UnreachableNetwork:
         print("Unreachable Network   ", "Id:" + container.id[:12],
-              "   Name:" + container.attrs["Name"].replace("/", ""), sep="\t")
+              "    " + container.attrs["Name"].replace("/", ""), sep="\t")
     return hosts
 
 

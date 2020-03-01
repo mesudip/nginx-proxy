@@ -9,6 +9,16 @@ import docker
 
 from nginx_proxy.WebServer import WebServer
 
+
+# Without starting anything setup the signal handling
+def receiveSignal(signalNumber, frame):
+    if signalNumber == 15:
+        print("\nShutdown Requested")
+        raise SystemExit()
+
+
+signal.signal(signal.SIGTERM, receiveSignal)
+
 debug_config = {}
 if "PYTHON_DEBUG_PORT" in os.environ:
     if os.environ["PYTHON_DEBUG_PORT"].strip():
@@ -37,7 +47,6 @@ except Exception as e:
         "There was error connecting with the docker server \nHave you correctly mounted /var/run/docker.sock?\n" + str(
             e.args), file=sys.stderr)
     sys.exit(1)
-server = WebServer(client)
 
 
 def eventLoop():
@@ -89,15 +98,11 @@ def process_network_event(action, event):
         pass
 
 
-def receiveSignal(signalNumber, frame):
-    print("Received", signalNumber)
-    return
-
-
-signal.signal(signal.SIGTERM, receiveSignal)
-
+server = None
 try:
+    server = WebServer(client)
     eventLoop()
 except (KeyboardInterrupt, SystemExit):
-    print("Am I killed !!")
-    server.cleanup()
+    print("-------------------------------\nPerforming Graceful ShutDown !!")
+    if server is not None:
+        server.cleanup()

@@ -35,7 +35,7 @@ class WebServer():
         self.learn_yourself()
         self.rescan_all_container()
         self.rescan_time = None
-        self.ssl_processor = post_processors.SslCertificateProcessor(self.nginx, self,start_ssl_thread=False)
+        self.ssl_processor = post_processors.SslCertificateProcessor(self.nginx, self, start_ssl_thread=False)
         self.basic_auth_processor = post_processors.BasicAuthProcessor()
         self.redirect_processor = post_processors.RedirectProcessor()
 
@@ -43,15 +43,20 @@ class WebServer():
             if not self.nginx.start():
                 print("ERROR: Config test succeded but nginx failed to start", file=sys.stderr)
                 print("Exiting .....", file=sys.stderr)
+                exit(1)
+            if len(self.nginx.last_working_config) < 50:
+                print("Writing default config before reloading server.")
+                if not self.nginx.forced_update(self.template.render(config=self.config)):
+                    print("Nginx failed when reloaded with default config",file=sys.stderr)
+                    print("Exiting .....", file=sys.stderr)
+                    exit(1)
             self.reload()
         else:
-            print("ERROR: Existing nginx configuration has error, trying to override with new configuration",
+            print("ERROR: Existing nginx configuration has error, trying to override with default configuration",
                   file=sys.stderr)
-            if not self.reload(forced=True):
-                print("ERROR: Existing nginx configuration has error", file=sys.stderr)
-                print("ERROR: New generated configuration also has error", file=sys.stderr)
-                print("Please check the configuration of your containers and restart this container", file=sys.stderr)
-                print("EXITING .....", file=sys.stderr)
+            if not self.nginx.forced_update(self.template.render(config=self.config)):
+                print("Nginx failed when reloaded with default config", file=sys.stderr)
+                print("Exiting .....", file=sys.stderr)
                 exit(1)
         self.ssl_processor.certificate_expiry_thread.start()
 
@@ -75,6 +80,8 @@ class WebServer():
             self.networks = [a for a in self.container.attrs["NetworkSettings"]["Networks"].keys()]
             self.networks = {self.client.networks.get(a).id: a for a in self.networks}
             file.close()
+        except (KeyboardInterrupt, SystemExit) as e:
+            raise e
         except Exception as e:
             print("[ERROR]Couldn't determine container ID of this container:", e.args,
                   "\n Is it running in docker environment?",

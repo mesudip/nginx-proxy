@@ -1,6 +1,6 @@
 # mesudip/python-nginx:alpine is merge of official python and nginx images.
 FROM mesudip/python-nginx:alpine
-HEALTHCHECK --interval=10s --timeout=2s --start-period=10s --retries=3 CMD pgrep nginx >> /dev/null || exit 1
+HEALTHCHECK --interval=10s --timeout=2s --start-period=10s --retries=3 CMD pgrep nginx &&  pgrep python3 >> /dev/null  || exit 1
 VOLUME  ["/etc/nginx/dhparam", "/tmp/acme-challenges/","/etc/nginx/conf.d","/etc/nginx/ssl"]
 CMD ["sh","-e" ,"/docker-entrypoint.sh"]
 COPY ./requirements.txt /requirements.txt

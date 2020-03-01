@@ -16,13 +16,15 @@ class Host:
     def fromurl(url: Url):
         return Host(url.hostname, url.port, url.scheme)
 
-    def __init__(self, hostname: str, port: int, scheme: str = 'http'):
+    def __init__(self, hostname: str, port: int, scheme=None):
+        if scheme is None:
+            scheme = {'http', }
         self.port: int = port
         self.hostname: str = hostname
         self.locations: Dict[str, Location] = {}  # the map of locations.and the container that serve the locations
         self.container_set: Set[str] = set()
-        self.scheme: str = scheme
-        self.secured: bool = scheme == 'https' or scheme == 'wss'
+        self.scheme: set = scheme
+        self.secured: bool = 'https' in scheme or 'wss' in scheme
         self.full_redirect: Union[Url, None] = None
         self.extras: Dict[str, Any] = {}
 

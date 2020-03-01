@@ -1,3 +1,4 @@
+import difflib
 import os
 import pathlib
 import random
@@ -5,6 +6,7 @@ import string
 import subprocess
 import sys
 from os import path
+from typing import Union, Tuple
 
 import requests
 
@@ -95,15 +97,19 @@ class Nginx:
         if config_str == self.last_working_config:
             print("Configuration not changed, skipping nginx reload")
             return False
-        # diff = str.join("\n", difflib.unified_diff(self.last_working_config.splitlines(),
-        #                                            config_str.splitlines(),
-        #                                            fromfile='Old Config',
-        #                                            tofile='New Config',
-        #                                            lineterm='\n'))
+
         with open(self.config_file_path, "w") as file:
             file.write(config_str)
-
-        if not self.reload():
+        result, data = self.reload(return_error=True)
+        if not result:
+            diff = str.join("\n", difflib.unified_diff(self.last_working_config.splitlines(),
+                                                       config_str.splitlines(),
+                                                       fromfile='Old Config',
+                                                       tofile='New Config',
+                                                       lineterm='\n'))
+            print(diff, file=sys.stderr)
+            if data is not None:
+                print(data, file=sys.stderr)
             print("ERROR: New change made nginx to fail. Thus it's rolled back", file=sys.stderr)
             with open(self.config_file_path, "w") as file:
                 file.write(self.last_working_config)
@@ -113,20 +119,27 @@ class Nginx:
             self.last_working_config = config_str
             return True
 
-    def reload(self) -> bool:
+    def reload(self, return_error=False) -> Union[bool, Tuple[bool, Union[str, None]]]:
         """
         Reload nginx so that new configurations are applied.
         :return: true if nginx reload was successful false otherwise
         """
-        if self.config_test():
-            reload_result = subprocess.run(Nginx.command_reload, stdout=subprocess.PIPE,
-                                           stderr=subprocess.PIPE)
-            if reload_result.returncode is not 0:
+        reload_result = subprocess.run(Nginx.command_reload, stdout=subprocess.PIPE,
+                                       stderr=subprocess.PIPE)
+        if reload_result.returncode is not 0:
+            if return_error:
+                return False, reload_result.stderr.decode("utf-8")
+            else:
                 print("Nginx reload failed with exit code ", file=sys.stderr)
                 print(reload_result.stderr.decode("utf-8"), file=sys.stderr)
-                return False
-            return True
-        return False
+                result = False
+        else:
+            result = True
+
+        if return_error:
+            return result, None
+        else:
+            return result
 
     def verify_domain(self, _domain: list or str):
         domain = [_domain] if type(_domain) is str else _domain

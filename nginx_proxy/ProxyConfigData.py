@@ -55,6 +55,7 @@ class ProxyConfigData:
                 if host.remove_container(container_id):
                     result = True
                     if host.isempty():
+                        host.extras={}
                         removed_domains.add((host.hostname, host.port))
         return result, removed_domains
 
