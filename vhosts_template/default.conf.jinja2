@@ -82,7 +82,7 @@ server {
                 return 301 https://$host$request_uri;{% endif %}
         }
 }{% endif %}{% endfor %}
-{% if add_default_server %}
+{% if config.default_server %}
 server{
         listen 80 default_server;
         server_name _ ;

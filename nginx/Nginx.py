@@ -71,7 +71,7 @@ class Nginx:
             file.write(self.config_stack.pop())
         return self.reload()
 
-    def forced_update(self, config_str):
+    def force_start(self, config_str):
         """
         Simply reload the nginx with the configuration, don't check whether or not configuration is changed or not.
         If change causes nginx to fail, revert to last working config.
@@ -166,8 +166,11 @@ class Nginx:
                         response.status_code) + "] -> " + url, file=sys.stderr)
                     continue
                 except requests.exceptions.RequestException as e:
-                    if str(e).find("Name does not resolve") > -1:
+                    error=str(e)
+                    if error.find("Name does not resolve") > -1:
                         print("[Error] [" + d + "] Domain Name could not be resolved", file=sys.stderr)
+                    elif error.find("Connection refused") >-1:
+                        print("[Error] [" + d + "] Connection Refused! The port is filtered or not open.", file=sys.stderr)
                     else:
                         print("[ERROR] Domain is not owned by this machine : Reason: " + str(e))
                     continue

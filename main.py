@@ -9,16 +9,23 @@ import docker
 
 from nginx_proxy.WebServer import WebServer
 
+server = None
 
-# Without starting anything setup the signal handling
+
+# Handle exit signal to respond to stop command.
 def receiveSignal(signalNumber, frame):
+    global server
     if signalNumber == 15:
         print("\nShutdown Requested")
-        raise SystemExit()
+        if server is not None:
+            server.cleanup()
+            server = None
+        sys.exit(0)
 
 
 signal.signal(signal.SIGTERM, receiveSignal)
 
+# Enable pydevd for debugging locally.
 debug_config = {}
 if "PYTHON_DEBUG_PORT" in os.environ:
     if os.environ["PYTHON_DEBUG_PORT"].strip():
@@ -36,6 +43,7 @@ if "PYTHON_DEBUG_ENABLE" in os.environ:
 if len(debug_config):
     import pydevd
 
+    print("Starting nginx-proxy in debug mode. Trying to connect to debug server ", str(debug_config))
     pydevd.settrace(stdoutToServer=True, stderrToServer=True, **debug_config)
 
 # fix for https://trello.com/c/dMG5lcTZ
@@ -98,7 +106,6 @@ def process_network_event(action, event):
         pass
 
 
-server = None
 try:
     server = WebServer(client)
     eventLoop()

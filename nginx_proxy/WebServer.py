@@ -2,6 +2,7 @@ import copy
 import os
 import re
 import sys
+import time
 from typing import List
 
 import requests
@@ -19,6 +20,17 @@ from nginx_proxy.Host import Host
 
 class WebServer():
     def __init__(self, client: DockerClient, *args):
+        import socket
+        def wait_nginx():
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            result = sock.connect_ex(('127.0.0.1', 80))
+            while result != 0:
+                print("Waiting for nginx process to be ready")
+                time.sleep(1)
+                result = sock.connect_ex(('127.0.0.1', 80))
+            sock.close()
+            print("Nginx is alive")
+
         self.config = self.loadconfig()
         self.shouldExit = False
         self.client = client
@@ -33,31 +45,32 @@ class WebServer():
         self.template = Template(file.read())
         file.close()
         self.learn_yourself()
-        self.rescan_all_container()
-        self.rescan_time = None
         self.ssl_processor = post_processors.SslCertificateProcessor(self.nginx, self, start_ssl_thread=False)
         self.basic_auth_processor = post_processors.BasicAuthProcessor()
         self.redirect_processor = post_processors.RedirectProcessor()
 
         if self.nginx.config_test():
-            if not self.nginx.start():
+            if len(self.nginx.last_working_config) < 50:
+                print("Writing default config before reloading server.")
+                if not self.nginx.force_start(self.template.render(config=self.config)):
+                    print("Nginx failed when reloaded with default config", file=sys.stderr)
+                    print("Exiting .....", file=sys.stderr)
+                    exit(1)
+            elif not self.nginx.start():
                 print("ERROR: Config test succeded but nginx failed to start", file=sys.stderr)
                 print("Exiting .....", file=sys.stderr)
                 exit(1)
-            if len(self.nginx.last_working_config) < 50:
-                print("Writing default config before reloading server.")
-                if not self.nginx.forced_update(self.template.render(config=self.config)):
-                    print("Nginx failed when reloaded with default config",file=sys.stderr)
-                    print("Exiting .....", file=sys.stderr)
-                    exit(1)
-            self.reload()
         else:
             print("ERROR: Existing nginx configuration has error, trying to override with default configuration",
                   file=sys.stderr)
-            if not self.nginx.forced_update(self.template.render(config=self.config)):
+            if not self.nginx.force_start(self.template.render(config=self.config)):
                 print("Nginx failed when reloaded with default config", file=sys.stderr)
                 print("Exiting .....", file=sys.stderr)
                 exit(1)
+        wait_nginx()
+
+        self.rescan_all_container()
+        self.reload()
         self.ssl_processor.certificate_expiry_thread.start()
 
     def learn_yourself(self):
@@ -145,9 +158,10 @@ class WebServer():
 
         self.basic_auth_processor.process_basic_auth(hosts)
         self.ssl_processor.process_ssl_certificates(hosts)
-        output = self.template.render(virtual_servers=hosts, config=self.config, add_default_server=not has_default)
+        self.config['default_server'] = not has_default
+        output = self.template.render(virtual_servers=hosts, config=self.config)
         if forced:
-            response = self.nginx.forced_update(output)
+            response = self.nginx.force_start(output)
         else:
             response = self.nginx.update_config(output)
         return response
@@ -214,5 +228,6 @@ class WebServer():
     def loadconfig(self):
         return {
             'client_max_body_size': os.getenv("CLIENT_MAX_BODY_SIZE", "1m"),
-            'challenge_dir': os.getenv("CHALLENGE_DIR", "/tmp/acme-challenges")
+            'challenge_dir': os.getenv("CHALLENGE_DIR", "/tmp/acme-challenges"),
+            'default_server': os.getenv("DEFAULT_HOST", "true") == "true"
         }

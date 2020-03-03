@@ -2,13 +2,10 @@ import hashlib
 import json
 import re
 import sys
-try:
-    from urllib.request import urlopen, Request  # Python 3
-except ImportError:
-    from urllib2 import urlopen, Request  # Python 2
+from urllib.request import urlopen, Request  # Python 3
+
 from .Acme import Acme
 from .DigitalOcean import DigitalOcean
-from .AWSRoute53 import AWSRoute53
 
 
 class AcmeV2(Acme):
@@ -204,8 +201,6 @@ class AcmeV2(Acme):
         if self.dns_provider:
             if self.dns_provider == 'digitalocean':
                 dns_client = DigitalOcean()
-            elif self.dns_provider == 'route53':
-                dns_client = AWSRoute53()
             self.solve_dns_challenge(directory, dns_client)
         else:
             self.solve_http_challenge(directory)

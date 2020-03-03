@@ -7,7 +7,8 @@ Docker container for automatically creating nginx configuration based on active 
 - Automatic Let's Encrypt ssl certificate registration
 - Basic Authorization
 
-## Quick Setup  of nginx-proxy
+## Quick Setup  
+### Setup nginx-proxy
 ```
 docker pull mesudip/nginx-proxy
 docker network create frontend;    # create a network for nginx proxy 
@@ -20,34 +21,39 @@ docker run  --network frontend \
             -p 443:443 \
             -d --restart always mesudip/nginx-proxy
 ```
-Configurable environment variables for `nginx-proxy`:
--   `DHPARAM_SIZE`  Default - `2048` : Set size of dhparam usd for ssl certificates
--   `CLIENT_MAX_BODY_SIZE` Default - `1m` : Set default max body size for all the servers.
-
-## Serving your containers with nginx-proxy
+### Setup your container
 The only thing that matters is that the container shares at least one common network to the nginx container and `VIRTUAL_HOST` 
-environment variable is set. If you have multiple exposed ports in the container, don't forget to 
-mention the container port too. 
+environment variable is set. 
+
+Examples:
+- **WordPress**
 ```
 docker run --network frontend \
-          --name wordpress-host \
+          --name wordpress-server \
           -e VIRTUAL_HOST="wordpress.example.com" \
           wordpress
+```
+ - **Docker Registry**  
+ ```
+docker run --network frontend \
+          --name docker-registry \
+          -e VIRTUAL_HOST='registry.example.com/v2 -> /v2; client_max_body_size 2g' \
+          -e PROXY_BASIC_AUTH="registry.example.com -> user1:password,user2:password2,user3:password3"
+          registry:2
 ```
 
 Details of Using nginx-proxy
 ======================
- - [Volumes in  `nginx-proxy`](#volumes-in-nginx-proxy)
- - [Configure VIRTUAL_HOST in your containers](#configure-virtual_host-in-your-containers)
- - [Multiple hosts in same container](#multiple-virtual-hosts-on-same-container)
+ - [Configure `nginx-proxy`](#configure-nginx-proxy)
+ - [Configure enrironment VIRTUAL_HOST in your containers](#configure-environment-virtual_host-in-your-containers)
+    - [WebSockets](#support-for-websocket)
+    - [Multiple hosts in same container](#multiple-virtual-hosts-on-same-container)
  - [Redirection](#redirection)
- - [WebSockets](#support-for-websocket)
  - [Https and SSL](#ssl-support)
- - [Default Server](#default-server)
  - [Basic Authorization](#basic-authorization)
- - [Example Setting up of `docker-registry` container](#example-setup-of-docker-registry)
- 
-## Volumes in nginx-proxy
+ - [Default Server](#default-server)
+
+## Configure `nginx-proxy`
 Following directries can be made into volumes to persist configurations
 - `/etc/nginx/conf.d` nginx configuration directory. You can add your own server configurations here
 - `/etc/nginx/dhparam` the directory for storing DH parameter for ssl connections
@@ -55,7 +61,11 @@ Following directries can be made into volumes to persist configurations
 - `/var/log/nginx` directory nginx logs 
 - `/tmp/acme-challenges` directory for storing challenge content when registering Let's Encrypt certificate
 
-## Configure environment`VIRTUAL_HOST` in your containers
+Some of the default behaviour of `nginx-proxy` can be changed with environment variables.
+-   `DHPARAM_SIZE`  Default - `2048` : Set size of dhparam usd for ssl certificates
+-   `CLIENT_MAX_BODY_SIZE` Default - `1m` : Set default max body size for all the servers.
+
+## Configure environment `VIRTUAL_HOST` in your containers
 When you want a container's to be hosted on a domain set `VIRTUAL_HOST` environment variable to desired `server_name` entry.
 For virtual host to work it requires 
 - nginx-proxy container to be on the same network as that of the container.
@@ -90,7 +100,13 @@ server{
     }
 }
 ```
-## Multiple Virtual Hosts on same container
+### Support for websocket
+Exposing websocket requires the websocket endpoint to be explicitly configured via virtual host. The websocket endpoint can be `ws://` or `wss://`.
+If you want to use both websocket and non-websocket endpoints you will have to use multiple hosts
+
+`-e "VIRTUAL_HOST=wss://ws.example.com -> :8080/websocket"`
+
+### Multiple Virtual Hosts on same container
 To have multiple virtual hosts out of single container, you can use `VIRTUAL_HOST1`, `VIRTUAL_HOST2`, `VIRTUAL_HOST3` and so on. In fact the only thing it matters is that the environment variable starts with `VIRTUAL_HOST`.
 
 **Example:** setting up a go-ethereum node.
@@ -101,19 +117,14 @@ To have multiple virtual hosts out of single container, you can use `VIRTUAL_HOS
     ethereum/client-go \
     --rpc --rpcaddr "0.0.0.0"  --ws --wsaddr 0.0.0.0
 ```
- ## Redirection
+## Redirection
  Let's say you want to serve a website on `example.uk`. You might want users visiting `www.example.uk`,`example.com`,`www.example.com`
- to redirect to  `example.uk`.  Add another environment 
+ to redirect to  `example.uk`.  You can simply use `PROXY_FULL_REDIRECT` environment variable. 
  ```
   -e 'VIRTUAL_HOST=https://example.uk -> :7000' \
   -e 'PROXY_FULL_REDIRECT=example.com,www.example.com,www.example.uk->example.uk'
  ```
 
-## Support for websocket
-Exposing websocket requires the websocket endpoint to be explicitly configured via virtual host. The websocket endpoint can be `ws://` or `wss://`.
-If you want to use both websocket and non-websocket endpoints you will have to use multiple hosts
-
-`-e "VIRTUAL_HOST=wss://ws.example.com -> :8080/websocket"`
 ## SSL Support
 Issuing of SSL certificate is done using acme-nginx library for Let's Encrypt. If a precheck determines that
 the domain we are trying to issue certificate is not owned by current machine, a self-signed certificate is
@@ -158,14 +169,16 @@ To issue certificates for multiple domain you can simply add more parameters to 
     All the domains are registered on the same certificate and the filename is set from the first parameter
     passed to the command. so `/etc/ssl/certs/www.example.com`  and `/etc/ssl/private/www.example.com` are generated
 
-Use  `docker exec nginx getssl --help`   for getting help with the command
+Use  `docker exec nginx-proxy getssl --help`   for getting help with the command
+
+## Basic Authorization
+Basic Auth can be enabled on the container with environment variable `PROXY_BASIC_AUTH`.
+- `PROXY_BASIC_AUTH=user1:password1,user2:password2,user3:password3` adds basic auth feature to your configured `VIRTUAL_HOST` server root.
+- `PROXY_BASIC_AUTH=example.com/api/v1/admin -> admin1:password1,admin2:password2` adds basic auth only to the location starting from `api/v1/admin`
+
 ## Default Server
 When request comes for a server name that is not registered in `nginx-proxy`, It responds with 503 by default.
 If you want the requested to be passed to a container instead, when setting up the container you can add `PROXY_DEFAULT_SERVER=true` environment along with `VIRTUAL_HOST`.
 
 This much is sufficient for http connections, but for https connections, you might want to setup
-[wildcard certificates](#using-your-own-ssl-certificate) too so that your users dont get invalid ssl certificate errors.
-## Basic Authorization
-Basic Auth can be enabled on the container with environment variable `PROXY_BASIC_AUTH`
-- `PROXY_BASIC_AUTH=user1:password1,user2:password2,user3:password3` adds basic auth feature to your configured `VIRTUAL_HOST` server root.
-- `PROXY_BASIC_AUTH=example.com/api/v1/admin -> admin1:password1,admin2:password2` adds basic auth only to the location starting from `api/v1/admin`
+[wildcard certificates](#using-your-own-ssl-certificate) so that your users dont get invalid ssl certificate errors.
