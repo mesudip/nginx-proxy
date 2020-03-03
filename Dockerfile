@@ -1,6 +1,6 @@
 # mesudip/python-nginx:alpine is merge of official python and nginx images.
 FROM mesudip/python-nginx:alpine
-HEALTHCHECK --interval=10s --timeout=2s --start-period=10s --retries=3 CMD pgrep nginx >> /dev/null || exit 1
+HEALTHCHECK --interval=10s --timeout=2s --start-period=10s --retries=3 CMD pgrep nginx &&  pgrep python3 >> /dev/null  || exit 1
 VOLUME  ["/etc/nginx/dhparam", "/tmp/acme-challenges/","/etc/nginx/conf.d","/etc/nginx/ssl"]
 CMD ["sh","-e" ,"/docker-entrypoint.sh"]
 COPY ./requirements.txt /requirements.txt
@@ -14,6 +14,8 @@ RUN apk --no-cache add  openssl && \
 ARG LETSENCRYPT_API="https://acme-v02.api.letsencrypt.org/directory"
 ENV LETSENCRYPT_API=${LETSENCRYPT_API} \
     CHALLENGE_DIR=/tmp/acme-challenges/ \
-    DHPARAM_SIZE=2048
+    DHPARAM_SIZE=2048 \
+    CLIENT_MAX_BODY_SIZE=1m \
+    DEFAULT_HOST=true
 WORKDIR /app
 COPY . /app/

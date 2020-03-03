@@ -2,13 +2,15 @@ import difflib
 import os
 import pathlib
 import random
-import re
 import string
 import subprocess
 import sys
 from os import path
+from typing import Union, Tuple
 
 import requests
+
+from nginx import Url
 
 
 class Nginx:
@@ -69,7 +71,7 @@ class Nginx:
             file.write(self.config_stack.pop())
         return self.reload()
 
-    def forced_update(self, config_str):
+    def force_start(self, config_str):
         """
         Simply reload the nginx with the configuration, don't check whether or not configuration is changed or not.
         If change causes nginx to fail, revert to last working config.
@@ -95,44 +97,54 @@ class Nginx:
         if config_str == self.last_working_config:
             print("Configuration not changed, skipping nginx reload")
             return False
-        diff = str.join("\n", difflib.unified_diff(self.last_working_config.splitlines(),
-                                                   config_str.splitlines(),
-                                                   fromfile='Old Config',
-                                                   tofile='New Config',
-                                                   lineterm='\n'))
+
         with open(self.config_file_path, "w") as file:
             file.write(config_str)
-        if not self.reload():
+        result, data = self.reload(return_error=True)
+        if not result:
+            diff = str.join("\n", difflib.unified_diff(self.last_working_config.splitlines(),
+                                                       config_str.splitlines(),
+                                                       fromfile='Old Config',
+                                                       tofile='New Config',
+                                                       lineterm='\n'))
             print(diff, file=sys.stderr)
-            print("ERROR: Above change made nginx to fail. Thus it's rolled back", file=sys.stderr)
-
+            if data is not None:
+                print(data, file=sys.stderr)
+            print("ERROR: New change made nginx to fail. Thus it's rolled back", file=sys.stderr)
             with open(self.config_file_path, "w") as file:
                 file.write(self.last_working_config)
             return False
         else:
-            print(diff)
+            print("Nginx Reloaded Successfully")
             self.last_working_config = config_str
             return True
 
-    def reload(self) -> bool:
+    def reload(self, return_error=False) -> Union[bool, Tuple[bool, Union[str, None]]]:
         """
         Reload nginx so that new configurations are applied.
         :return: true if nginx reload was successful false otherwise
         """
-        if self.config_test():
-            reload_result = subprocess.run(Nginx.command_reload, stdout=subprocess.PIPE,
-                                           stderr=subprocess.PIPE)
-            if reload_result.returncode is not 0:
+        reload_result = subprocess.run(Nginx.command_reload, stdout=subprocess.PIPE,
+                                       stderr=subprocess.PIPE)
+        if reload_result.returncode is not 0:
+            if return_error:
+                return False, reload_result.stderr.decode("utf-8")
+            else:
                 print("Nginx reload failed with exit code ", file=sys.stderr)
                 print(reload_result.stderr.decode("utf-8"), file=sys.stderr)
-                return False
-            return True
-        return False
+                result = False
+        else:
+            result = True
+
+        if return_error:
+            return result, None
+        else:
+            return result
 
     def verify_domain(self, _domain: list or str):
         domain = [_domain] if type(_domain) is str else _domain
         ## when not included, one invalid domain in a list of 100 will make all domains to be unverified due to nginx failing to start.
-        domain = [x for x in domain if Nginx.is_valid_hostname(x)]
+        domain = [x for x in domain if Url.is_valid_hostname(x)]
         success = []
         while True:
             r1 = "".join([random.choice(string.ascii_letters + string.digits) for _ in range(32)])
@@ -150,13 +162,17 @@ class Nginx:
                         if response.content.decode("utf-8") == r2:
                             success.append(d)
                             continue
-                    print("[ERROR] " + url + "\n" + "Status Code :" + str(response.status_code), file=sys.stderr)
-                    if len(response.content) > 0:
-                        print(response.content.decode("utf-8"), file=sys.stderr)
+                    print("[Error] [" + d + "] Not owned by this machine:" + "Status Code[" + str(
+                        response.status_code) + "] -> " + url, file=sys.stderr)
                     continue
                 except requests.exceptions.RequestException as e:
-                    print("[ERROR] Domain is not owned by this machine :" + d, file=sys.stderr)
-                    print("Reason: " + str(e))
+                    error=str(e)
+                    if error.find("Name does not resolve") > -1:
+                        print("[Error] [" + d + "] Domain Name could not be resolved", file=sys.stderr)
+                    elif error.find("Connection refused") >-1:
+                        print("[Error] [" + d + "] Connection Refused! The port is filtered or not open.", file=sys.stderr)
+                    else:
+                        print("[ERROR] Domain is not owned by this machine : Reason: " + str(e))
                     continue
             os.remove(file)
             break
@@ -164,24 +180,3 @@ class Nginx:
             return len(success) > 0
         else:
             return success
-
-    @staticmethod
-    def is_valid_hostname(hostname: str):
-        """
-        https://stackoverflow.com/a/33214423/2804342
-        :return: True if for valid hostname False otherwise
-        """
-        if hostname[-1] == ".":
-            # strip exactly one dot from the right, if present
-            hostname = hostname[:-1]
-        if len(hostname) > 253:
-            return False
-
-        labels = hostname.split(".")
-
-        # the TLD must be not all-numeric
-        if re.match(r"[0-9]+$", labels[-1]):
-            return False
-
-        allowed = re.compile(r"(?!-)[a-z0-9-]{1,63}(?<!-)$", re.IGNORECASE)
-        return all(allowed.match(label) for label in labels)

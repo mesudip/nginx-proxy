@@ -220,6 +220,8 @@ class Acme(object):
             except UnicodeDecodeError:
                 pass
             return resp.getcode(), resp_data, resp.headers
+        except (KeyboardInterrupt, SystemExit) as e:
+            raise e
         except Exception as e:
             return getattr(e, "code", None), \
                    getattr(e, "read", e.__str__)(), \

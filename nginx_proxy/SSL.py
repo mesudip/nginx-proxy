@@ -12,6 +12,7 @@ from nginx.Nginx import Nginx
 
 
 class SSL:
+
     def __init__(self, ssl_path, nginx: Nginx):
         self.ssl_path = ssl_path
         self.nginx = nginx
@@ -32,8 +33,17 @@ class SSL:
         except FileExistsError as e:
             pass
 
-    def get_cert_file(self, domain):
+    def cert_file(self, domain):
         return os.path.join(self.ssl_path, "certs", domain + ".crt")
+
+    def private_file(self, domain):
+        return os.path.join(self.ssl_path, "private", domain + ".key")
+
+    def selfsigned_cert_file(self, domain):
+        return os.path.join(self.ssl_path, "certs", domain + ".selfsigned.cert")
+
+    def selfsigned_private_file(self, domain):
+        return os.path.join(self.ssl_path, "private", domain + "selfsgned.key")
 
     def self_sign(self, domain):
         CERT_FILE = domain + ".selfsigned.crt"
@@ -64,7 +74,7 @@ class SSL:
     def expiry_time(self, domain) -> datetime:
 
         if self.cert_exists(domain):
-            with open(self.get_cert_file(domain)) as file:
+            with open(self.cert_file(domain)) as file:
                 x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, file.read())
                 return datetime.datetime.strptime(x509.get_notAfter().decode(), "%Y%m%d%H%M%SZ")
         return datetime.datetime.now()
@@ -99,10 +109,10 @@ class SSL:
     def register_certificate(self, domain, no_self_check=False, ignore_existing=False):
         if type(domain) is str:
             domain = [domain]
+        domain = [d for d in domain if
+                  '.' in d]  # when the domain doesn't have '.' it shouldn't be requested for letsencrypt certificate
         verified_domain = domain if no_self_check else self.nginx.verify_domain(domain)
         domain = verified_domain if ignore_existing else [x for x in verified_domain if not self.cert_exists(x)]
-        domain = [d for d in domain if
-                  '.' in d]  # when the domain doesn't have '.' it shouldn't be requested for letsencrypt certificate.
         if len(domain):
             logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.DEBUG)
             acme = AcmeV2(
@@ -145,7 +155,8 @@ class SSL:
 
     def register_certificate_self_sign(self, domain):
         if type(domain) is str:
-            domain = [domain]
-        domain = [x for x in domain if not self.cert_exists_self_signed(x)]
-        for d in domain:
-            self.self_sign(d)
+            self.self_sign(domain)
+        else:
+            for d in domain:
+                if not self.cert_exists_self_signed(d):
+                    self.self_sign(d)
