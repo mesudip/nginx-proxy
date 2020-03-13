@@ -1,13 +1,15 @@
+from typing import Union
+
 from docker.models.containers import Container as DockerContainer
 
 
 class Container:
-    def __init__(self, id: str, scheme=None, address=None, port=None, path=None):
+    def __init__(self, id: str, scheme: Union[str] = 'http', address=None, port=None, path=None):
         self.id = id
-        self.address = address
-        self.port = port
-        self.path = path
-        self.scheme = scheme
+        self.address: str = address
+        self.port: int = port
+        self.path: Union[str, None] = path
+        self.scheme: str = scheme
         self.networks = set()  # the list networks through which this container is accessible.
 
     def add_network(self, network_id: str):

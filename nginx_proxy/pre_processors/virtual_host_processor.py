@@ -55,7 +55,7 @@ def _parse_host_entry(entry_string: str):
     external, internal = host_list if len(host_list) is 2 else (host_list[0], "")
     external, internal = (split_url(external), split_url(internal))
     c = Container(None,
-                  scheme=internal["scheme"] if internal["scheme"] else "http",
+                  scheme=list(internal['scheme'])[0] if len(internal['scheme']) else 'http',
                   address=None,
                   port=internal["port"] if internal["port"] else None,
                   path=internal["location"] if internal["location"] else "/")
