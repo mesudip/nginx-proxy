@@ -132,6 +132,7 @@ class SSL:
             acme.solve_http_challenge(directory)
             return domain
         else:
+            print("[SSL-Register] the files already so ignored :"+str(domain))
             return verified_domain
 
     def register_certificate_or_selfsign(self, domain, no_self_check=False, ignore_existing=False):

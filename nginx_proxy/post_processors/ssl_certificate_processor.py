@@ -50,6 +50,8 @@ class SslCertificateProcessor():
                     for x in self.cache:
                         print("Remaining days :", x, ":", (self.cache[x] - now).days)
                     x = [x for x in self.cache if (self.cache[x] - now).days < 6]
+                    for host in x:
+                        del self.cache[host]
                     self.server.reload()
 
     def process_ssl_certificates(self, hosts: List[Host]):
@@ -78,7 +80,7 @@ class SslCertificateProcessor():
 
         if len(ssl_requests):
             registered = self.ssl.register_certificate_or_selfsign([h.hostname for h in ssl_requests],
-                                                                   ignore_existing=False)
+                                                                   ignore_existing=True)
             for host in ssl_requests:
                 if host.hostname not in registered:
                     host.ssl_file = host.hostname + ".selfsigned"

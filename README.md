@@ -16,7 +16,7 @@ docker run  --network frontend \
             --name nginx-proxy \
             -v /var/run/docker.sock:/var/run/docker.sock:ro \
             -v /etc/ssl:/etc/ssl \
-            -v /etc/ssl/dhparam:/etc/nginx/dhparam \
+            -v /etc/nginx/dhparam:/etc/nginx/dhparam \
             -p 80:80 \
             -p 443:443 \
             -d --restart always mesudip/nginx-proxy
@@ -37,8 +37,8 @@ docker run --network frontend \
  ```
 docker run --network frontend \
           --name docker-registry \
-          -e VIRTUAL_HOST='registry.example.com/v2 -> /v2; client_max_body_size 2g' \
-          -e PROXY_BASIC_AUTH="registry.example.com -> user1:password,user2:password2,user3:password3"
+          -e VIRTUAL_HOST='https://registry.example.com/v2 -> /v2; client_max_body_size 2g' \
+          -e PROXY_BASIC_AUTH="registry.example.com -> user1:password,user2:password2,user3:password3" \
           registry:2
 ```
 
@@ -175,6 +175,8 @@ Use  `docker exec nginx-proxy getssl --help`   for getting help with the command
 Basic Auth can be enabled on the container with environment variable `PROXY_BASIC_AUTH`.
 - `PROXY_BASIC_AUTH=user1:password1,user2:password2,user3:password3` adds basic auth feature to your configured `VIRTUAL_HOST` server root.
 - `PROXY_BASIC_AUTH=example.com/api/v1/admin -> admin1:password1,admin2:password2` adds basic auth only to the location starting from `api/v1/admin`
+
+**Note:** Basic authorization will be ignored if the container's host doesn't use `https`
 
 ## Default Server
 When request comes for a server name that is not registered in `nginx-proxy`, It responds with 503 by default.
