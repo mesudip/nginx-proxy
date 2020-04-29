@@ -96,7 +96,7 @@ class AcmeV2(Acme):
             directory=directory
         )
         if code > 299 or code < 200:
-            self.log.error("Unexpected response: " + str(code) + " ->" + order)
+            self.log.error("Unexpected response: " + str(code) + " ->" + str(order))
             # TODO: return properly here.
             return
         self.log.debug(order)
