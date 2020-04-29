@@ -34,6 +34,7 @@ server{
         auth_basic_user_file {{ server.extras.security_file }};{% endif %} {% for location in server.locations.values() %}
         location {{ location.name }} { {% for injection in location.extras.injected %}
             {{ injection }};{% endfor %} {% if location.extras.security %}
+            auth_basic "Basic Auth Enabled";
             auth_basic_user_file {{ location.extras.security_file }};{% endif %} {% if location.upstream %}
             proxy_pass {{ location.container.scheme }}://{{ location.upstream }}{{location.container.path}};{% else %}
             proxy_pass {{location.container.scheme }}://{{ location.container.address }}:{{ location.container.port }}{{ location.container.path }};{% endif %}{% if location.name != '/' %}
