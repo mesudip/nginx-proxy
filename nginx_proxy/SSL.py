@@ -129,8 +129,7 @@ class SSL:
             )
 
             directory = acme.register_account()
-            acme.solve_http_challenge(directory)
-            return domain
+            return domain if acme.solve_http_challenge(directory) else[]
         else:
             print("[SSL-Register] the files already so ignored :"+str(domain))
             return verified_domain

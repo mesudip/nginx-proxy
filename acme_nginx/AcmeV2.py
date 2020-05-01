@@ -66,7 +66,7 @@ class AcmeV2(Acme):
         if code > 399:
             self.log.error("error signing certificate: {0} {1}".format(code, result))
             self._reload_nginx()
-            sys.exit(1)
+            return False
         self.log.info('certificate signed!')
         self.log.info('downloading certificate')
         certificate_pem = urlopen(json.loads(result)['certificate']).read().decode('utf8')
@@ -78,8 +78,10 @@ class AcmeV2(Acme):
             raise e
         except Exception as e:
             self.log.error('error writing cert: {0} {1}'.format(type(e).__name__, e))
+            return False
         if not self.skip_nginx_reload:
             self._reload_nginx()
+        return True
 
     def solve_http_challenge(self, directory):
         """
@@ -97,8 +99,8 @@ class AcmeV2(Acme):
         )
         if code > 299 or code < 200:
             self.log.error("Unexpected response: " + str(code) + " ->" + str(order))
-            # TODO: return properly here.
-            return
+
+            return False
         self.log.debug(order)
         order = json.loads(order)
         self.log.info('order created')
@@ -117,7 +119,7 @@ class AcmeV2(Acme):
                 raise e
             except Exception as e:
                 self.log.error('error adding virtual host {0} {1}'.format(type(e).__name__, e))
-                sys.exit(1)
+                return False
             self.log.info('asking acme server to verify challenge')
             code, result, _ = self._send_signed_request(url=challenge['url'], directory=directory)
             try:
@@ -129,11 +131,11 @@ class AcmeV2(Acme):
             finally:
                 self._cleanup(['{0}/{1}'.format(self.challenge_dir, token)])
                 self._reload_nginx()
-        self._sign_certificate(order, directory)
+        return self._sign_certificate(order, directory)
 
     def solve_dns_challenge(self, directory, client):
         """
-        Solve DNS challenge
+        Solve DNS challengesys.exit(1)
         Params:
             directory, dict, directory data from acme server
             client, object, dns provider client implementation
@@ -197,7 +199,7 @@ class AcmeV2(Acme):
         self._sign_certificate(order, directory)
 
     def get_certificate(self):
-        directory = self.register_account()
+        directory = self.register_account() 
         if self.dns_provider:
             if self.dns_provider == 'digitalocean':
                 dns_client = DigitalOcean()
