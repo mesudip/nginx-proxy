@@ -1,5 +1,5 @@
 docker==4.2.0
-Jinja2==2.11.1
+Jinja2==2.11.3
 pyOpenSSL==19.1.0
 pycrypto==2.6.1
 pydevd==1.9.0
