@@ -53,8 +53,8 @@ server{
         listen {{ server.port }} {{ server.extras.default_server }};
         server_name {{ server.hostname }};{% if server.is_redirect %}
         return 301 {{  "https" if server.secured else "http" }}://{{ server.full_redirect.hostname }}$request_uri;{% else %}{% for location in server.locations.values() %}
-        location {{ location.name }} { {% if location.upstream %}{% for injection in location.extras.injected %}
-            {{ injection }};{% endfor %}
+        location {{ location.name }} { {% for injection in location.extras.injected %}
+            {{ injection }};{% endfor %} {% if location.upstream %}
             proxy_pass {{ location.container.scheme }}://{{ location.upstream }}{{location.container.path}};{% else %}
             proxy_pass {{location.container.scheme }}://{{ location.container.address }}:{{ location.container.port }}{{ location.container.path }};{% endif %}{% if location.name != '/' %}
             proxy_redirect $scheme://$http_host{{ location.container.path if location.container.path else '/' }} $scheme://$http_host{{location.name}};{% endif %}  {% if location.websocket and location.http %}
