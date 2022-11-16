@@ -42,3 +42,6 @@ class DummyNginx:
     
     def force_start(self, config_str) -> bool:
         return True
+
+    def wait(self):
+        pass

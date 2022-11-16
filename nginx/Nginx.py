@@ -7,6 +7,7 @@ import subprocess
 import sys
 from os import path
 from typing import Union, Tuple
+import socket
 
 import requests
 
@@ -180,3 +181,12 @@ class Nginx:
             return len(success) > 0
         else:
             return success
+    def wait(self):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        result = sock.connect_ex(('127.0.0.1', 80))
+        while result != 0:
+            print("Waiting for nginx process to be ready")
+            time.sleep(1)
+            result = sock.connect_ex(('127.0.0.1', 80))
+        sock.close()
+        print("Nginx is alive")

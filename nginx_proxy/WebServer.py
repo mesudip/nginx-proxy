@@ -21,17 +21,6 @@ from nginx_proxy.Host import Host
 
 class WebServer():
     def __init__(self, client: DockerClient, *args):
-        import socket
-        def wait_nginx():
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            result = sock.connect_ex(('127.0.0.1', 80))
-            while result != 0:
-                print("Waiting for nginx process to be ready")
-                time.sleep(1)
-                result = sock.connect_ex(('127.0.0.1', 80))
-            sock.close()
-            print("Nginx is alive")
-
         self.config = self.loadconfig()
         self.shouldExit = False
         self.client = client
@@ -68,7 +57,7 @@ class WebServer():
                 print("Nginx failed when reloaded with default config", file=sys.stderr)
                 print("Exiting .....", file=sys.stderr)
                 exit(1)
-        wait_nginx()
+        self.nginx.wait()
 
         self.rescan_all_container()
         self.reload()
@@ -92,6 +81,7 @@ class WebServer():
         except (KeyboardInterrupt, SystemExit) as e:
             raise e
         except Exception as e:
+            self.id=None
             print("[ERROR]Couldn't determine container ID of this container:", e.args,
                   "\n Is it running in docker environment?",
                   file=sys.stderr)
