@@ -94,7 +94,7 @@ class ProxyConfigData:
     def printextra(gap, extra):
         print(gap + "Extras:")
         for x in extra:
-            if x is 'security' or type(x) in (set, list):
+            if x == 'security' or type(x) in (set, list):
                 print(gap + "  " + x + ":")
                 for s in extra[x]:
                     print(gap + "    " + s)

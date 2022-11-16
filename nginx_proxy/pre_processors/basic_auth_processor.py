@@ -35,11 +35,11 @@ def process_basic_auth(container: Container, environments: map, vhost_map: Dict[
         auth_list: List[Tuple[Url, Dict[str, str]]] = []
         for auth_entry in auth_env:
             host_list = auth_entry.split("->")
-            if len(host_list) is 2:
+            if len(host_list) == 2:
                 url = host_list[0]
                 keys = get_auth_map(host_list[1])
                 auth_list.append((Url.parse(url, default_location='/',default_port=80), keys))
-            elif len(host_list) is 1:
+            elif len(host_list) == 1:
                 keys = get_auth_map(auth_entry)
                 if len(keys):
                     auth_list.append((Url.root, keys))

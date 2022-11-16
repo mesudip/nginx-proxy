@@ -116,6 +116,7 @@ class SSL:
         if len(domain):
             logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.DEBUG)
             acme = AcmeV2(
+                self.nginx,
                 api_url=self.api_url,
                 logger=logging.getLogger("acme"),
                 domains=domain,

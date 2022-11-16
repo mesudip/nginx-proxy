@@ -19,7 +19,7 @@ def process_redirection(container: Container, environments: map, vhost_map: Dict
             redirect_entry = re.sub(r"\s+", "", redirect_entry, flags=re.UNICODE)
 
             split = redirect_entry.split("->")
-            if len(split) is 2:
+            if len(split) == 2:
                 _sources, target = split
                 sources = [Url.parse(source) for source in _sources.split(',')]
                 target = Url.parse(target, default_port=80)

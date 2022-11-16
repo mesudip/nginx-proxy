@@ -9,13 +9,13 @@ from nginx_proxy.SSL import SSL
 
 
 class SslCertificateProcessor():
-    def __init__(self, nginx: Nginx, server: WebServer, start_ssl_thread=False):
+    def __init__(self, nginx: Nginx, server: WebServer, start_ssl_thread=False,ssl_dir="/etc/ssl"):
         self.cache: Dict[str:date] = {}
         self.self_signed: Set[str] = set()
         self.shutdown_requested: bool = False
         self.lock: threading.Condition = threading.Condition()
         self.nginx: Nginx = nginx
-        self.ssl: SSL = SSL("/etc/ssl", nginx)
+        self.ssl: SSL = SSL(ssl_dir, nginx)
         self.server: WebServer = server
         self.next_ssl_expiry: Union[datetime, None] = None
         self.certificate_expiry_thread: threading.Thread = threading.Thread(target=self.update_ssl_certificates)

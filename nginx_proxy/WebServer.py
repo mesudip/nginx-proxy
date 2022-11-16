@@ -13,6 +13,7 @@ from jinja2 import Template
 import nginx_proxy.post_processors as post_processors
 import nginx_proxy.pre_processors as pre_processors
 from nginx.Nginx import Nginx
+from nginx.DummyNginx import DummyNginx
 from nginx_proxy import Container
 from nginx_proxy import ProxyConfigData
 from nginx_proxy.Host import Host
@@ -34,19 +35,19 @@ class WebServer():
         self.config = self.loadconfig()
         self.shouldExit = False
         self.client = client
-        conf_file = "/etc/nginx/conf.d/default.conf"
-        self.nginx = Nginx(conf_file, self.config['challenge_dir'])
+        conf_file = self.config['conf_dir'] + "/conf.d/default.conf"
+        challenge_dir = self.config['challenge_dir']
+        self.nginx = DummyNginx(conf_file,challenge_dir) if  self.config['dummy_nginx'] else Nginx(conf_file,challenge_dir)
         self.config_data = ProxyConfigData()
         self.services = set()
         self.networks = {}
-        self.conf_file_name = "/etc/nginx/conf.d/default.conf"
-        self.host_file = "/etc/hosts"
+        self.conf_file_name = self.config['conf_dir'] + "/conf.d/default.conf"
         file = open("vhosts_template/default.conf.jinja2")
         self.template = Template(file.read())
         file.close()
         self.learn_yourself()
-        self.ssl_processor = post_processors.SslCertificateProcessor(self.nginx, self, start_ssl_thread=False)
-        self.basic_auth_processor = post_processors.BasicAuthProcessor()
+        self.ssl_processor = post_processors.SslCertificateProcessor(self.nginx, self, start_ssl_thread=False,ssl_dir=self.config['ssl_dir'])
+        self.basic_auth_processor = post_processors.BasicAuthProcessor( self.config['conf_dir'] + "/basic_auth")
         self.redirect_processor = post_processors.RedirectProcessor()
 
         if self.nginx.config_test():
@@ -80,19 +81,14 @@ class WebServer():
             know the networks accessible from this container and find all other accessible containers.
         """
         try:
-            file = open("/proc/self/cgroup")
-            self.id = [l.strip() for l in file.readlines() if l.find("cpu") != -1][0].split("/")[-1]
-            if len(self.id) > 64:
-                slice = [x for x in re.split('[^a-fA-F0-9]', self.id) if len(x) is 64]
-                if len(slice) is 1:
-                    self.id = slice[0]
-                else:
-                    print("[ERROR] Couldn't parse container id from value :", self.id, file=sys.stderr)
-                    raise Exception()
-            self.container = self.client.containers.get(self.id)
+            hostname=os.getenv("HOSTNAME")
+            if hostname is None:
+                print("[ERROR] HOSTNAME environment variable is not set")
+                raise Exception()
+            self.container = self.client.containers.get(self.hostname)
+            self.id=self.container.id
             self.networks = [a for a in self.container.attrs["NetworkSettings"]["Networks"].keys()]
             self.networks = {self.client.networks.get(a).id: a for a in self.networks}
-            file.close()
         except (KeyboardInterrupt, SystemExit) as e:
             raise e
         except Exception as e:
@@ -167,7 +163,8 @@ class WebServer():
         return response
 
     def disconnect(self, network, container, scope):
-        if container == self.id:
+
+        if self.id is not None and container == self.id:
             if network in self.networks:
                 # it's weird that the disconnect log is sent twice. this this check is  necessary
                 del self.networks[network]
@@ -178,7 +175,7 @@ class WebServer():
                 self.reload()
 
     def connect(self, network, container, scope):
-        if container == self.id:
+        if self.id is not None and container == self.id:
             if network not in self.networks:
                 self.networks[network] = self.client.networks.get(network).name
                 self.rescan_and_reload()
@@ -227,7 +224,13 @@ class WebServer():
 
     def loadconfig(self):
         return {
+            'dummy_nginx' : os.getenv("DUMMY_NGINX") is not None,
+            'ssl_dir': strip_end(os.getenv("SSL_DIR","/etc/ssl")),
+            'conf_dir': strip_end(os.getenv("NGINX_CONF_DIR","/etc/nginx")),
             'client_max_body_size': os.getenv("CLIENT_MAX_BODY_SIZE", "1m"),
-            'challenge_dir': os.getenv("CHALLENGE_DIR", "/tmp/acme-challenges"),
+            'challenge_dir': strip_end(os.getenv("CHALLENGE_DIR", "/tmp/acme-challenges")),
             'default_server': os.getenv("DEFAULT_HOST", "true") == "true"
         }
+
+def strip_end(str :str,char="/"):
+    return str[:-1] if str.endswith(char) else str

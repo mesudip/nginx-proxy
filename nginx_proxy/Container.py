@@ -33,7 +33,7 @@ class Container:
         # first we get the list of tuples each containing data in form (key, value)
         env_list = [x.split("=", 1) for x in container.attrs['Config']['Env']]
         # convert the environment list into map
-        return {x[0]: x[1].strip() for x in env_list if len(x) is 2}
+        return {x[0]: x[1].strip() for x in env_list if len(x) == 2}
 
 
 class UnconfiguredContainer(Exception):

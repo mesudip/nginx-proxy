@@ -42,7 +42,7 @@ class Nginx:
         :return: true if config test is successful otherwise false
         """
         test_result = subprocess.run(Nginx.command_config_test, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        if test_result.returncode is not 0:
+        if test_result.returncode != 0:
             print("Nginx configtest failed!", file=sys.stderr)
             self.last_error = test_result.stderr.decode("utf-8")
             print(self.last_error, file=sys.stderr)
@@ -71,7 +71,7 @@ class Nginx:
             file.write(self.config_stack.pop())
         return self.reload()
 
-    def force_start(self, config_str):
+    def force_start(self, config_str) -> bool:
         """
         Simply reload the nginx with the configuration, don't check whether or not configuration is changed or not.
         If change causes nginx to fail, revert to last working config.
@@ -126,7 +126,7 @@ class Nginx:
         """
         reload_result = subprocess.run(Nginx.command_reload, stdout=subprocess.PIPE,
                                        stderr=subprocess.PIPE)
-        if reload_result.returncode is not 0:
+        if reload_result.returncode != 0:
             if return_error:
                 return False, reload_result.stderr.decode("utf-8")
             else:

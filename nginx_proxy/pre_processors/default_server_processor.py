@@ -19,7 +19,7 @@ def process_default_server(container: Container, environments: Dict[str, str], v
                 host = Host.fromurl(url)
                 vhosts.add_host(host)
         else:
-            if len(vhosts) is 1:
+            if len(vhosts) == 1:
                 for host in vhosts.host_list():
                     pass
             else:

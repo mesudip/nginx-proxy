@@ -1,5 +1,5 @@
 # mesudip/python-nginx:alpine is merge of official python and nginx images.
-FROM mesudip/python-nginx:alpine
+FROM mesudip/python-nginx
 
 RUN pip install --upgrade pip
 

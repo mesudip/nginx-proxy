@@ -130,7 +130,6 @@ class AcmeV2(Acme):
                     pass
             finally:
                 self._cleanup(['{0}/{1}'.format(self.challenge_dir, token)])
-                self._reload_nginx()
         return self._sign_certificate(order, directory)
 
     def solve_dns_challenge(self, directory, client):
