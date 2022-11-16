@@ -218,7 +218,7 @@ class WebServer():
             'ssl_dir': strip_end(os.getenv("SSL_DIR","/etc/ssl")),
             'conf_dir': strip_end(os.getenv("NGINX_CONF_DIR","/etc/nginx")),
             'client_max_body_size': os.getenv("CLIENT_MAX_BODY_SIZE", "1m"),
-            'challenge_dir': strip_end(os.getenv("CHALLENGE_DIR", "/tmp/acme-challenges")),
+            'challenge_dir': strip_end(os.getenv("CHALLENGE_DIR", "/tmp/acme-challenges")) + "/", # the nginx challenge dir must end with a /
             'default_server': os.getenv("DEFAULT_HOST", "true") == "true"
         }
 
