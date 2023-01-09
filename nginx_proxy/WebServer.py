@@ -74,7 +74,7 @@ class WebServer():
             if hostname is None:
                 print("[ERROR] HOSTNAME environment variable is not set")
                 raise Exception()
-            self.container = self.client.containers.get(self.hostname)
+            self.container = self.client.containers.get(hostname)
             self.id=self.container.id
             self.networks = [a for a in self.container.attrs["NetworkSettings"]["Networks"].keys()]
             self.networks = {self.client.networks.get(a).id: a for a in self.networks}
