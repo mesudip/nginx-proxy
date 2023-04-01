@@ -95,8 +95,9 @@ class Host:
             "port": self.port})
 
     def __str__(self):
-        hostname= "%s:%s" % (
-                self.hostname if self.hostname else '?',
-                str(self.port) if self.port is not None else '?')
+        return self.__repr__()
+        # hostname= "%s:%s" % (
+        #         self.hostname if self.hostname else '?',
+        #         str(self.port) if self.port is not None else '?')
 
 

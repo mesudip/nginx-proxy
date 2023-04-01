@@ -1,6 +1,7 @@
 from typing import Dict, Set, Generator, Tuple, Union
 
 from nginx_proxy.Host import Host
+from nginx_proxy.Location import Location
 
 
 class ProxyConfigData:
@@ -73,22 +74,33 @@ class ProxyConfigData:
     def print(self):
 
         for host in self.host_list():
-            if host.port != 80:
-                url = "-   " + ("https" if host.secured else "http") + "://" + host.hostname + ":" + str(host.port)
-            else:
-                url = "-   " + ("https" if host.secured else "http") + "://" + host.hostname
+            postfix="://" + host.hostname 
+            def host_url(isWebsocket=False):
+                if host.secured:
+                    return  "-   " + ("wss" if isWebsocket else "https") + postfix + (":" + str(host.port) if host.port!=443 else '')
+                else:
+                   return  "-   " + ("ws" if isWebsocket else "http") + postfix + (":" + str(host.port) if host.port!=80 else '')
+            
             if host.isredirect():
-                print(url)
+                print(host_url())
                 print("      redirect : ", host.full_redirect)
             else:
                 if len(host.extras):
-                    print(url)
+                    print(host_url())
                     self.printextra("      ", host.extras)
                 for location in host.locations.values():
-                    print(url + location.name)
-                    print("      Type: ", "Websocket" if location.websocket else "Http")
+                    print(host_url(location.websocket)+location.name)
+                    for container in location.containers:
+                        print("      -> ", (container.scheme) + "://"+container.address + (":"+ str(container.port) if container.port else '' )+container.path)
+
                     if len(location.extras):
-                        self.printextra("      ", location.extras)
+                           self.printextra("      ", location.extras)
+                    
+        # self.address: str = address
+        # self.port: int = port
+        # self.path: Union[str, None] = path
+        # self.scheme: str = scheme
+        # self.networks =
 
     @staticmethod
     def printextra(gap, extra):

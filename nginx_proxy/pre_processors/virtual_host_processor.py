@@ -56,7 +56,7 @@ def _parse_host_entry(entry_string: str):
     external, internal = (split_url(external), split_url(internal))
     c = Container(None,
                   scheme=list(internal['scheme'])[0] if len(internal['scheme']) else 'http',
-                  address=None,
+                  address=internal["host"] if internal["host"] else None,
                   port=internal["port"] if internal["port"] else None,
                   path=internal["location"] if internal["location"] else "/")
     h = Host(
@@ -83,7 +83,8 @@ def host_generator(container: DockerContainer, service_id: str = None, known_net
 
     # List all the environment variables with VIRTUAL_HOST and list them.
     virtual_hosts = [x[1] for x in env_map.items() if x[0].startswith("VIRTUAL_HOST")]
-    if len(virtual_hosts) is 0:
+    static_hosts = [x[1] for x in env_map.items() if x[0].startswith("STATIC_VIRTUAL_HOST")]
+    if len(virtual_hosts) == 0 and len(static_hosts) == 0:
         raise NoHostConiguration()
 
     # Instead of directly processing container details, check whether or not it's accessible through known networks.
@@ -101,6 +102,16 @@ def host_generator(container: DockerContainer, service_id: str = None, known_net
                     break
     else:
         raise UnreachableNetwork()
+
+    for host_config in static_hosts:
+        host, location, container_data, extras = _parse_host_entry(host_config)
+        container_data.id = container.id
+        host.secured = 'https' in host.scheme or 'wss' in host.scheme or host.port == 443
+        if host.port is None :
+            host.port = 443 if host.secured else 80
+        if container_data.port is None :
+            container_data.port = 443 if ('https' in container_data.scheme or 'wss' in container_data.scheme) else 80
+        yield (host, location, container_data, extras)
 
     override_ssl = False
     override_port = None

@@ -4,6 +4,7 @@ import re
 import sys
 import time
 from typing import List
+import json
 
 import requests
 from docker import DockerClient
@@ -87,7 +88,7 @@ class WebServer():
                   file=sys.stderr)
             print("Falling back to default network", file=sys.stderr)
             network = self.client.networks.get("frontend")
-            self.networks[network.id] = "frontend"
+            self.networks[network.id] = network.id
 
     def _register_container(self, container: DockerContainer):
         """
@@ -151,7 +152,6 @@ class WebServer():
         else:
             response = self.nginx.update_config(output)
         return response
-
     def disconnect(self, network, container, scope):
 
         if self.id is not None and container == self.id:

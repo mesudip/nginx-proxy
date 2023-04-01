@@ -1,4 +1,5 @@
 /venv
+/.venv
 /.git
 /.gitignore
 /.dockerignore
@@ -7,4 +8,4 @@ __pycache__/
 /README.md
 /Dockerfile-staging
 /README.md
-
+.run_data/
