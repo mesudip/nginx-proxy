@@ -31,7 +31,9 @@ class Container:
     @staticmethod
     def get_env_map(container: DockerContainer):
         # first we get the list of tuples each containing data in form (key, value)
-        env_list = [x.split("=", 1) for x in container.attrs['Config']['Env']]
+        container_env=container.attrs['Config']['Env']
+
+        env_list = [x.split("=", 1) for x in container_env ] if container_env else []
         # convert the environment list into map
         return {x[0]: x[1].strip() for x in env_list if len(x) == 2}
 
