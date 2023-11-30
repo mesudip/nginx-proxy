@@ -1,7 +1,6 @@
 #!/bin/sh
-#When working on the project locally, you want to debug things running inside docker container
-# like a normal python script. This helps achieve that by creating proper directory mapping in the container
-# and then starting the container with pydevd enabled.
+# When working on the project locally, You don't want to run the container inside docker or interact with nginx.
+# To achieve that, we create only nginx configs and don't interact with nginx. The configs will be inside `./.run_data` folder
 #
 
 mkdir -p ./.run_data/conf.d
