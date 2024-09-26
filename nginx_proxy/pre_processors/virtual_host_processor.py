@@ -31,9 +31,9 @@ def process_virtual_hosts(container: DockerContainer, environments: map, known_n
     except NoHostConiguration:
         print("No VIRTUAL_HOST       ", "Id:" + container.id[:12],
               "    " + container.attrs["Name"].replace("/", ""), sep="\t")
-    except UnreachableNetwork:
+    except UnreachableNetwork as e:
         print("Unreachable Network   ", "Id:" + container.id[:12],
-              "    " + container.attrs["Name"].replace("/", ""), sep="\t")
+              "    " + container.attrs["Name"].replace("/", ""),"networks: "+', '.join(list(e.network_names)), sep="\t")
     return hosts
 
 
@@ -58,7 +58,7 @@ def _parse_host_entry(entry_string: str):
                   scheme=list(internal['scheme'])[0] if len(internal['scheme']) else 'http',
                   address=internal["host"] if internal["host"] else None,
                   port=internal["port"] if internal["port"] else None,
-                  path=internal["location"] if internal["location"] else "/")
+                  path=internal["location"] if internal["location"] else "")
     h = Host(
         external["host"] if external["host"] else None,
         # having https port on 80 will be detected later and used for redirection.
@@ -66,7 +66,7 @@ def _parse_host_entry(entry_string: str):
         scheme=external["scheme"] if external["scheme"] else {"http"}
     )
     return (h,
-            external["location"] if external["location"] else "/",
+            external["location"] if external["location"] else "",
             c, extras)
 
 

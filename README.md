@@ -74,16 +74,17 @@ For virtual host to work it requires
 
 Some configurations possible through `VIRTUAL_HOST`
 
- `VIRTUAL_HOST` | release address |    container path | container port
-:--- | :--- | :--- | :---
-example.com |  http:<span></span>//example.com | / | exposed port
-example.com:8080 | http:<span></span>//example.com:8080 | / | exposed port
-example.com -> :8080 | http:<span></span>//example.com | / | `8080`
-https://<span></span>example.com  | https:<span></span>//example.com | / | exposed port
-example.com/<span></span>api | http://<span></span>example.com/api |/ | exposed port
-example.com/<span></span>api -> :8080/api | http://<span></span>example.com/api | /api | 8080
-https://<span></span>example.com/<span></span>api/v1:5001  -> :8080/api | https://<span></span>example.com/<span></span>api/v1:5001 | /api | 8080
-wss://example.com/websocket | wss://example.com/websocket | / | exposed port
+ `VIRTUAL_HOST` | release address | container path | container port
+:--- | :--- |:---------------| :---
+example.com |  http:<span></span>//example.com | /              | exposed port
+example.com:8080 | http:<span></span>//example.com:8080 | /              | exposed port
+example.com -> :8080 | http:<span></span>//example.com | /              | `8080`
+https://<span></span>example.com  | https:<span></span>//example.com | /              | exposed port
+example.com/<span></span>api | http://<span></span>example.com/api | /api           | exposed port
+example.com/<span></span>api/ -> / | http://<span></span>example.com/api | /           | exposed port
+example.com/<span></span>api -> :8080/api | http://<span></span>example.com/api | /api           | 8080
+https://<span></span>example.com/<span></span>api/v1:5001  -> :8080/api | https://<span></span>example.com/<span></span>api/v1:5001 | /api           | 8080
+wss://example.com/websocket | wss://example.com/websocket | /              | exposed port
  
 With `VIRTUAL_HOST` you can inject nginx directives into location each configuration must be separed with a `;`
 . You can see the possible directives in nginx documentation.

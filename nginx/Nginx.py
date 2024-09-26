@@ -5,6 +5,7 @@ import random
 import string
 import subprocess
 import sys
+import time
 from os import path
 from typing import Union, Tuple
 import socket
@@ -170,7 +171,7 @@ class Nginx:
                     error=str(e)
                     if error.find("Name does not resolve") > -1:
                         print("[Error] [" + d + "] Domain Name could not be resolved", file=sys.stderr)
-                    elif error.find("Connection refused") >-1:
+                    elif error.find("Connection refused") > -1:
                         print("[Error] [" + d + "] Connection Refused! The port is filtered or not open.", file=sys.stderr)
                     else:
                         print("[ERROR] Domain is not owned by this machine : Reason: " + str(e))
@@ -181,6 +182,7 @@ class Nginx:
             return len(success) > 0
         else:
             return success
+
     def wait(self):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         result = sock.connect_ex(('127.0.0.1', 80))

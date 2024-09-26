@@ -1,4 +1,4 @@
-from typing import Union
+from typing import Union, List
 
 from docker.models.containers import Container as DockerContainer
 
@@ -43,6 +43,8 @@ class UnconfiguredContainer(Exception):
 
 
 class UnreachableNetwork(UnconfiguredContainer):
+    def __init__(self,network_names:List[str]):
+        self.network_names = network_names
     pass
 
 

@@ -59,7 +59,7 @@ class WebServer():
                 print("Exiting .....", file=sys.stderr)
                 exit(1)
         self.nginx.wait()
-
+        print("Reachable Networks :", self.networks)
         self.rescan_all_container()
         self.reload()
         self.ssl_processor.certificate_expiry_thread.start()
@@ -156,6 +156,8 @@ class WebServer():
 
         if self.id is not None and container == self.id:
             if network in self.networks:
+                print("Nginx Proxy removed from network ",self.networks[network])
+                print("Connected Networks:",self.networks)
                 # it's weird that the disconnect log is sent twice. this this check is  necessary
                 del self.networks[network]
                 self.rescan_and_reload()

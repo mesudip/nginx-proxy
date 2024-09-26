@@ -32,7 +32,7 @@ server{
         return 503;{% else %} {% if server.extras.security %}
         auth_basic "Basic Auth Enabled";
         auth_basic_user_file {{ server.extras.security_file }};{% endif %} {% for location in server.locations.values() %}
-        location {{ location.name }} { {% for injection in location.extras.injected %}
+        location {{ location.name if location.name else '/'}} { {% for injection in location.extras.injected %}
             {{ injection }};{% endfor %} {% if location.extras.security %}
             auth_basic "Basic Auth Enabled";
             auth_basic_user_file {{ location.extras.security_file }};{% endif %} {% if location.upstream %}
@@ -59,7 +59,7 @@ server{
         listen {{ server.port }} {{ server.extras.default_server }};
         server_name {{ server.hostname }};{% if server.is_redirect %}
         return 301 {{  "https" if server.secured else "http" }}://{{ server.full_redirect.hostname }}$request_uri;{% else %}{% for location in server.locations.values() %}
-        location {{ location.name }} { {% for injection in location.extras.injected %}
+        location {{ location.name if location.name else '/' }} { {% for injection in location.extras.injected %}
             {{ injection }};{% endfor %} {% if location.upstream %}
             proxy_pass {{ location.container.scheme }}://{{ location.upstream }}{{location.container.path}};{% else %}
             proxy_pass {{location.container.scheme }}://{{ location.container.address }}:{{ location.container.port }}{{ location.container.path }};{% endif %}{% if location.name != '/' %}
