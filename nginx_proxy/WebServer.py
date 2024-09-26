@@ -79,9 +79,10 @@ class WebServer():
             self.id=self.container.id
             networks = [a for a in self.container.attrs["NetworkSettings"]["Networks"].keys()]
             for network in networks:
-                net_detail=self.client.networks.get(a)
-                self.networks[net_detail.id]=self.networks[net_detail.name]
-                self.networks[net_detail.name]=self.networks[net_detail.id]
+                print ("Check known network: ",network)
+                net_detail=self.client.networks.get(network)
+                self.networks[net_detail.id]=net_detail.name
+                self.networks[net_detail.name]=net_detail.id
         except (KeyboardInterrupt, SystemExit) as e:
             raise e
         except Exception as e:
@@ -90,8 +91,10 @@ class WebServer():
                   "\n Is it running in docker environment?",
                   file=sys.stderr)
             print("Falling back to default network", file=sys.stderr)
-            network = self.client.networks.get("frontend")
-            self.networks[network.id] = "frontend"
+            default_network="frontend"
+            network = self.client.networks.get(default_network)
+            self.networks[network.id] = default_network
+            self.networks[default_network] = network.id
 
     def _register_container(self, container: DockerContainer):
         """

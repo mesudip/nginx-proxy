@@ -92,16 +92,11 @@ def host_generator(container: DockerContainer, service_id: str = None, known_net
     unknown = True
     for name, detail in network_settings["Networks"].items():
         c.add_network(detail["NetworkID"])
-        # fix for https://trello.com/c/js37t4ld
-        if detail["Aliases"] is not None: # we might use alias
-            if detail["NetworkID"] in known_networks and unknown:
-                alias = detail["Aliases"][len(detail["Aliases"]) - 1]
-                ip_address = detail["IPAddress"]
-                network = name
-                if ip_address:
-                    break
-        elif detail['NetworkID']:
+        if detail["NetworkID"]  and detail["NetworkID"] in known_networks and unknown:
             ip_address = detail["IPAddress"]
+            #if detail["Aliases"] is not None:  # we might use alias
+            #   alias = detail["Aliases"][len(detail["Aliases"]) - 1]
+            # network = name
             if ip_address:
                 break
     else:
