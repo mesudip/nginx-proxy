@@ -66,7 +66,7 @@ def _parse_host_entry(entry_string: str):
         scheme=external["scheme"] if external["scheme"] else {"http"}
     )
     return (h,
-            external["location"] if external["location"] else "",
+            external["location"] if external["location"] else "/",
             c, extras)
 
 
