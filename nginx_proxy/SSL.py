@@ -2,6 +2,7 @@ import datetime
 import logging
 import os
 import shutil
+import time
 from os.path import join
 
 import OpenSSL
@@ -16,6 +17,7 @@ class SSL:
     def __init__(self, ssl_path, nginx: Nginx):
         self.ssl_path = ssl_path
         self.nginx = nginx
+        self.blacklist={}
         x = os.environ.get("LETSENCRYPT_API")
         if x is not None:
             if x.startswith("https://"):
@@ -106,9 +108,8 @@ class SSL:
         shutil.copy2(os.path.join(self.ssl_path, "accounts", domain1 + ".account.key"),
                      os.path.join(self.ssl_path, "accounts", domain2 + ".account.key"))
 
-    def register_certificate(self, domain, no_self_check=False, ignore_existing=False):
-        if type(domain) is str:
-            domain = [domain]
+    def register_certificate(self, req_domain, no_self_check=False, ignore_existing=False):
+        domain = [req_domain] if type(req_domain) is str else req_domain
         domain = [d for d in domain if
                   '.' in d]  # when the domain doesn't have '.' it shouldn't be requested for letsencrypt certificate
         verified_domain = domain if no_self_check else self.nginx.verify_domain(domain)
@@ -132,28 +133,55 @@ class SSL:
             directory = acme.register_account()
             return domain if acme.solve_http_challenge(directory) else[]
         else:
-            print("[SSL-Register] the files already so ignored :"+str(domain))
+            print("[SSL-Register] Requested domains already have ssl certs :"+str(req_domain))
             return verified_domain
 
+    def is_blacklisted(self, domain):
+        # Check if a domain is blacklisted
+        if domain in self.blacklist:
+            if time.time() < self.blacklist[domain]:
+                return True
+            else:
+                del self.blacklist[domain]  # Remove from blacklist if timeout has passed
+        return False
+
+    def add_to_blacklist(self, domain, duration):
+        # Add a domain to the blacklist for a specified duration
+        self.blacklist[domain] = time.time() + duration
+
     def register_certificate_or_selfsign(self, domain, no_self_check=False, ignore_existing=False):
-        print("[CertificateOrSelfSign] Adding domains:", domain)
+        print("[CertificateOrSelfSign] Checking domains:", ', '.join(domain))
+        blacklisted=[]
         obtained_certificates = []
+
         for i in range(0, len(domain), 50):
-            # only fifty at a time.
             sub_list = domain[i:i + 50]
-            obtained = self.register_certificate(sub_list, no_self_check=no_self_check, ignore_existing=ignore_existing)
-            if len(obtained):
+            # Filter out blacklisted domains from the sublist
+            filtered_sub_list = [d for d in sub_list if not self.is_blacklisted(d)]
+
+            if len(filtered_sub_list) < len(sub_list):
+                existing_blacklist = list(set(sub_list) - set(filtered_sub_list))
+                blacklisted.extend(existing_blacklist)
+                print("[Blacklist] ignoring previously failed domain for 3 mins:",', '.join(existing_blacklist) )
+
+            # Proceed only with the filtered sublist
+            obtained = self.register_certificate(filtered_sub_list, no_self_check=no_self_check,ignore_existing=ignore_existing) if filtered_sub_list else []
+
+            if obtained:
                 domain1 = obtained[0]
                 for x in obtained[1:]:
                     self.reuse(domain1, x)
                 obtained_certificates.extend(obtained)
-        obtained_set = set(obtained_certificates)
+        obtained_set = set(obtained_certificates).union(set(self.blacklist.keys()))
         self_signed = [x for x in domain if x not in obtained_set]
-        if len(self_signed):
+        if self_signed:
+            # Add the self-signed domains to the blacklist
+            for domain in self_signed:
+                self.add_to_blacklist(domain, 220)
             print("[Self Signing certificates]", self_signed)
-        self.register_certificate_self_sign(self_signed)
-        return obtained_certificates
+            self.register_certificate_self_sign(self_signed)
 
+        return obtained_certificates
     def register_certificate_self_sign(self, domain):
         if type(domain) is str:
             self.self_sign(domain)
