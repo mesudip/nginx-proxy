@@ -77,8 +77,11 @@ class WebServer():
                 raise Exception()
             self.container = self.client.containers.get(hostname)
             self.id=self.container.id
-            self.networks = [a for a in self.container.attrs["NetworkSettings"]["Networks"].keys()]
-            self.networks = {self.client.networks.get(a).id: a for a in self.networks}
+            networks = [a for a in self.container.attrs["NetworkSettings"]["Networks"].keys()]
+            for network in networks:
+                net_detail=self.client.networks.get(a)
+                self.networks[net_detail.id]=self.networks[net_detail.name]
+                self.networks[net_detail.name]=self.networks[net_detail.id]
         except (KeyboardInterrupt, SystemExit) as e:
             raise e
         except Exception as e:
@@ -88,7 +91,7 @@ class WebServer():
                   file=sys.stderr)
             print("Falling back to default network", file=sys.stderr)
             network = self.client.networks.get("frontend")
-            self.networks[network.id] = network.id
+            self.networks[network.id] = "frontend"
 
     def _register_container(self, container: DockerContainer):
         """
@@ -159,7 +162,9 @@ class WebServer():
                 print("Nginx Proxy removed from network ",self.networks[network])
                 print("Connected Networks:",self.networks)
                 # it's weird that the disconnect log is sent twice. this this check is  necessary
+                rev_id=self.networks[network]
                 del self.networks[network]
+                del self.networks[rev_id]
                 self.rescan_and_reload()
         elif container in self.containers and network in self.networks:
             if not self.update_container(container):
@@ -169,7 +174,9 @@ class WebServer():
     def connect(self, network, container, scope):
         if self.id is not None and container == self.id:
             if network not in self.networks:
-                self.networks[network] = self.client.networks.get(network).name
+                new_network=self.client.networks.get(network)
+                self.networks[new_network.id] = new_network.name
+                self.networks[new_network.name] = new_network.id
                 self.rescan_and_reload()
         elif network in self.networks:
             self.update_container(container)
