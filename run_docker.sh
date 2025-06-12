@@ -10,9 +10,10 @@ IMAGE_NAME="mesudip/nginx-proxy:local"
 echo "Started Docker build. This will take a while if you have changed requirements.txt"
 docker build -t "$IMAGE_NAME" --build-arg WORK_DIR="$(pwd)" . >>/dev/null
 docker rm --force mesudip-nginx-local-debug >/dev/null
+docker volume create local_ssl || echo "volume already exists"
 docker run -d \
   -v /var/run/docker.sock:/var/run/docker.sock:ro \
-  -v /etc/ssl:/etc/ssl \
+  -v local_ssl:/etc/ssl \
   -v "$(pwd):$(pwd)" \
   -v /etc/ssl/dhparam:/etc/nginx/dhparam \
   -v /tmp/mesdip-nginx-conf:/etc/nginx/conf.d \

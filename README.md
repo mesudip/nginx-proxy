@@ -107,6 +107,10 @@ If you want to use both websocket and non-websocket endpoints you will have to u
 
 `-e "VIRTUAL_HOST=wss://ws.example.com -> :8080/websocket"`
 
+If you are not sure  what paths should be exposed on websocket, you can opt for auto upgrade to websocket.
+
+`-e "VIRTUAL_HOST=https+wss://example.com"`
+
 ### Multiple Virtual Hosts on same container
 To have multiple virtual hosts out of single container, you can use `VIRTUAL_HOST1`, `VIRTUAL_HOST2`, `VIRTUAL_HOST3` and so on. In fact the only thing it matters is that the environment variable starts with `VIRTUAL_HOST`.
 
@@ -114,7 +118,7 @@ To have multiple virtual hosts out of single container, you can use `VIRTUAL_HOS
 ```bash
     docker run -d  --network frontend \
     -e "VIRTUAL_HOST1=https://ethereum.example.com -> :8545" \
-    -e "VIRTUAL_HOST2=wss://ethereum.example.com/ws -> :8546" \
+    -e "VIRTUAL_HOST2=wss://ethereum.example.com/ws -> :8546/" \
     ethereum/client-go \
     --rpc --rpcaddr "0.0.0.0"  --ws --wsaddr 0.0.0.0
 ```

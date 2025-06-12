@@ -41,7 +41,8 @@ class WebServer():
         self.redirect_processor = post_processors.RedirectProcessor()
 
         if self.nginx.config_test():
-            if len(self.nginx.last_working_config) < 50:
+            print("Config test succeed")
+            if len(self.nginx.last_working_config) < 50: # if the config is too short, just force restart, we might not have any consequences.
                 print("Writing default config before reloading server.")
                 if not self.nginx.force_start(self.template.render(config=self.config)):
                     print("Nginx failed when reloaded with default config", file=sys.stderr)
@@ -58,6 +59,7 @@ class WebServer():
                 print("Nginx failed when reloaded with default config", file=sys.stderr)
                 print("Exiting .....", file=sys.stderr)
                 exit(1)
+        print("Now waiting for nginx")
         self.nginx.wait()
         print("Reachable Networks :", self.networks)
         self.rescan_all_container()
@@ -79,7 +81,7 @@ class WebServer():
             self.id=self.container.id
             networks = [a for a in self.container.attrs["NetworkSettings"]["Networks"].keys()]
             for network in networks:
-                print ("Check known network: ",network)
+                print ("Registering network: ",network)
                 net_detail=self.client.networks.get(network)
                 self.networks[net_detail.id]=net_detail.name
                 self.networks[net_detail.name]=net_detail.id
@@ -223,6 +225,7 @@ class WebServer():
 
     def cleanup(self):
         self.ssl_processor.shutdown()
+        self.nginx.stop()
 
     def loadconfig(self):
         return {
