@@ -110,7 +110,7 @@ try:
     server = WebServer(client)
     eventLoop()
 except (KeyboardInterrupt, SystemExit) as e:
-    traceback.print_exception(e)
+    # traceback.print_exception(e)
     print("-------------------------------\nPerforming Graceful ShutDown !!")
     if server is not None:
         server.cleanup()

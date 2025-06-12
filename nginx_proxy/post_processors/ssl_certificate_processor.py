@@ -2,6 +2,7 @@ import threading
 from datetime import date, datetime
 from typing import List, Dict, Set, Union
 
+from acme_nginx.Cloudflare import Cloudflare
 from nginx.Nginx import Nginx
 from nginx_proxy import WebServer
 from nginx_proxy.Host import Host
@@ -22,6 +23,24 @@ class SslCertificateProcessor():
         self.default_wildcard_dns_provider = default_wildcard_dns_provider
         if start_ssl_thread:
             self.certificate_expiry_thread.start()
+
+    def _is_domain_owned(self, domain):
+        """Check if the domain is owned by the user using Cloudflare"""
+        if not self.default_wildcard_dns_provider:
+            print(f"[SSL-Processor] Cannot check domain ownership: Cloudflare client is not available")
+            return False
+
+        try:
+            # Use Cloudflare's determine_domain method to find registered domains
+            registered_domain = self.default_wildcard_dns_provider.determine_domain(domain)
+            if registered_domain:
+                print(f"[SSL-Processor] Domain {domain} is owned by the user (registered as: {registered_domain})")
+                return True
+        except Exception as e:
+            print(f"[SSL-Processor] Error checking domain ownership for {domain}: {e}")
+
+        print(f"[SSL-Processor] Domain {domain} is not owned by the user")
+        return False
 
     def update_ssl_certificates(self):
         self.lock.acquire()
@@ -114,6 +133,13 @@ class SslCertificateProcessor():
             for host in wildcard_requests:
                 if not self.default_wildcard_dns_provider:
                     print(f"[SSL-Processor] Cannot register wildcard certificate for {host.hostname}: default_wildcard_dns_provider is not set.")
+                    host.ssl_file = host.hostname + ".selfsigned"
+                    self.self_signed.add(host.hostname)
+                    continue
+
+                # Check if the domain is owned by the user before proceeding
+                if not self._is_domain_owned(host.hostname):
+                    print(f"[SSL-Processor] Skipping SSL certificate request for {host.hostname}: domain is not owned by the user")
                     host.ssl_file = host.hostname + ".selfsigned"
                     self.self_signed.add(host.hostname)
                     continue

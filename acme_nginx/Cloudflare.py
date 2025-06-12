@@ -1,6 +1,7 @@
 import json
 import time
 from os import getenv
+import traceback
 from urllib.request import urlopen, Request
 
 
@@ -76,14 +77,19 @@ class Cloudflare(object):
         # The domain passed here might be a subdomain or wildcard, e.g., 'sub.example.com' or '*.example.com'
         # We need to find the root domain (e.g., 'example.com') that is registered as a Cloudflare zone.
         parts = domain.split('.')
+        err=None
         for i in range(len(parts)):
             potential_domain = ".".join(parts[i:])
             try:
                 self._get_zone_id(potential_domain)
                 return potential_domain
-            except Exception:
+            except Exception as e:
+                err=e
                 continue
-        raise Exception("Could not determine Cloudflare registered domain for: {0}".format(domain))
+        if err:
+            raise err
+        else:
+            raise Exception("Could not determine Cloudflare registered domain for: {0}".format(domain))
 
     def create_record(self, name, data, domain):
         """
