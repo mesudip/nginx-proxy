@@ -56,15 +56,21 @@ class SslCertificateProcessor():
 
     def process_ssl_certificates(self, hosts: List[Host]):
         ssl_requests: Set[Host] = set()
+        wildcard_requests: Set[Host] = set()
         self.lock.acquire()
         for host in hosts:
             if host.secured:
+                is_wildcard = '*' in host.hostname
+
                 if int(host.port) in (80, 443):
                     host.ssl_redirect = True
                     host.port = 443
                 if host.hostname in self.cache:
                     host.ssl_file = host.hostname
+                elif is_wildcard:
+                    wildcard_requests.add(host)
                 else:
+                    ## reuse the wildcard certificate.
                     wildcard = self.ssl.wildcard_domain_name(host.hostname)
                     if wildcard is not None:
                         if self.ssl.cert_exists(wildcard):
@@ -78,7 +84,9 @@ class SslCertificateProcessor():
                     else:
                         ssl_requests.add(host)
 
-        if len(ssl_requests):
+
+
+        if len(ssl_requests)>0:
             registered = self.ssl.register_certificate_or_selfsign([h.hostname for h in ssl_requests],
                                                                    ignore_existing=True)
             for host in ssl_requests:
@@ -89,6 +97,10 @@ class SslCertificateProcessor():
                     host.ssl_file = host.hostname
                     self.cache[host.hostname] = self.ssl.expiry_time(host.hostname)
                     host.ssl_expiry = self.cache[host.hostname]
+        if len(wildcard_requests) > 0:
+            for host in wildcard_requests:
+                self.ssl.register_certificate_wildcard(domain=host.hostname)
+
         if len(self.cache):
             expiry = min(self.cache.values())
             if expiry != self.next_ssl_expiry:

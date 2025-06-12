@@ -7,6 +7,8 @@ class DummyNginx:
 
     def start(self) -> bool:
         return True
+    def stop(self) -> bool:
+        return True
 
     def config_test(self) -> bool:
         """

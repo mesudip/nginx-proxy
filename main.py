@@ -35,7 +35,7 @@ if "PYTHON_DEBUG_HOST" in os.environ:
 if "PYTHON_DEBUG_ENABLE" in os.environ:
     if os.environ["PYTHON_DEBUG_ENABLE"].strip() == "true":
         if "host" not in debug_config:
-            debug_config["host"] = re.findall("([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)+",
+            debug_config["host"] = re.findall(r"([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)+",
                                               subprocess.run(["ip", "route"],
                                                              stdout=subprocess.PIPE).stdout.decode().split(
                                                   "\n")[0])[0]
@@ -58,21 +58,31 @@ except Exception as e:
 
 
 def eventLoop():
-    for event in client.events(decode=True):
+    filters = {
+        "type": ["service", "network", "container"],
+        "event": ["start", "stop", "create", "destroy", "health_status"],
+    }
+    for event in client.events(decode=True, filters=filters):
         try:
-            eventType = event["Type"]
+            eventType = event.get("Type")
+            eventAction = event.get("Action")
+
             if eventType == "service":
-                process_service_event(event["Action"], event)
+                process_service_event(eventAction, event)
             elif eventType == "network":
-                process_network_event(event["Action"], event)
+                process_network_event(eventAction, event)
             elif eventType == "container":
-                process_container_event(event["Action"], event)
-        except (KeyboardInterrupt, SystemExit) as e:
-            raise e
+                if eventAction == "health_status":
+                    break
+                    #process_container_health_event(event)
+                else:
+                    process_container_event(eventAction, event)
+
+        except (KeyboardInterrupt, SystemExit):
+            raise
         except Exception as e:
             print("Unexpected error :" + e.__class__.__name__ + ' -> ' + str(e), file=sys.stderr)
             traceback.print_exc(limit=10)
-
 
 def process_service_event(action, event):
     if action == "create":
