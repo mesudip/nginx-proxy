@@ -4,4 +4,6 @@
 #
 
 mkdir -p ./.run_data/conf.d
+
+LETSENCRYPT_API=https://acme-staging-v02.api.letsencrypt.org/directory \
 DUMMY_NGINX=y SSL_DIR=./.run_data NGINX_CONF_DIR=./.run_data python3 main.py

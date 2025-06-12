@@ -18,7 +18,7 @@ from nginx.DummyNginx import DummyNginx
 from nginx_proxy import Container
 from nginx_proxy import ProxyConfigData
 from nginx_proxy.Host import Host
-
+from acme_nginx.Cloudflare import Cloudflare
 
 class WebServer():
     def __init__(self, client: DockerClient, *args):
@@ -36,7 +36,19 @@ class WebServer():
         self.template = Template(file.read())
         file.close()
         self.learn_yourself()
-        self.ssl_processor = post_processors.SslCertificateProcessor(self.nginx, self, start_ssl_thread=False,ssl_dir=self.config['ssl_dir'])
+        
+        wildcard_dns_provider = None
+        if os.getenv('CLOUDFLARE_API_TOKEN'):
+            wildcard_dns_provider = Cloudflare()
+        # Add other providers here if needed, e.g., elif os.getenv('DIGITALOCEAN_API_TOKEN'): wildcard_dns_provider = 'digitalocean'
+
+        self.ssl_processor = post_processors.SslCertificateProcessor(
+            self.nginx,
+            self,
+            start_ssl_thread=False,
+            ssl_dir=self.config['ssl_dir'],
+            default_wildcard_dns_provider=wildcard_dns_provider
+        )
         self.basic_auth_processor = post_processors.BasicAuthProcessor( self.config['conf_dir'] + "/basic_auth")
         self.redirect_processor = post_processors.RedirectProcessor()
 

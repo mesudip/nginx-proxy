@@ -9,7 +9,7 @@ from nginx_proxy.SSL import SSL
 
 
 class SslCertificateProcessor():
-    def __init__(self, nginx: Nginx, server: WebServer, start_ssl_thread=False,ssl_dir="/etc/ssl"):
+    def __init__(self, nginx: Nginx, server: WebServer, start_ssl_thread=False, ssl_dir="/etc/ssl", default_wildcard_dns_provider: Union[str, None] = None):
         self.cache: Dict[str:date] = {}
         self.self_signed: Set[str] = set()
         self.shutdown_requested: bool = False
@@ -19,6 +19,7 @@ class SslCertificateProcessor():
         self.server: WebServer = server
         self.next_ssl_expiry: Union[datetime, None] = None
         self.certificate_expiry_thread: threading.Thread = threading.Thread(target=self.update_ssl_certificates)
+        self.default_wildcard_dns_provider = default_wildcard_dns_provider
         if start_ssl_thread:
             self.certificate_expiry_thread.start()
 
@@ -64,31 +65,74 @@ class SslCertificateProcessor():
                     host.port = 443
                 if host.hostname in self.cache:
                     host.ssl_file = host.hostname
-                else:
-                    wildcard = self.ssl.wildcard_domain_name(host.hostname)
-                    if wildcard is not None:
-                        if self.ssl.cert_exists(wildcard):
-                            host.ssl_file = wildcard
-                            continue
-                    # find the ssl certificate if it exists
+                    continue # Already in cache, no need to process further
+
+                wildcard_name = self.ssl.wildcard_domain_name(host.hostname)
+                
+                # Check for existing wildcard certificate first
+                if wildcard_name and self.ssl.cert_exists(wildcard_name):
+                    host.ssl_file = wildcard_name
+                    # Add to cache with wildcard name for expiry tracking
+                    self.cache[wildcard_name] = self.ssl.expiry_time(wildcard_name)
+                    host.ssl_expiry = self.cache[wildcard_name]
+                    continue
+
+                # If no existing wildcard, check for existing individual certificate
+                if self.ssl.cert_exists(host.hostname):
                     time = self.ssl.expiry_time(host.hostname)
                     if (time - datetime.now()).days > 2:
                         self.cache[host.hostname] = time
                         host.ssl_file = host.hostname
-                    else:
-                        ssl_requests.add(host)
+                        host.ssl_expiry = self.cache[host.hostname]
+                        continue
+                
+                # If no existing cert (wildcard or individual) or it's expiring soon, add to requests
+                ssl_requests.add(host)
 
         if len(ssl_requests):
-            registered = self.ssl.register_certificate_or_selfsign([h.hostname for h in ssl_requests],
-                                                                   ignore_existing=True)
-            for host in ssl_requests:
-                if host.hostname not in registered:
+            # Separate wildcard requests from regular requests
+            # A request is considered a wildcard request if its hostname starts with "*. "
+            wildcard_requests = [h for h in ssl_requests if h.hostname.startswith('*.')]
+            regular_requests = [h for h in ssl_requests if not h.hostname.startswith('*.')]
+
+            # Process regular certificates
+            if regular_requests:
+                registered_regular = self.ssl.register_certificate(
+                    [h.hostname for h in regular_requests],
+                    ignore_existing=True
+                )
+                for host in regular_requests:
+                    if host.hostname not in registered_regular:
+                        host.ssl_file = host.hostname + ".selfsigned"
+                        self.self_signed.add(host.hostname)
+                    else:
+                        host.ssl_file = host.hostname
+                        self.cache[host.hostname] = self.ssl.expiry_time(host.hostname)
+                        host.ssl_expiry = self.cache[host.hostname]
+
+            # Process wildcard certificates
+            for host in wildcard_requests:
+                if not self.default_wildcard_dns_provider:
+                    print(f"[SSL-Processor] Cannot register wildcard certificate for {host.hostname}: default_wildcard_dns_provider is not set.")
                     host.ssl_file = host.hostname + ".selfsigned"
                     self.self_signed.add(host.hostname)
+                    continue
+
+                wildcard_domain = host.hostname # The hostname itself is the wildcard domain
+                
+                registered_wildcard = self.ssl.register_certificate_wildcard(
+                    wildcard_domain,
+                    self.default_wildcard_dns_provider, # Use the configured default provider
+                    ignore_existing=True
+                )
+                if registered_wildcard:
+                    host.ssl_file = wildcard_domain
+                    self.cache[wildcard_domain] = self.ssl.expiry_time(wildcard_domain)
+                    host.ssl_expiry = self.cache[wildcard_domain]
                 else:
-                    host.ssl_file = host.hostname
-                    self.cache[host.hostname] = self.ssl.expiry_time(host.hostname)
-                    host.ssl_expiry = self.cache[host.hostname]
+                    # Fallback to self-signed if wildcard registration fails
+                    host.ssl_file = host.hostname + ".selfsigned"
+                    self.self_signed.add(host.hostname)
         if len(self.cache):
             expiry = min(self.cache.values())
             if expiry != self.next_ssl_expiry:

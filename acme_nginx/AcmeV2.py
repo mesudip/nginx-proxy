@@ -2,10 +2,12 @@ import hashlib
 import json
 import re
 import sys
+import time
 from urllib.request import urlopen, Request  # Python 3
 
 from .Acme import Acme
 from .DigitalOcean import DigitalOcean
+from .Cloudflare import Cloudflare
 
 
 class AcmeV2(Acme):
@@ -61,15 +63,56 @@ class AcmeV2(Acme):
         self.log.info('signing certificate')
         csr = self.create_csr()
         payload = {"csr": self._b64(csr)}
+        time.sleep(4)
         code, result, headers = self._send_signed_request(url=order['finalize'], payload=payload, directory=directory)
         self.log.debug('{0}, {1}, {2}'.format(code, result, headers))
         if code > 399:
             self.log.error("error signing certificate: {0} {1}".format(code, result))
             self._reload_nginx()
             return False
-        self.log.info('certificate signed!')
+
+        order_url = headers['Location']
+        max_attempts = 4
+        attempts = 0
+        certificate_url = None
+
+        while attempts < max_attempts:
+            self.log.info(f'polling order status (attempt {attempts + 1}/{max_attempts})')
+            try:
+                order_result = urlopen(order_url).read().decode('utf8')
+            except Exception as e:
+                self.log.error(f"error polling order status: {type(e).__name__} {e}")
+                self._reload_nginx()
+                return False
+            
+            order_json = json.loads(order_result)
+            self.log.debug(f"Order status: {order_json['status']}")
+
+            if order_json['status'] == 'valid':
+                certificate_url = order_json.get('certificate')
+                if certificate_url:
+                    self.log.info('certificate is valid and URL found!')
+                    break
+                else:
+                    self.log.error('order status is valid but no certificate URL found.')
+                    self._reload_nginx()
+                    return False
+            elif order_json['status'] == 'pending' or order_json['status'] == 'processing':
+                self.log.info('order still pending or processing, waiting...')
+                time.sleep(5)
+            else:
+                self.log.error(f"unexpected order status: {order_json['status']}")
+                self._reload_nginx()
+                return False
+            attempts += 1
+        
+        if not certificate_url:
+            self.log.error('failed to get valid certificate URL after multiple attempts.')
+            self._reload_nginx()
+            return False
+
         self.log.info('downloading certificate')
-        certificate_pem = urlopen(json.loads(result)['certificate']).read().decode('utf8')
+        certificate_pem = urlopen(certificate_url).read().decode('utf8')
         self.log.info('writing result file in {0}'.format(self.cert_path))
         try:
             with open(self.cert_path, 'w') as fd:
@@ -99,7 +142,6 @@ class AcmeV2(Acme):
         )
         if code > 299 or code < 200:
             self.log.error("Unexpected response: " + str(code) + " ->" + str(order))
-
             return False
         self.log.debug(order)
         order = json.loads(order)
@@ -173,6 +215,7 @@ class AcmeV2(Acme):
                 self.log.error(e)
                 sys.exit(1)
             try:
+                time.sleep(6)
                 self.log.info('asking acme server to verify challenge')
                 payload = {"keyAuthorization": keyauthorization}
                 code, result, headers = self._send_signed_request(
@@ -195,13 +238,17 @@ class AcmeV2(Acme):
                 except Exception as e:
                     self.log.error('error deleting dns record')
                     self.log.error(e)
-        self._sign_certificate(order, directory)
+        return self._sign_certificate(order, directory)
 
     def get_certificate(self):
         directory = self.register_account() 
         if self.dns_provider:
             if self.dns_provider == 'digitalocean':
                 dns_client = DigitalOcean()
+            elif self.dns_provider == 'cloudflare':
+                dns_client = Cloudflare()
+            else:
+                raise Exception('Unknown DNS provider: {0}'.format(self.dns_provider))
             self.solve_dns_challenge(directory, dns_client)
         else:
             self.solve_http_challenge(directory)

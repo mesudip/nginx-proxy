@@ -89,7 +89,10 @@ class SSL:
                and os.path.exists(os.path.join(self.ssl_path, "private", domain + ".key"))
 
     def cert_exists_wildcard(self, domain):
-        return self.wildcard_domain_name(domain) is not None
+        wildcard_name = self.wildcard_domain_name(domain)
+        if wildcard_name:
+            return self.cert_exists(wildcard_name)
+        return False
 
     def wildcard_domain_name(self, domain):
         slices = domain.split('.')
@@ -135,6 +138,39 @@ class SSL:
         else:
             print("[SSL-Register] Requested domains already have ssl certs :"+str(req_domain))
             return verified_domain
+
+    def register_certificate_wildcard(self, domain, dns_provider, no_self_check=False, ignore_existing=False):
+        # For wildcard certificates, domain must be a single string like "*.example.com"
+        if not isinstance(domain, str) or not domain.startswith('*.'):
+            raise ValueError("Wildcard domain must be a single string starting with '*.'.")
+
+        # The actual domain for account/key files should be the base domain, e.g., "example.com"
+        base_domain = domain[2:] # Remove "*. "
+        
+        # Check if the base domain already has a wildcard cert
+        if not ignore_existing and self.cert_exists(domain):
+            print(f"[SSL-Register-Wildcard] Wildcard certificate for {domain} already exists.")
+            return [domain]
+
+        logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.DEBUG)
+        acme = AcmeV2(
+            self.nginx,
+            api_url=self.api_url,
+            logger=logging.getLogger("acme"),
+            domains=[domain],  # Pass the wildcard domain as a list
+            account_key=os.path.join(self.ssl_path, "accounts", domain + ".account.key"),
+            domain_key=os.path.join(self.ssl_path, "private", domain + ".key"),
+            cert_path=os.path.join(self.ssl_path, "certs", domain + ".crt"), # Cert file name includes wildcard
+            debug=False,
+            dns_provider=dns_provider.name, # Use the specified DNS provider
+            skip_nginx_reload=False,
+            challenge_dir=self.nginx.challenge_dir
+        )
+
+        directory = acme.register_account()
+        # For wildcard, always use DNS challenge
+        return [domain] if acme.solve_dns_challenge(directory, dns_provider) else []
+
 
     def is_blacklisted(self, domain):
         # Check if a domain is blacklisted
