@@ -17,6 +17,7 @@ from nginx import Url
 
 class Nginx:
     command_config_test = ["nginx", "-t"]
+    command_stop = ["nginx", "-s", "quit"]
     command_reload = ["nginx", "-s", "reload"]
     command_start = ["nginx"]
 
@@ -32,8 +33,16 @@ class Nginx:
         if not os.path.exists(challenge_dir):
             pathlib.Path(self.challenge_dir).mkdir(parents=True)
 
-    def start(self) -> bool:
-        start_result = subprocess.run(Nginx.command_start, stderr=subprocess.PIPE)
+    def start(self):
+        start_result = subprocess.run(Nginx.command_start)
+        # if start_result.returncode != 0:
+        #     print(start_result.stderr, file=sys.stderr)
+        return start_result.returncode == 0
+
+
+
+    def stop(self) -> bool:
+        start_result = subprocess.run(Nginx.command_stop, stderr=subprocess.PIPE)
         if start_result.returncode != 0:
             print(start_result.stderr, file=sys.stderr)
         return start_result.returncode == 0

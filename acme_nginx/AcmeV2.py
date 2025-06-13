@@ -44,6 +44,8 @@ class AcmeV2(Acme):
             self.log.info('registered!')
         elif code == 200:
             self.log.info('already registered')
+        elif code == 429:
+            self.log.info('Rate limited Exception')
         else:
             self.log.error('error registering: {0} {1} {2}'.format(code, result, headers))
             sys.exit(1)
