@@ -73,8 +73,8 @@ def eventLoop():
                 process_network_event(eventAction, event)
             elif eventType == "container":
                 if eventAction == "health_status":
-                    break
-                    #process_container_health_event(event)
+                    # process_container_health_event(event)
+                    continue
                 else:
                     process_container_event(eventAction, event)
 
@@ -119,7 +119,8 @@ def process_network_event(action, event):
 try:
     server = WebServer(client)
     eventLoop()
-except (KeyboardInterrupt, SystemExit):
+except (KeyboardInterrupt, SystemExit) as e:
+    # traceback.print_exception(e)
     print("-------------------------------\nPerforming Graceful ShutDown !!")
     if server is not None:
         server.cleanup()

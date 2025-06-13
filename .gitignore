@@ -1,7 +1,8 @@
 venv/
+.venv/
+
 __pycache__/
 /.idea/
 /.run_data/
-/run_data
+run_data/
 .env
-.venv

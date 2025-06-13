@@ -7,5 +7,7 @@
 #
 
 mkdir -p ./.run_data/conf.d
-#
-DUMMY_NGINX=y CHALLENGE_DIR=./.run_data/acme_challenges SSL_DIR=./.run_data NGINX_CONF_DIR=./.run_data python3 main.py
+
+LETSENCRYPT_API=https://acme-staging-v02.api.letsencrypt.org/directory \
+CHALLENGE_DIR=./.run_data/acme_challenges \
+DUMMY_NGINX=y SSL_DIR=./.run_data NGINX_CONF_DIR=./.run_data python3 main.py
