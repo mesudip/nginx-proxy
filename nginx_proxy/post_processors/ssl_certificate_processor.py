@@ -10,7 +10,7 @@ from nginx_proxy.SSL import SSL
 
 
 class SslCertificateProcessor():
-    def __init__(self, nginx: Nginx, server: WebServer, start_ssl_thread=False, ssl_dir="/etc/ssl", default_wildcard_dns_provider: Union[str, None] = None):
+    def __init__(self, nginx: Nginx, server: WebServer, start_ssl_thread=False, ssl_dir="/etc/ssl", default_wildcard_dns_provider: Union[Cloudflare, None] = None):
         self.cache: Dict[str:date] = {}
         self.self_signed: Set[str] = set()
         self.shutdown_requested: bool = False

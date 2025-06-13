@@ -51,14 +51,14 @@ class Cloudflare(object):
         # Cache for 1 day (86400 seconds)
         if self._zones_cache and (time.time() - self._zones_cache_time) < 86400:
             return self._zones_cache
-
         request_headers = self._cloudflare_headers()
-        api_url = "{0}/zones".format(self.api)
+        api_url = "{0}/zones?per_page=50".format(self.api)
         response = urlopen(Request(api_url, headers=request_headers))
         if response.getcode() != 200:
             raise Exception(json.loads(response.read().decode('utf8')))
         
         zones = json.loads(response.read().decode('utf8'))['result']
+        # print("Zone cache",json.dumps([x['name'] for x in  zones],indent=2))
         self._zones_cache = zones
         self._zones_cache_time = time.time()
         return zones
