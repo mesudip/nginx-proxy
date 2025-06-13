@@ -13,6 +13,7 @@ RUN apk --no-cache add  openssl && \
     pip install --no-cache-dir -r /requirements.txt &&  \
     rm -f /requirements.txt && apk del .build-deps && \
     ln -s /app/getssl /bin/getssl && ln -s /app/verify /bin/verify && \
+    mv /docker-entrypoint.sh /nginx-entrypoint.sh  && \
     ln -s /app/docker-entrypoint.sh /docker-entrypoint.sh
 ARG LETSENCRYPT_API="https://acme-v02.api.letsencrypt.org/directory"
 ENV LETSENCRYPT_API=${LETSENCRYPT_API} \
