@@ -56,7 +56,7 @@ class ProxyConfigData:
                 if host.remove_container(container_id):
                     result = True
                     if host.isempty():
-                        host.extras={}
+                        host.extras = {}
                         removed_domains.add((host.hostname, host.port))
         return result, removed_domains
 
@@ -74,13 +74,24 @@ class ProxyConfigData:
     def print(self):
 
         for host in self.host_list():
-            postfix="://" + host.hostname 
+            postfix = "://" + host.hostname
+
             def host_url(isWebsocket=False):
                 if host.secured:
-                    return  "-   " + ("wss" if isWebsocket else "https") + postfix + (":" + str(host.port) if host.port!=443 else '')
+                    return (
+                        "-   "
+                        + ("wss" if isWebsocket else "https")
+                        + postfix
+                        + (":" + str(host.port) if host.port != 443 else "")
+                    )
                 else:
-                   return  "-   " + ("ws" if isWebsocket else "http") + postfix + (":" + str(host.port) if host.port!=80 else '')
-            
+                    return (
+                        "-   "
+                        + ("ws" if isWebsocket else "http")
+                        + postfix
+                        + (":" + str(host.port) if host.port != 80 else "")
+                    )
+
             if host.isredirect():
                 print(host_url())
                 print("      redirect : ", host.full_redirect)
@@ -89,13 +100,20 @@ class ProxyConfigData:
                     print(host_url())
                     self.printextra("      ", host.extras)
                 for location in host.locations.values():
-                    print(host_url(location.websocket)+location.name)
+                    print(host_url(location.websocket) + location.name)
                     for container in location.containers:
-                        print("      -> ", (container.scheme) + "://"+container.address + (":"+ str(container.port) if container.port else '' )+container.path)
+                        print(
+                            "      -> ",
+                            (container.scheme)
+                            + "://"
+                            + container.address
+                            + (":" + str(container.port) if container.port else "")
+                            + container.path,
+                        )
 
                     if len(location.extras):
-                           self.printextra("      ", location.extras)
-                    
+                        self.printextra("      ", location.extras)
+
         # self.address: str = address
         # self.port: int = port
         # self.path: Union[str, None] = path
@@ -106,7 +124,7 @@ class ProxyConfigData:
     def printextra(gap, extra):
         print(gap + "Extras:")
         for x in extra:
-            if x == 'security' or type(x) in (set, list):
+            if x == "security" or type(x) in (set, list):
                 print(gap + "  " + x + ":")
                 for s in extra[x]:
                     print(gap + "    " + s)

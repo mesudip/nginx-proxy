@@ -18,13 +18,15 @@ class Host:
 
     def __init__(self, hostname: str, port: int, scheme=None):
         if scheme is None:
-            scheme = {'http', }
+            scheme = {
+                "http",
+            }
         self.port: int = port
         self.hostname: str = hostname
         self.locations: Dict[str, Location] = {}  # the map of locations.and the container that serve the locations
         self.container_set: Set[str] = set()
         self.scheme: set = scheme
-        self.secured: bool = 'https' in scheme or 'wss' in scheme
+        self.secured: bool = "https" in scheme or "wss" in scheme
         self.full_redirect: Union[Url, None] = None
         self.extras: Dict[str, Any] = {}
 
@@ -57,7 +59,7 @@ class Host:
         self.locations[location].add(container)
         self.container_set.add(container.id)
 
-    def update_with_host(self, host: 'Host') -> None:
+    def update_with_host(self, host: "Host") -> None:
         for location in host.locations.values():
             for container in location.containers:
                 self.add_container(location.name, container, location.websocket, location.http)
@@ -88,16 +90,12 @@ class Host:
         return self.full_redirect is not None
 
     def __repr__(self):
-        return str({
-            "scheme": self.scheme,
-            "locations": self.locations,
-            "server_name": self.hostname,
-            "port": self.port})
+        return str(
+            {"scheme": self.scheme, "locations": self.locations, "server_name": self.hostname, "port": self.port}
+        )
 
     def __str__(self):
         return self.__repr__()
         # hostname= "%s:%s" % (
         #         self.hostname if self.hostname else '?',
         #         str(self.port) if self.port is not None else '?')
-
-

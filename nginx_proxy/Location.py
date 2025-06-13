@@ -5,14 +5,14 @@ from . import Container
 
 class Location:
     """
-        Location Represents the Location block in 
+    Location Represents the Location block in
     """
 
     def __init__(self, name, is_websocket_backend=False, is_http_backend=True):
         self.http = is_http_backend
         self.websocket = is_websocket_backend
         self.name = name
-        self.containers :Set[Container.Container] = set()
+        self.containers: Set[Container.Container] = set()
         self.extras: Dict[str, Any] = {}
 
     def update_extras(self, extras: Dict[str, Any]):

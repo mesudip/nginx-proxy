@@ -1,7 +1,7 @@
 import re
 
 
-class ConfigNode():
+class ConfigNode:
     def __init__(self):
         self._parent_block = None
         self.offset_char = " "
@@ -41,32 +41,37 @@ class Block(ConfigNode):
 
         data = "".join([c.__str__(offset=offset + 1, sep=sep, gen_block_name=True) for c in self.contents])
         if gen_block_name:
-            return '%(offset)s%(name)s %(param)s {\n%(data)s%(offset)s}\n' % {
-                'offset': sep * offset,
-                'name': self.name,
-                'data': data,
-                'param': " ".join(self.parameters) if type(self.parameters) is not str else self.parameters}
+            return "%(offset)s%(name)s %(param)s {\n%(data)s%(offset)s}\n" % {
+                "offset": sep * offset,
+                "name": self.name,
+                "data": data,
+                "param": " ".join(self.parameters) if type(self.parameters) is not str else self.parameters,
+            }
         else:
             return data
+
     def __len__(self):
         return len(self.contents)
+
     def __getitem__(self, item):
         if type(item) is str:
             for x in self.contents:
-                      if x.name == item:
-                          yield  x
+                if x.name == item:
+                    yield x
         if type(item) is tuple:
             for x in self.contents:
-                if x.name==item[0]:
+                if x.name == item[0]:
                     type(x is Block)
- 
 
     def __setitem__(self, key, value):
         pass
+
     def __delitem__(self, key):
         pass
+
     def __iter__(self):
         pass
+
     def __contains__(self, item):
         pass
 

@@ -35,10 +35,10 @@ if "PYTHON_DEBUG_HOST" in os.environ:
 if "PYTHON_DEBUG_ENABLE" in os.environ:
     if os.environ["PYTHON_DEBUG_ENABLE"].strip() == "true":
         if "host" not in debug_config:
-            debug_config["host"] = re.findall(r"([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)+",
-                                              subprocess.run(["ip", "route"],
-                                                             stdout=subprocess.PIPE).stdout.decode().split(
-                                                  "\n")[0])[0]
+            debug_config["host"] = re.findall(
+                r"([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)+",
+                subprocess.run(["ip", "route"], stdout=subprocess.PIPE).stdout.decode().split("\n")[0],
+            )[0]
 
 if len(debug_config):
     import pydevd
@@ -52,8 +52,10 @@ try:
     client.version()
 except Exception as e:
     print(
-        "There was error connecting with the docker server \nHave you correctly mounted /var/run/docker.sock?\n" + str(
-            e.args), file=sys.stderr)
+        "There was error connecting with the docker server \nHave you correctly mounted /var/run/docker.sock?\n"
+        + str(e.args),
+        file=sys.stderr,
+    )
     sys.exit(1)
 
 
@@ -81,8 +83,9 @@ def eventLoop():
         except (KeyboardInterrupt, SystemExit):
             raise
         except Exception as e:
-            print("Unexpected error :" + e.__class__.__name__ + ' -> ' + str(e), file=sys.stderr)
+            print("Unexpected error :" + e.__class__.__name__ + " -> " + str(e), file=sys.stderr)
             traceback.print_exc(limit=10)
+
 
 def process_service_event(action, event):
     if action == "create":
@@ -105,12 +108,14 @@ def process_network_event(action, event):
     elif "container" in event["Actor"]["Attributes"]:
         if action == "disconnect":
             # print("network disconnect")
-            server.disconnect(network=event["Actor"]["ID"], container=event["Actor"]["Attributes"]["container"],
-                              scope=event["scope"])
+            server.disconnect(
+                network=event["Actor"]["ID"], container=event["Actor"]["Attributes"]["container"], scope=event["scope"]
+            )
         elif action == "connect":
             # print("network connect")
-            server.connect(network=event["Actor"]["ID"], container=event["Actor"]["Attributes"]["container"],
-                           scope=event["scope"])
+            server.connect(
+                network=event["Actor"]["ID"], container=event["Actor"]["Attributes"]["container"], scope=event["scope"]
+            )
     elif action == "destroy":
         # print("network destryed")
         pass
@@ -125,4 +130,3 @@ except (KeyboardInterrupt, SystemExit) as e:
     if server is not None:
         server.cleanup()
         print("---- See You ----")
-

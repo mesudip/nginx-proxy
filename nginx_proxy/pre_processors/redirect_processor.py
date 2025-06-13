@@ -21,7 +21,7 @@ def process_redirection(container: Container, environments: map, vhost_map: Dict
             split = redirect_entry.split("->")
             if len(split) == 2:
                 _sources, target = split
-                sources = [Url.parse(source) for source in _sources.split(',')]
+                sources = [Url.parse(source) for source in _sources.split(",")]
                 target = Url.parse(target, default_port=80)
                 if single_host:
                     if target.hostname is None:

@@ -1,12 +1,13 @@
 class DummyNginx:
-    
-    def __init__(self, config_file_path=None,challenge_dir="./.run_data/challenge"):
-        self.last_working_config=""
-        self.challenge_dir=challenge_dir
+
+    def __init__(self, config_file_path=None, challenge_dir="./.run_data/challenge"):
+        self.last_working_config = ""
+        self.challenge_dir = challenge_dir
         pass
 
     def start(self) -> bool:
         return True
+
     def stop(self) -> bool:
         return True
 
@@ -41,7 +42,7 @@ class DummyNginx:
         :return: true if nginx reload was successful false otherwise
         """
         return True
-    
+
     def force_start(self, config_str) -> bool:
         return True
 

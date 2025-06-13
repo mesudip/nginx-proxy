@@ -4,7 +4,7 @@ from docker.models.containers import Container as DockerContainer
 
 
 class Container:
-    def __init__(self, id: str, scheme: Union[str] = 'http', address=None, port=None, path=None):
+    def __init__(self, id: str, scheme: Union[str] = "http", address=None, port=None, path=None):
         self.id = id
         self.address: str = address
         self.port: int = port
@@ -31,9 +31,9 @@ class Container:
     @staticmethod
     def get_env_map(container: DockerContainer):
         # first we get the list of tuples each containing data in form (key, value)
-        container_env=container.attrs['Config']['Env']
+        container_env = container.attrs["Config"]["Env"]
 
-        env_list = [x.split("=", 1) for x in container_env ] if container_env else []
+        env_list = [x.split("=", 1) for x in container_env] if container_env else []
         # convert the environment list into map
         return {x[0]: x[1].strip() for x in env_list if len(x) == 2}
 
@@ -43,8 +43,9 @@ class UnconfiguredContainer(Exception):
 
 
 class UnreachableNetwork(UnconfiguredContainer):
-    def __init__(self,network_names:List[str]):
+    def __init__(self, network_names: List[str]):
         self.network_names = network_names
+
     pass
 
 

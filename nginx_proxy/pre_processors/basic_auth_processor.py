@@ -7,11 +7,12 @@ from nginx_proxy.Host import Host
 htaccess_folder = "/etc/nginx/generated/htaccess"
 from docker.models.containers import Container
 
+
 def process_basic_auth(container: Container, environments: map, vhost_map: Dict[str, Dict[int, Host]]):
     def get_auth_map(credentials: str) -> Dict[str, str]:
         auth_map = {}
-        for credential in credentials.split(','):
-            username_password = credential.split(':')
+        for credential in credentials.split(","):
+            username_password = credential.split(":")
             if len(username_password) == 2:
                 u = username_password[0].strip()
                 p = username_password[1].strip()
@@ -20,15 +21,15 @@ def process_basic_auth(container: Container, environments: map, vhost_map: Dict[
         return auth_map
 
     def update_security():
-        if basic_auth_host.location == '/':
-            host.update_extras_content('security', keys)
+        if basic_auth_host.location == "/":
+            host.update_extras_content("security", keys)
         else:
             for location in host.locations.values():
                 if location.name.startswith(basic_auth_host.location):
-                    if 'security' in location.extras:
-                        location.extras['security'].update(keys)
+                    if "security" in location.extras:
+                        location.extras["security"].update(keys)
                     else:
-                        location.extras['security'] = keys
+                        location.extras["security"] = keys
 
     auth_env = [e[1] for e in environments.items() if e[0].startswith("PROXY_BASIC_AUTH")]
     if len(auth_env):
@@ -38,7 +39,7 @@ def process_basic_auth(container: Container, environments: map, vhost_map: Dict[
             if len(host_list) == 2:
                 url = host_list[0]
                 keys = get_auth_map(host_list[1])
-                auth_list.append((Url.parse(url, default_location='/',default_port=80), keys))
+                auth_list.append((Url.parse(url, default_location="/", default_port=80), keys))
             elif len(host_list) == 1:
                 keys = get_auth_map(auth_entry)
                 if len(keys):
@@ -58,6 +59,18 @@ def process_basic_auth(container: Container, environments: map, vhost_map: Dict[
                     host = port_map[basic_auth_host.port]
                     update_security()
                 else:
-                    print("Basic Auth for "+basic_auth_host.hostname+":"+str(basic_auth_host.port)+" in container with "+str(list(vhost_map.keys())))
+                    print(
+                        "Basic Auth for "
+                        + basic_auth_host.hostname
+                        + ":"
+                        + str(basic_auth_host.port)
+                        + " in container with "
+                        + str(list(vhost_map.keys()))
+                    )
             else:
-                print("Unknown hostname : "+basic_auth_host.hostname+"+ in PROXY_BASIC_AUTH in container: " + container.name)
+                print(
+                    "Unknown hostname : "
+                    + basic_auth_host.hostname
+                    + "+ in PROXY_BASIC_AUTH in container: "
+                    + container.name
+                )

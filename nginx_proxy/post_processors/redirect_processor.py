@@ -2,7 +2,7 @@ from nginx_proxy import ProxyConfigData
 
 
 class RedirectProcessor:
-    def __init__(self, ):
+    def __init__(self):
         pass
 
     def process_redirection(self, config: ProxyConfigData):

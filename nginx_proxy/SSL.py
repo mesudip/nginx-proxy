@@ -16,12 +16,13 @@ import certapi
 from certapi.crypto import gen_key_ed25519
 from certapi.cloudflare_challenge_store import CloudflareChallengeStore
 
+
 class SSL:
 
     def __init__(self, ssl_path, nginx: Nginx):
         self.ssl_path = ssl_path
-        self.nginx = nginx 
-        self.blacklist={}
+        self.nginx = nginx
+        self.blacklist = {}
         x = os.environ.get("LETSENCRYPT_API")
         if x is not None:
             if x.startswith("https://"):
@@ -30,20 +31,20 @@ class SSL:
                 self.api_url = "https://acme-staging-v02.api.letsencrypt.org/directory"
         else:
             self.api_url = "https://acme-v02.api.letsencrypt.org/directory"
-        self.challenge_store=FileSystemChallengeStore(nginx.challenge_dir)
-        self.key_store=certapi.FilesystemKeyStore(ssl_path,keys_dir_name="private")
+        self.challenge_store = FileSystemChallengeStore(nginx.challenge_dir)
+        self.key_store = certapi.FilesystemKeyStore(ssl_path, keys_dir_name="private")
 
         dns_stores = []
         if os.getenv("CLOUDFLARE_API_TOKEN") is not None:
             dns_stores.append(CloudflareChallengeStore())
-        self.cert_authority = CertAuthority(self.challenge_store,
-                                                self.key_store,acme_url=self.api_url,dns_stores=dns_stores)
+        self.cert_authority = CertAuthority(
+            self.challenge_store, self.key_store, acme_url=self.api_url, dns_stores=dns_stores
+        )
         self.cert_authority.setup()
-        self_root_key=self.key_store.find_key("self-sign.root")
+        self_root_key = self.key_store.find_key("self-sign.root")
         if self_root_key is None:
-            self_root_key= self.key_store.gen_key("self-sign.root")
-        self.self_signer=CertificateIssuer(ECDSAKey(self_root_key))
-
+            self_root_key = self.key_store.gen_key("self-sign.root")
+        self.self_signer = CertificateIssuer(ECDSAKey(self_root_key))
 
     def cert_file(self, domain):
         return os.path.join(self.key_store.certs_dir, domain + ".crt")
@@ -74,38 +75,46 @@ class SSL:
     def cert_exists_wildcard(self, domain):
         return self.wildcard_domain_name(domain) is not None
 
-    def wildcard_domain_name(self, domain,wild_char='*'):
-        slices = domain.split('.')
+    def wildcard_domain_name(self, domain, wild_char="*"):
+        slices = domain.split(".")
         if len(slices) > 2:
-            return wild_char + "." + ('.'.join(slices[1:len(slices)]))
+            return wild_char + "." + (".".join(slices[1 : len(slices)]))
         return None
 
     def cert_exists_self_signed(self, domain) -> bool:
         return self.cert_exists((domain + ".selfsigned"))
 
     def reuse(self, domain1, domain2):
-        shutil.copy2(os.path.join(self.key_store.certs_dir, domain1 + ".crt"),
-                     os.path.join( self.key_store.certs_dir, domain2 + ".crt"))
-        shutil.copy2(os.path.join(self.key_store.keys_dir, domain1 + ".key"),
-                     os.path.join( self.key_store.keys_dir, domain2 + ".key"))
+        shutil.copy2(
+            os.path.join(self.key_store.certs_dir, domain1 + ".crt"),
+            os.path.join(self.key_store.certs_dir, domain2 + ".crt"),
+        )
+        shutil.copy2(
+            os.path.join(self.key_store.keys_dir, domain1 + ".key"),
+            os.path.join(self.key_store.keys_dir, domain2 + ".key"),
+        )
 
-    def register_certificate(self, req_domain, no_self_check=False, ignore_existing=False): # todo support ignore_existing
+    def register_certificate(
+        self, req_domain, no_self_check=False, ignore_existing=False
+    ):  # todo support ignore_existing
         domain = [req_domain] if type(req_domain) is str else req_domain
-        domain = [d for d in domain if
-                  '.' in d]  # when the domain doesn't have '.' it shouldn't be requested for letsencrypt certificate
+        domain = [
+            d for d in domain if "." in d
+        ]  # when the domain doesn't have '.' it shouldn't be requested for letsencrypt certificate
         missing_domains = domain if ignore_existing else [x for x in domain if not self.cert_exists(x)]
         verified_domains = domain if no_self_check else self.nginx.verify_domain(missing_domains)
-        
+
         if len(verified_domains):
             result = self.cert_authority.obtainCert(
-                verified_domains)  ## this will by default check the existing certs. TODO add override option
-            
-            return  [d for x in result.issued + result.existing for d in x.domains]
+                verified_domains
+            )  ## this will by default check the existing certs. TODO add override option
+
+            return [d for x in result.issued + result.existing for d in x.domains]
 
         elif len(missing_domains):
-            print("[SSL-Register]  All requested domains self-verification failed" )
+            print("[SSL-Register]  All requested domains self-verification failed")
         elif len(domain):
-            print("[SSL-Register] Certificates already exists: "+str(domain))
+            print("[SSL-Register] Certificates already exists: " + str(domain))
         return verified_domains
 
     def register_certificate_wildcard(self, domain, no_self_check=False, ignore_existing=False):
@@ -117,10 +126,8 @@ class SSL:
             raise
         except Exception as e:
             self.register_certificate_self_sign(domain)
-            print("Canont acquire certificate :" + e.__class__.__name__ + ' -> ' + str(e), file=sys.stderr)
+            print("Canont acquire certificate :" + e.__class__.__name__ + " -> " + str(e), file=sys.stderr)
             return []
-
-
 
     def is_blacklisted(self, domain):
         # Check if a domain is blacklisted
@@ -136,22 +143,28 @@ class SSL:
         self.blacklist[domain] = time.time() + duration
 
     def register_certificate_or_selfsign(self, domain, no_self_check=False, ignore_existing=False):
-        print("[CertificateOrSelfSign] Checking domains:", ', '.join(domain))
-        blacklisted=[]
+        print("[CertificateOrSelfSign] Checking domains:", ", ".join(domain))
+        blacklisted = []
         obtained_certificates = []
 
         for i in range(0, len(domain), 50):
-            sub_list = domain[i:i + 50]
+            sub_list = domain[i : i + 50]
             # Filter out blacklisted domains from the sublist
             filtered_sub_list = [d for d in sub_list if not self.is_blacklisted(d)]
 
             if len(filtered_sub_list) < len(sub_list):
                 existing_blacklist = list(set(sub_list) - set(filtered_sub_list))
                 blacklisted.extend(existing_blacklist)
-                print("[Blacklist] ignoring previously failed domain for 3 mins:",', '.join(existing_blacklist) )
+                print("[Blacklist] ignoring previously failed domain for 3 mins:", ", ".join(existing_blacklist))
 
             # Proceed only with the filtered sublist
-            obtained = self.register_certificate(filtered_sub_list, no_self_check=no_self_check,ignore_existing=ignore_existing) if filtered_sub_list else []
+            obtained = (
+                self.register_certificate(
+                    filtered_sub_list, no_self_check=no_self_check, ignore_existing=ignore_existing
+                )
+                if filtered_sub_list
+                else []
+            )
 
             if obtained:
                 domain1 = obtained[0]
@@ -171,9 +184,9 @@ class SSL:
 
     def register_certificate_self_sign(self, domain):
         if type(domain) is str:
-            domain=[domain]
+            domain = [domain]
         for d in domain:
-            if not self.cert_exists(d+".selfsigned"):
-                (key, cert) = self.self_signer.create_key_and_cert(d,key_type="ecdsa")
-                key_id=self.key_store.save_key(key.key,d+".selfsigned")
-                self.key_store.save_cert(key_id,cert,[d],name=d+".selfsigned")
+            if not self.cert_exists(d + ".selfsigned"):
+                (key, cert) = self.self_signer.create_key_and_cert(d, key_type="ecdsa")
+                key_id = self.key_store.save_key(key.key, d + ".selfsigned")
+                self.key_store.save_cert(key_id, cert, [d], name=d + ".selfsigned")

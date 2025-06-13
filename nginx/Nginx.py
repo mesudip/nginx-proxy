@@ -39,8 +39,6 @@ class Nginx:
         #     print(start_result.stderr, file=sys.stderr)
         return start_result.returncode == 0
 
-
-
     def stop(self) -> bool:
         start_result = subprocess.run(Nginx.command_stop, stderr=subprocess.PIPE)
         if start_result.returncode != 0:
@@ -113,11 +111,16 @@ class Nginx:
             file.write(config_str)
         result, data = self.reload(return_error=True)
         if not result:
-            diff = str.join("\n", difflib.unified_diff(self.last_working_config.splitlines(),
-                                                       config_str.splitlines(),
-                                                       fromfile='Old Config',
-                                                       tofile='New Config',
-                                                       lineterm='\n'))
+            diff = str.join(
+                "\n",
+                difflib.unified_diff(
+                    self.last_working_config.splitlines(),
+                    config_str.splitlines(),
+                    fromfile="Old Config",
+                    tofile="New Config",
+                    lineterm="\n",
+                ),
+            )
             print(diff, file=sys.stderr)
             if data is not None:
                 print(data, file=sys.stderr)
@@ -135,8 +138,7 @@ class Nginx:
         Reload nginx so that new configurations are applied.
         :return: true if nginx reload was successful false otherwise
         """
-        reload_result = subprocess.run(Nginx.command_reload, stdout=subprocess.PIPE,
-                                       stderr=subprocess.PIPE)
+        reload_result = subprocess.run(Nginx.command_reload, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if reload_result.returncode != 0:
             if return_error:
                 return False, reload_result.stderr.decode("utf-8")
@@ -173,15 +175,25 @@ class Nginx:
                         if response.content.decode("utf-8") == r2:
                             success.append(d)
                             continue
-                    print("[Error] [" + d + "] Not owned by this machine:" + "Status Code[" + str(
-                        response.status_code) + "] -> " + url, file=sys.stderr)
+                    print(
+                        "[Error] ["
+                        + d
+                        + "] Not owned by this machine:"
+                        + "Status Code["
+                        + str(response.status_code)
+                        + "] -> "
+                        + url,
+                        file=sys.stderr,
+                    )
                     continue
                 except requests.exceptions.RequestException as e:
-                    error=str(e)
+                    error = str(e)
                     if error.find("Name does not resolve") > -1:
                         print("[Error] [" + d + "] Domain Name could not be resolved", file=sys.stderr)
                     elif error.find("Connection refused") > -1:
-                        print("[Error] [" + d + "] Connection Refused! The port is filtered or not open.", file=sys.stderr)
+                        print(
+                            "[Error] [" + d + "] Connection Refused! The port is filtered or not open.", file=sys.stderr
+                        )
                     else:
                         print("[ERROR] [" + d + "] Not owned by this machine : " + str(e))
                     continue
@@ -194,10 +206,10 @@ class Nginx:
 
     def wait(self):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        result = sock.connect_ex(('127.0.0.1', 80))
+        result = sock.connect_ex(("127.0.0.1", 80))
         while result != 0:
             print("Waiting for nginx process to be ready")
             time.sleep(1)
-            result = sock.connect_ex(('127.0.0.1', 80))
+            result = sock.connect_ex(("127.0.0.1", 80))
         sock.close()
         print("Nginx is alive")

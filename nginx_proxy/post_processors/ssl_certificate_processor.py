@@ -8,8 +8,8 @@ from nginx_proxy.Host import Host
 from nginx_proxy.SSL import SSL
 
 
-class SslCertificateProcessor():
-    def __init__(self, nginx: Nginx, server: WebServer, start_ssl_thread=False,ssl_dir="/etc/ssl"):
+class SslCertificateProcessor:
+    def __init__(self, nginx: Nginx, server: WebServer, start_ssl_thread=False, ssl_dir="/etc/ssl"):
         self.cache: Dict[str:date] = {}
         self.self_signed: Set[str] = set()
         self.shutdown_requested: bool = False
@@ -37,16 +37,20 @@ class SslCertificateProcessor():
 
                     max_size = max([len(x) for x in self.cache])
                     for host in self.cache:
-                        print('  {host: <{width}} - {remain}'.format(host=host, width=max_size + 2,
-                                                                   remain=self.cache[host] - now))
+                        print(
+                            "  {host: <{width}} - {remain}".format(
+                                host=host, width=max_size + 2, remain=self.cache[host] - now
+                            )
+                        )
                     sleep_time = (32 if remaining_days > 30 else remaining_days) - 2
                     print(
-                        "[SSL Refresh Thread] All the certificates are up to date sleeping for " + str(
-                            sleep_time) + " days.")
+                        "[SSL Refresh Thread] All the certificates are up to date sleeping for "
+                        + str(sleep_time)
+                        + " days."
+                    )
                     self.lock.wait(sleep_time * 3600 * 24 - 10)
                 else:
-                    print(
-                        "[SSL Refresh Thread] Looks like we need to refresh certificates that are about to expire")
+                    print("[SSL Refresh Thread] Looks like we need to refresh certificates that are about to expire")
                     for x in self.cache:
                         print("Remaining days :", x, ":", (self.cache[x] - now).days)
                     x = [x for x in self.cache if (self.cache[x] - now).days < 6]
@@ -60,7 +64,7 @@ class SslCertificateProcessor():
         self.lock.acquire()
         for host in hosts:
             if host.secured:
-                is_wildcard = '*' in host.hostname
+                is_wildcard = "*" in host.hostname
 
                 if int(host.port) in (80, 443):
                     host.ssl_redirect = True
@@ -84,17 +88,16 @@ class SslCertificateProcessor():
                     else:
                         ssl_requests.add(host)
 
-
-        registered=[]
-        if len(ssl_requests)>0:
-            registered = self.ssl.register_certificate_or_selfsign([h.hostname for h in ssl_requests],
-                                                                   ignore_existing=True)
+        registered = []
+        if len(ssl_requests) > 0:
+            registered = self.ssl.register_certificate_or_selfsign(
+                [h.hostname for h in ssl_requests], ignore_existing=True
+            )
         if len(wildcard_requests) > 0:
             for host in wildcard_requests:
-                new_registrations=self.ssl.register_certificate_wildcard(domain=host.hostname)
+                new_registrations = self.ssl.register_certificate_wildcard(domain=host.hostname)
                 registered.extend(new_registrations)
-        
-        
+
         for host in ssl_requests.union(wildcard_requests):
             if host.hostname not in registered:
                 host.ssl_file = host.hostname + ".selfsigned"
