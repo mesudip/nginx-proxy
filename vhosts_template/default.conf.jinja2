@@ -2,6 +2,7 @@ map $http_upgrade $connection_upgrade {
     default upgrade;
     '' close;
 }
+server_names_hash_bucket_size 2048; # this seems to be required after having too many hosts
 
 proxy_cache off;
 proxy_request_buffering off;
@@ -17,6 +18,7 @@ ssl_stapling_verify on;
 add_header Strict-Transport-Security "max-age=31536000" always;
 access_log /var/log/nginx/access.log;
 client_max_body_size {{ config.client_max_body_size }};
+
 
 {% for server in virtual_servers%}{% for upstream in server.upstreams %}
     upstream {{ upstream.id }} { {% for container in upstream.containers %}

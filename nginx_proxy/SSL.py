@@ -31,13 +31,14 @@ class SSL:
         else:
             self.api_url = "https://acme-v02.api.letsencrypt.org/directory"
         self.challenge_store=FileSystemChallengeStore(nginx.challenge_dir)
-        self.key_store=certapi.FilesystemKeyStore(ssl_path)
+        self.key_store=certapi.FilesystemKeyStore(ssl_path,keys_dir_name="private")
 
         dns_stores = []
         if os.getenv("CLOUDFLARE_API_TOKEN") is not None:
             dns_stores.append(CloudflareChallengeStore())
         self.cert_authority = CertAuthority(self.challenge_store,
-                                                self.key_store,acme_url=self.api_url,dns_stores=[])
+                                                self.key_store,acme_url=self.api_url,dns_stores=dns_stores)
+        self.cert_authority.setup()
         self_root_key=self.key_store.find_key("self-sign.root")
         if self_root_key is None:
             self_root_key= self.key_store.gen_key("self-sign.root")
@@ -56,32 +57,6 @@ class SSL:
     def selfsigned_private_file(self, domain):
         return os.path.join(self.key_store.keys_dir, domain + "selfsgned.key")
 
-    def self_sign(self, domain):
-        CERT_FILE = domain + ".selfsigned.crt"
-        KEY_FILE = domain + ".selfsigned.key"
-        k = crypto.PKey()
-        k.generate_key(crypto.TYPE_RSA, 1024)
-
-        # create a self-signed cert
-        cert = crypto.X509()
-        cert.get_subject().C = "US"
-        cert.get_subject().ST = "Subject_st"
-        cert.get_subject().L = "Subject_l"
-        cert.get_subject().O = "Nginx-Proxy - mesudip/nginx-proxy"
-        # cert.get_subject().OU = "my organization"
-        cert.get_subject().CN = domain
-        cert.set_serial_number(1000)
-        cert.gmtime_adj_notBefore(0)
-        cert.gmtime_adj_notAfter(10 * 365 * 24 * 60 * 60)
-        cert.set_issuer(cert.get_subject())
-        cert.set_pubkey(k)
-        cert.sign(k, 'sha256')
-
-        open(join(self.key_store.certs_dir, CERT_FILE), "wb").write(
-            crypto.dump_certificate(crypto.FILETYPE_PEM, cert))
-        open(join( self.key_store.keys_dir, KEY_FILE), "wb").write(
-            crypto.dump_privatekey(crypto.FILETYPE_PEM, k))
-
     def expiry_time(self, domain) -> datetime:
 
         if self.cert_exists(domain):
@@ -94,9 +69,7 @@ class SSL:
         return (self.expiry_time(domain) - datetime.datetime.now()).days
 
     def cert_exists(self, domain):
-        self.key_store.find_cert(domain)
-        return os.path.exists(os.path.join( self.key_store.certs_dir, domain + ".crt")) \
-               and os.path.exists(os.path.join( self.key_store.keys_dir, domain + ".key"))
+        return self.key_store.find_cert(domain) is not None and self.key_store.find_key(domain) is not None
 
     def cert_exists_wildcard(self, domain):
         return self.wildcard_domain_name(domain) is not None
@@ -122,11 +95,13 @@ class SSL:
                   '.' in d]  # when the domain doesn't have '.' it shouldn't be requested for letsencrypt certificate
         missing_domains = domain if ignore_existing else [x for x in domain if not self.cert_exists(x)]
         verified_domains = domain if no_self_check else self.nginx.verify_domain(missing_domains)
-
+        
         if len(verified_domains):
-            (certs, _) = self.cert_authority.obtainCert(
+            result = self.cert_authority.obtainCert(
                 verified_domains)  ## this will by default check the existing certs. TODO add override option
-            return verified_domains
+            
+            return  [d for x in result.issued + result.existing for d in x.domains]
+
         elif len(missing_domains):
             print("[SSL-Register]  All requested domains self-verification failed" )
         elif len(domain):
@@ -198,7 +173,7 @@ class SSL:
         if type(domain) is str:
             domain=[domain]
         for d in domain:
-            if not self.key_store.find_cert(d+".selfsigned"):
+            if not self.cert_exists(d+".selfsigned"):
                 (key, cert) = self.self_signer.create_key_and_cert(d,key_type="ecdsa")
                 key_id=self.key_store.save_key(key.key,d+".selfsigned")
                 self.key_store.save_cert(key_id,cert,[d],name=d+".selfsigned")

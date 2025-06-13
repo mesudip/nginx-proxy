@@ -183,7 +183,7 @@ class Nginx:
                     elif error.find("Connection refused") > -1:
                         print("[Error] [" + d + "] Connection Refused! The port is filtered or not open.", file=sys.stderr)
                     else:
-                        print("[ERROR] Domain is not owned by this machine : Reason: " + str(e))
+                        print("[ERROR] [" + d + "] Not owned by this machine : " + str(e))
                     continue
             os.remove(file)
             break
