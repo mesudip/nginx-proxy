@@ -152,7 +152,7 @@ class Nginx:
         else:
             return result
 
-    def verify_domain(self, _domain: list or str):
+    def verify_domain(self, _domain: list | str):
         domain = [_domain] if type(_domain) is str else _domain
         ## when not included, one invalid domain in a list of 100 will make all domains to be unverified due to nginx failing to start.
         domain = [x for x in domain if Url.is_valid_hostname(x)]

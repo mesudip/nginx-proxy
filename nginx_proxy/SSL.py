@@ -2,25 +2,25 @@ import datetime
 import logging
 import os
 import shutil
+import sys
 import time
 from os.path import join
 
 import OpenSSL
 from OpenSSL import crypto
 from certapi import CertAuthority, FileSystemChallengeStore
-from certapi.custom_certauthority import CustomCertAuthority
-
-from acme_nginx.AcmeV2 import AcmeV2
+from certapi.custom_certauthority import CertificateIssuer
+from certapi.crypto_classes import ECDSAKey
 from nginx.Nginx import Nginx
 import certapi
 from certapi.crypto import gen_key_ed25519
-
+from certapi.cloudflare_challenge_store import CloudflareChallengeStore
 
 class SSL:
 
     def __init__(self, ssl_path, nginx: Nginx):
         self.ssl_path = ssl_path
-        self.nginx = nginx
+        self.nginx = nginx 
         self.blacklist={}
         x = os.environ.get("LETSENCRYPT_API")
         if x is not None:
@@ -32,8 +32,16 @@ class SSL:
             self.api_url = "https://acme-v02.api.letsencrypt.org/directory"
         self.challenge_store=FileSystemChallengeStore(nginx.challenge_dir)
         self.key_store=certapi.FilesystemKeyStore(ssl_path)
+
+        dns_stores = []
+        if os.getenv("CLOUDFLARE_API_TOKEN") is not None:
+            dns_stores.append(CloudflareChallengeStore())
         self.cert_authority = CertAuthority(self.challenge_store,
-                                                self.key_store,acme_url=self.api_url)
+                                                self.key_store,acme_url=self.api_url,dns_stores=[])
+        self_root_key=self.key_store.find_key("self-sign.root")
+        if self_root_key is None:
+            self_root_key= self.key_store.gen_key("self-sign.root")
+        self.self_signer=CertificateIssuer(ECDSAKey(self_root_key))
 
 
     def cert_file(self, domain):
@@ -112,49 +120,31 @@ class SSL:
         domain = [req_domain] if type(req_domain) is str else req_domain
         domain = [d for d in domain if
                   '.' in d]  # when the domain doesn't have '.' it shouldn't be requested for letsencrypt certificate
-        verified_domain = domain if no_self_check else self.nginx.verify_domain(domain)
-        domain = verified_domain if ignore_existing else [x for x in verified_domain if not self.cert_exists(x)]
-        if len(domain):
+        missing_domains = domain if ignore_existing else [x for x in domain if not self.cert_exists(x)]
+        verified_domains = domain if no_self_check else self.nginx.verify_domain(missing_domains)
+
+        if len(verified_domains):
             (certs, _) = self.cert_authority.obtainCert(
-                domain)  ## this will by default check the existing certs. TODO add override option
+                verified_domains)  ## this will by default check the existing certs. TODO add override option
+            return verified_domains
+        elif len(missing_domains):
+            print("[SSL-Register]  All requested domains self-verification failed" )
+        elif len(domain):
+            print("[SSL-Register] Certificates already exists: "+str(domain))
+        return verified_domains
 
-            return domain
-        else:
-            print("[SSL-Register] Requested domains already have ssl certs :"+str(req_domain))
-            return verified_domain
-
-    def register_certificate_wildcard(self, domain, dns_provider, no_self_check=False, ignore_existing=False):
-
-        # For wildcard certificates, domain must be a single string like "*.example.com"
-        if not isinstance(domain, str) or not domain.startswith('*.'):
-            raise ValueError("Wildcard domain must be a single string starting with '*.'.")
-
-        # The actual domain for account/key files should be the base domain, e.g., "example.com"
-        base_domain = domain[2:] # Remove "*. "
-
-        # Check if the base domain already has a wildcard cert
-        if not ignore_existing and self.cert_exists(domain):
-            print(f"[SSL-Register-Wildcard] Wildcard certificate for {domain} already exists.")
+    def register_certificate_wildcard(self, domain, no_self_check=False, ignore_existing=False):
+        try:
+            self.cert_authority.obtainCert(domain)
             return [domain]
 
-        logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.DEBUG)
-        acme = AcmeV2(
-            self.nginx,
-            api_url=self.api_url,
-            logger=logging.getLogger("acme"),
-            domains=[domain],  # Pass the wildcard domain as a list
-            account_key=os.path.join(self.ssl_path, "accounts", domain + ".account.key"),
-            domain_key=os.path.join(self.ssl_path, "private", domain + ".key"),
-            cert_path=os.path.join(self.ssl_path, "certs", domain + ".crt"), # Cert file name includes wildcard
-            debug=False,
-            dns_provider=dns_provider.name, # Use the specified DNS provider
-            skip_nginx_reload=False,
-            challenge_dir=self.nginx.challenge_dir
-        )
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as e:
+            self.register_certificate_self_sign(domain)
+            print("Canont acquire certificate :" + e.__class__.__name__ + ' -> ' + str(e), file=sys.stderr)
+            return []
 
-        directory = acme.register_account()
-        # For wildcard, always use DNS challenge
-        return [domain] if acme.solve_dns_challenge(directory, dns_provider) else []
 
 
     def is_blacklisted(self, domain):
@@ -203,17 +193,12 @@ class SSL:
             self.register_certificate_self_sign(self_signed)
 
         return obtained_certificates
-    def ed25519_self_sign(self,domain,key=None):
-        ed_key=gen_key_ed25519() if key is None else key
-        certauthority = CustomCertAuthority(ed_key)
-        (key, cert) = certauthority.create_cert(domain, key_type="ecdsa")
-        
-        key_id=self.key_store.save_key(key,domain+".selfsigned")
-        self.key_store.save_cert(key_id,cert,[domain],name=domain+".selfsigned")
+
     def register_certificate_self_sign(self, domain):
         if type(domain) is str:
             domain=[domain]
         for d in domain:
             if not self.key_store.find_cert(d+".selfsigned"):
-                ed_key=gen_key_ed25519()
-                self.ed25519_self_sign(d,key=ed_key)
+                (key, cert) = self.self_signer.create_key_and_cert(d,key_type="ecdsa")
+                key_id=self.key_store.save_key(key.key,d+".selfsigned")
+                self.key_store.save_cert(key_id,cert,[d],name=d+".selfsigned")

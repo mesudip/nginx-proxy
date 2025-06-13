@@ -89,10 +89,10 @@ class WebServer():
             raise e
         except Exception as e:
             self.id=None
-            print("[ERROR]Couldn't determine container ID of this container:", e.args,
+            print("[ERROR]Couldn't determine container ID of this container:", e.args if len(e.args) else '',
                   "\n Is it running in docker environment?",
                   file=sys.stderr)
-            print("Falling back to default network", file=sys.stderr)
+            print("Falling back to default network: frontend", file=sys.stderr)
             default_network="frontend"
             network = self.client.networks.get(default_network)
             self.networks[network.id] = default_network

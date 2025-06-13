@@ -85,21 +85,24 @@ class SslCertificateProcessor():
                         ssl_requests.add(host)
 
 
-
+        registered=[]
         if len(ssl_requests)>0:
             registered = self.ssl.register_certificate_or_selfsign([h.hostname for h in ssl_requests],
                                                                    ignore_existing=True)
-            for host in ssl_requests:
-                if host.hostname not in registered:
-                    host.ssl_file = host.hostname + ".selfsigned"
-                    self.self_signed.add(host.hostname)
-                else:
-                    host.ssl_file = host.hostname
-                    self.cache[host.hostname] = self.ssl.expiry_time(host.hostname)
-                    host.ssl_expiry = self.cache[host.hostname]
         if len(wildcard_requests) > 0:
             for host in wildcard_requests:
-                self.ssl.register_certificate_wildcard(domain=host.hostname)
+                new_registrations=self.ssl.register_certificate_wildcard(domain=host.hostname)
+                registered.extend(new_registrations)
+        
+        
+        for host in ssl_requests.union(wildcard_requests):
+            if host.hostname not in registered:
+                host.ssl_file = host.hostname + ".selfsigned"
+                self.self_signed.add(host.hostname)
+            else:
+                host.ssl_file = host.hostname
+                self.cache[host.hostname] = self.ssl.expiry_time(host.hostname)
+                host.ssl_expiry = self.cache[host.hostname]
 
         if len(self.cache):
             expiry = min(self.cache.values())
