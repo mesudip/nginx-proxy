@@ -22,15 +22,20 @@ client_max_body_size {{ config.client_max_body_size }};
 
 {% for server in virtual_servers%}{% for upstream in server.upstreams %}
     upstream {{ upstream.id }} { {% for container in upstream.containers %}
-        server  {{ container.address }}:{{ container.port }};{% endfor %}
+        server  {{ container.address }}:{{ container.port }};   # container: {{container.id[:12]}}{% endfor %}
     }{% endfor %}
-{% if server.secured %}
+{% if not server.is_redirect %}
 server{
         server_name {{ server.hostname }};
-        listen {{ server.port }} ssl http2 {{ server.extras.default_server }} ;
+
+        include /app/vhosts_template/error.conf;{% if server.secured  %}
+        listen {{ server.port }} ssl {{ server.extras.default_server }} ;
+        http2 on;
         ssl_certificate /etc/ssl/certs/{{ server.ssl_file }}.crt;
-        ssl_certificate_key /etc/ssl/private/{{ server.ssl_file }}.key;{% if server.is_redirect %}
-        return 301 https://{{ server.full_redirect.hostname }}$request_uri;{% elif server.is_down %}
+        ssl_certificate_key /etc/ssl/private/{{ server.ssl_file }}.key;{% else %}
+        listen {{ server.port }} {{ server.extras.default_server }};{% endif %}
+      {% if server.is_redirect %}
+        return 301 {{  "https" if server.secured else "http" }}://{{ server.full_redirect.hostname }}$request_uri;{% elif server.is_down %}
         return 503;{% else %} {% if server.extras.security %}
         auth_basic "Basic Auth Enabled";
         auth_basic_user_file {{ server.extras.security_file }};{% endif %} {% for location in server.locations.values() %}
@@ -38,8 +43,8 @@ server{
             {{ injection }};{% endfor %} {% if location.extras.security %}
             auth_basic "Basic Auth Enabled";
             auth_basic_user_file {{ location.extras.security_file }};{% endif %} {% if location.upstream %}
-            proxy_pass {{ location.container.scheme }}://{{ location.upstream }}{{location.container.path}};{% else %}
-            proxy_pass {{location.container.scheme }}://{{ location.container.address }}:{{ location.container.port }}{{ location.container.path }};{% endif %}{% if location.name != '/' %}
+            proxy_pass {{ location.container.scheme }}://{{ location.upstream }}{{location.container.path}};    # container: {{ location.container.id[:12] }}{% else %}
+            proxy_pass {{location.container.scheme }}://{{ location.container.address }}:{{ location.container.port }}{{ location.container.path }};  # container: {{ location.container.id[:12] }}{% endif %}{% if location.name != '/' %}
             proxy_redirect $scheme://$http_host{{ location.container.path if location.container.path else '/' }} $scheme://$http_host{{location.name}};{% endif %} {% if location.websocket  and location.http %}
             proxy_set_header Host $http_host;
             proxy_set_header Connection $connection_upgrade;
@@ -54,38 +59,14 @@ server{
             proxy_set_header Connection "Upgrade";
             proxy_read_timeout  1h;
             proxy_send_timeout 1h;{% endif %}
-        }{% endfor %} {% endif %}
-
-}{% else %}
-server{
-        listen {{ server.port }} {{ server.extras.default_server }};
-        server_name {{ server.hostname }};{% if server.is_redirect %}
-        return 301 {{  "https" if server.secured else "http" }}://{{ server.full_redirect.hostname }}$request_uri;{% else %}{% for location in server.locations.values() %}
-        location {{ location.name if location.name else '/' }} { {% for injection in location.extras.injected %}
-            {{ injection }};{% endfor %} {% if location.upstream %}
-            proxy_pass {{ location.container.scheme }}://{{ location.upstream }}{{location.container.path}};{% else %}
-            proxy_pass {{location.container.scheme }}://{{ location.container.address }}:{{ location.container.port }}{{ location.container.path }};{% endif %}{% if location.name != '/' %}
-            proxy_redirect $scheme://$http_host{{ location.container.path if location.container.path else '/' }} $scheme://$http_host{{location.name}};{% endif %}  {% if location.websocket and location.http %}
-            proxy_set_header Host $http_host;
-            proxy_set_header Connection $connection_upgrade;
-            proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $proxy_x_forwarded_proto;
-            proxy_set_header X-Forwarded-Ssl $proxy_x_forwarded_ssl;
-            proxy_set_header X-Forwarded-Port $proxy_x_forwarded_port;{% elif location.websocket %}
-            proxy_http_version 1.1;
-            proxy_read_timeout  1h;
-            proxy_send_timeout 1h;
-            proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection "Upgrade";{% endif %}
-        }{% endfor %} {%endif %}
+        }{% endfor %} {% endif %}{% if server.port == 80 %}
         location /.well-known/acme-challenge/ {
             alias {{ config.challenge_dir }};
             try_files $uri =404;
-        }
- }{% endif %}{% if server.ssl_redirect %}
+        }{% endif %}
+}{% else %}
 server {
+        include /app/vhosts_template/error.conf;
         listen 80 {{ server.extras.default_server }};
         server_name {{ server.hostname }};
         location /.well-known/acme-challenge/ {
@@ -105,6 +86,13 @@ server{
             alias {{ config.challenge_dir }};
             try_files $uri =404;
         }
+        error_page 503 /503_default.html;
+
+        location = /503_default.html {
+            root /app/vhosts_template/errors;
+            internal;
+        }
+
         location / {
             return 503;
         }

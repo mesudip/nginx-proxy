@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>502 Bad Gateway</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: radial-gradient(ellipse at bottom, #0b0b0b 0%, #000000 100%);
+      overflow: hidden;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      color: white;
+    }
+
+    .stars {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      background: transparent;
+      box-shadow:
+        1000px 200px #888,
+        1500px 400px #666,
+        800px 1000px #999,
+        300px 300px #555,
+        400px 1500px #777;
+      animation: twinkle 5s infinite ease-in-out;
+    }
+
+    @keyframes twinkle {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    .container {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+    }
+
+    .title {
+      font-size: 4rem;
+      font-weight: bold;
+      margin-bottom: 1rem;
+      color: #e0e0e0;
+      text-shadow: 2px 2px 6px #000, 0 0 20px rgba(255,255,255,0.1);
+    }
+
+    .subtitle {
+      font-size: 1.5rem;
+      margin-bottom: 2rem;
+      color: #999;
+      text-shadow: 1px 1px 4px #000;
+    }
+
+    .blackhole-wrapper {
+      position: relative;
+      width: 240px;
+      height: 240px;
+      margin: 2rem auto;
+    }
+
+    .blackhole {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      width: 200px;
+      height: 200px;
+      border-radius: 50%;
+      background: radial-gradient(circle at center, #000 40%, #111 60%, #000 70%, transparent 75%),
+                  radial-gradient(circle at center, rgba(255, 255, 255, 0.03) 0%, transparent 80%);
+      animation: spin 20s linear infinite;
+      box-shadow: 0 0 25px rgba(255, 255, 255, 0.05);
+      z-index: 2;
+    }
+
+    .lens-ring {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 240px;
+      height: 240px;
+      border-radius: 50%;
+      background: conic-gradient(
+        from 0deg,
+        rgba(255,255,255,0.02) 0deg,
+        rgba(255,255,255,0.1) 60deg,
+        rgba(255,255,255,0.02) 120deg,
+        rgba(255,255,255,0.1) 180deg,
+        rgba(255,255,255,0.02) 240deg,
+        rgba(255,255,255,0.1) 300deg,
+        rgba(255,255,255,0.02) 360deg
+      );
+      filter: blur(6px);
+      animation: lensSpin 12s linear infinite;
+      z-index: 1;
+    }
+
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    @keyframes lensSpin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(-360deg); }
+    }
+
+    .message {
+      font-size: 1.2rem;
+      color: #777;
+      text-shadow: 1px 1px 3px #000;
+    }
+  </style>
+</head>
+<body>
+  <div class="stars"></div>
+
+  <div class="container">
+    <div class="title">502 Bad Gateway</div>
+    <div class="subtitle">Backend is expected to up. but request failed</div>
+    <div class="blackhole-wrapper">
+      <div class="lens-ring"></div>
+      <div class="blackhole"></div>
+    </div>
+    <div class="message">
+      We reached out across the void — but the void answered nonsens
+    </div>
+  </div>
+</body>
+</html>
