@@ -1,5 +1,7 @@
-FROM node:8-alpine
-RUN npm install ws 
+FROM node:20-alpine
+WORKDIR /app
+COPY package.json ./
+RUN npm install
+COPY server.js ./
 EXPOSE 8080
-COPY server.js /server.js
-ENTRYPOINT ["node", "/server.js"]
+ENTRYPOINT ["node", "server.js"]

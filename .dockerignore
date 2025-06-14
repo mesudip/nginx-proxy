@@ -6,6 +6,7 @@
 /.idea
 __pycache__/
 /README.md
+/tests/
 /Dockerfile-staging
 /README.md
 .run_data/
