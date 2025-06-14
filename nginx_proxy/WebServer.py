@@ -2,6 +2,7 @@ import copy
 import os
 import re
 import sys
+import threading
 import time
 from typing import List
 import json
@@ -20,11 +21,17 @@ from nginx_proxy import ProxyConfigData
 from nginx_proxy.Host import Host
 
 
+RELOAD_INTERVAL = 5  # seconds
+
 class WebServer:
     def __init__(self, client: DockerClient, *args):
         self.config = self.loadconfig()
         self.shouldExit = False
         self.client = client
+        self._reload_timer = None
+        self._reload_lock = threading.Lock()
+        self._last_reload_actual_time = 0 # Timestamp of when the last reload actually completed
+        self._next_reload_scheduled_time = 0 # Timestamp of when the next reload is scheduled to occur
         conf_file = self.config["conf_dir"] + "/conf.d/default.conf"
         challenge_dir = self.config["challenge_dir"]
         self.nginx = (
@@ -71,8 +78,56 @@ class WebServer:
         self.nginx.wait()
         print("Reachable Networks :", self.networks)
         self.rescan_all_container()
-        self.reload()
+        self.reload(forced=True) # Initial reload should be forced and not debounced
+        self._last_reload_actual_time = time.time() # Set initial actual reload time
         self.ssl_processor.certificate_expiry_thread.start()
+
+    def _perform_throttled_reload(self):
+        """
+        Performs the actual Nginx reload when the scheduled timer fires.
+        """
+        with self._reload_lock:
+            self._next_reload_scheduled_time = 0 # Reset scheduled time
+            self._last_reload_actual_time = time.time() # Update actual reload time
+            self._do_reload()
+
+    def _do_reload(self, forced=False) -> bool:
+        """
+        Creates a new configuration based on current state and signals nginx to reload.
+        This is called whenever there's change in container or network state.
+        :return:
+        """
+        self.redirect_processor.process_redirection(self.config_data)
+        hosts: List[Host] = []
+        has_default = False
+        for host_data in self.config_data.host_list():
+            host = copy.deepcopy(host_data)
+            host.upstreams = {}
+            host.is_down = host_data.isempty()
+            if "default_server" in host.extras:
+                if has_default:
+                    del host.extras["default_server"]
+                else:
+                    has_default = True
+            for i, location in enumerate(host.locations.values()):
+                location.container = list(location.containers)[0]
+                if len(location.containers) > 1:
+                    location.upstream = host_data.hostname + "-" + str(host.port) + "-" + str(i + 1)
+                    host.upstreams[location.upstream] = location.containers
+                else:
+                    location.upstream = False
+            host.upstreams = [{"id": x, "containers": y} for x, y in host.upstreams.items()]
+            hosts.append(host)
+
+        self.basic_auth_processor.process_basic_auth(hosts)
+        self.ssl_processor.process_ssl_certificates(hosts)
+        self.config["default_server"] = not has_default
+        output = self.template.render(virtual_servers=hosts, config=self.config)
+        if forced:
+            response = self.nginx.force_start(output)
+        else:
+            response = self.nginx.update_config(output)
+        return response
 
     def learn_yourself(self):
         """
@@ -136,41 +191,47 @@ class WebServer:
 
     def reload(self, forced=False) -> bool:
         """
-        Creates a new configuration based on current state and signals nginx to reload.
-        This is called whenever there's change in container or network state.
-        :return:
+        Schedules or performs a reload of the Nginx configuration,
+        implementing a debouncing and throttling mechanism.
+        - If `forced` is True, performs an immediate reload.
+        - Otherwise, it ensures that reloads happen at most once every RELOAD_INTERVAL.
+          If a reload is requested within the interval since the last actual reload,
+          it schedules a reload for the next available slot.
+          Multiple requests within a scheduled window are merged into one.
+        :param forced: If True, forces an immediate reload without debouncing/throttling.
+        :return: True if a reload was initiated or scheduled, False otherwise.
         """
-        self.redirect_processor.process_redirection(self.config_data)
-        hosts: List[Host] = []
-        has_default = False
-        for host_data in self.config_data.host_list():
-            host = copy.deepcopy(host_data)
-            host.upstreams = {}
-            host.is_down = host_data.isempty()
-            if "default_server" in host.extras:
-                if has_default:
-                    del host.extras["default_server"]
-                else:
-                    has_default = True
-            for i, location in enumerate(host.locations.values()):
-                location.container = list(location.containers)[0]
-                if len(location.containers) > 1:
-                    location.upstream = host_data.hostname + "-" + str(host.port) + "-" + str(i + 1)
-                    host.upstreams[location.upstream] = location.containers
-                else:
-                    location.upstream = False
-            host.upstreams = [{"id": x, "containers": y} for x, y in host.upstreams.items()]
-            hosts.append(host)
+        with self._reload_lock:
+            if forced:
+                if self._reload_timer and self._reload_timer.is_alive():
+                    self._reload_timer.cancel()
+                self._next_reload_scheduled_time = 0 # Reset scheduled time
+                self._last_reload_actual_time = time.time() # Update actual time
+                return self._do_reload(forced=True)
 
-        self.basic_auth_processor.process_basic_auth(hosts)
-        self.ssl_processor.process_ssl_certificates(hosts)
-        self.config["default_server"] = not has_default
-        output = self.template.render(virtual_servers=hosts, config=self.config)
-        if forced:
-            response = self.nginx.force_start(output)
-        else:
-            response = self.nginx.update_config(output)
-        return response
+            current_time = time.time()
+            # Calculate the earliest time a new reload can actually happen
+            next_possible_actual_reload_time = self._last_reload_actual_time + RELOAD_INTERVAL
+
+            if current_time >= next_possible_actual_reload_time:
+                # Enough time has passed since the last actual reload, perform immediately
+                if self._reload_timer and self._reload_timer.is_alive():
+                    self._reload_timer.cancel() # Cancel any lingering timer
+                self._next_reload_scheduled_time = 0 # No longer scheduled
+                self._last_reload_actual_time = current_time # Update actual time
+                return self._do_reload()
+            else:
+                # Not enough time has passed, schedule if not already scheduled
+                if not (self._reload_timer and self._reload_timer.is_alive()):
+                    # Only schedule if no reload is currently pending
+                    time_to_wait = next_possible_actual_reload_time - current_time
+                    self._reload_timer = threading.Timer(time_to_wait, self._perform_throttled_reload)
+                    self._reload_timer.start()
+                    self._next_reload_scheduled_time = next_possible_actual_reload_time
+                    return True # Reload scheduled
+                else:
+                    # A reload is already scheduled, merge this request into it
+                    return False # No new action taken
 
     def disconnect(self, network, container, scope):
 

@@ -74,10 +74,9 @@ class Host:
                 removed = location.remove(container_id) or removed
                 if location.isempty():
                     deletions.append(path)
-        for path in deletions:
-            del self.locations[path]
-        if removed:
             self.container_set.remove(container_id)
+        for path in deletions:
+            del self.locations[path]            
         return removed
 
     def isempty(self) -> bool:
