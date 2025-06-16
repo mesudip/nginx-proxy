@@ -62,6 +62,12 @@ class SslCertificateProcessor:
         ssl_requests: Set[Host] = set()
         wildcard_requests: Set[Host] = set()
         self.lock.acquire()
+        wildcard_hostnames=set()
+
+        for host in hosts:
+            if host.secured and host.hostname.startswith('*.'):
+                wildcard_hostnames.add(host.hostname)   
+        
         for host in hosts:
             if host.secured:
                 is_wildcard = "*" in host.hostname
@@ -69,6 +75,7 @@ class SslCertificateProcessor:
                 if int(host.port) in (80, 443):
                     host.ssl_redirect = True
                     host.port = 443
+                
                 if host.hostname in self.cache:
                     host.ssl_file = host.hostname
                 elif is_wildcard:
@@ -77,7 +84,7 @@ class SslCertificateProcessor:
                     ## reuse the wildcard certificate.
                     wildcard = self.ssl.wildcard_domain_name(host.hostname)
                     if wildcard is not None:
-                        if self.ssl.cert_exists(wildcard):
+                        if self.ssl.cert_exists(wildcard) or wildcard in wildcard_hostnames:
                             host.ssl_file = wildcard
                             continue
                     # find the ssl certificate if it exists
@@ -89,14 +96,16 @@ class SslCertificateProcessor:
                         ssl_requests.add(host)
 
         registered = []
-        if len(ssl_requests) > 0:
-            registered = self.ssl.register_certificate_or_selfsign(
-                [h.hostname for h in ssl_requests], ignore_existing=True
-            )
         if len(wildcard_requests) > 0:
             for host in wildcard_requests:
                 new_registrations = self.ssl.register_certificate_wildcard(domain=host.hostname)
                 registered.extend(new_registrations)
+                
+        if len(ssl_requests) > 0:
+            registered = self.ssl.register_certificate_or_selfsign(
+                [h.hostname for h in ssl_requests], ignore_existing=True
+            )
+
 
         for host in ssl_requests.union(wildcard_requests):
             if host.hostname not in registered:

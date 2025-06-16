@@ -93,7 +93,6 @@ def process_service_event(action, event):
 
 
 def process_container_event(action, event):
-    print("Container event",action,event['id'])
     if action == "start":
         # print("container started", event["id"])
         server.update_container(event["id"])
