@@ -1,0 +1,9 @@
+User-Agent: *
+Allow: /
+Disallow: /api/
+Disallow: /_next/
+Disallow: /admin/
+Disallow: *.json
+
+Host: https://nginx-proxy.com
+Sitemap: https://nginx-proxy.com/sitemap.xml

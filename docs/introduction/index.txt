@@ -1,0 +1,158 @@
+2:I[3322,["511","static/chunks/511-e867eac74ba929b5.js","121","static/chunks/app/docs/%5Bslug%5D/page-fda15c3153456004.js"],"Navbar"]
+3:I[4880,["511","static/chunks/511-e867eac74ba929b5.js","121","static/chunks/app/docs/%5Bslug%5D/page-fda15c3153456004.js"],"DocSidebar"]
+7:I[2972,["511","static/chunks/511-e867eac74ba929b5.js","121","static/chunks/app/docs/%5Bslug%5D/page-fda15c3153456004.js"],""]
+8:I[4885,["511","static/chunks/511-e867eac74ba929b5.js","121","static/chunks/app/docs/%5Bslug%5D/page-fda15c3153456004.js"],"TableOfContents"]
+9:I[4707,[],""]
+b:I[6423,[],""]
+4:Tbd8,# Configure environment `VIRTUAL_HOST` in your containers
+When you want a container's to be hosted on a domain set `VIRTUAL_HOST` environment variable to desired `server_name` entry.
+For virtual host to work it requires
+- nginx-proxy container to be on the same network as that of the container.
+- port to be exposed in Docker file or while creating the container. When missing or if it has multiple exposed ports, port 80 is used by default.
+- when hosting on port other than 80, make sure that your nginx-proxy container's port is bind-mounted to host port.
+
+Some configurations possible through `VIRTUAL_HOST`
+
+`VIRTUAL_HOST` | release address | container path | container port
+:--- | :--- |:---------------| :---
+example.com |  http://example.com | /              | exposed port
+example.com:8080 | http://example.com:8080 | /              | exposed port
+example.com -> :8080 | http://example.com | /              | `8080`
+https://example.com  | https://example.com | /              | exposed port
+example.com/api | http://example.com/api | /api           | exposed port
+example.com/api/ -> / | http://example.com/api | /           | exposed port
+example.com/api -> :8080/api | http://example.com/api | /api           | 8080
+https://example.com/api/v1:5001  -> :8080/api | https://example.com/api/v1:5001 | /api           | 8080
+wss://example.com/websocket | wss://example.com/websocket | /              | exposed port
+
+With `VIRTUAL_HOST` you can inject nginx directives into location each configuration must be separed with a `;`
+. You can see the possible directives in nginx documentation.
+
+**Example :** `VIRTUAL_HOST=somesite.example.com -> :8080 ;proxy_read_timeout  900;client_max_body_size 2g;` will generate configuration as follows
+```nginx.conf
+server{
+    server_name somesite.example.com;
+    listen 80;
+    location /{
+        proxy_read_timeout 900;
+        client_max_body_size 2g;
+        proxy_pass http://127.2.3.4; // your container ip here
+    }
+}
+```
+### Support for websocket
+Exposing websocket requires the websocket endpoint to be explicitly configured via virtual host. The websocket endpoint can be `ws://` or `wss://`.
+If you want to use both websocket and non-websocket endpoints you will have to use multiple hosts
+
+`-e "VIRTUAL_HOST=wss://ws.example.com -> :8080/websocket"`
+
+If you are not sure  what paths should be exposed on websocket, you can opt for auto upgrade to websocket.
+
+`-e "VIRTUAL_HOST=https+wss://example.com"`
+
+### Multiple Virtual Hosts on same container
+To have multiple virtual hosts out of single container, you can use `VIRTUAL_HOST1`, `VIRTUAL_HOST2`, `VIRTUAL_HOST3` and so on. In fact the only thing it matters is that the environment variable starts with `VIRTUAL_HOST`.
+
+**Example:** setting up a go-ethereum node.
+```bash
+    docker run -d  --network frontend \
+    -e "VIRTUAL_HOST1=https://ethereum.example.com -> :8545" \
+    -e "VIRTUAL_HOST2=wss://ethereum.example.com/ws -> :8546/" \
+    ethereum/client-go \
+    --rpc --rpcaddr "0.0.0.0"  --ws --wsaddr 0.0.0.0
+5:T789,# Quick Setup
+
+## Setup nginx-proxy
+```
+docker pull mesudip/nginx-proxy
+docker network create frontend;    # create a network for nginx proxy
+docker run  --network frontend \
+            --name nginx-proxy \
+            -v /var/run/docker.sock:/var/run/docker.sock:ro \
+            -v /etc/ssl:/etc/ssl \
+            -v /etc/nginx/dhparam:/etc/nginx/dhparam \
+            -p 80:80 \
+            -p 443:443 \
+            -d --restart always mesudip/nginx-proxy
+```
+## Setup your container
+The only thing that matters is that the container shares at least one common network to the nginx container and `VIRTUAL_HOST`
+environment variable is set.
+
+Examples:
+- **WordPress**
+```
+docker run --network frontend \
+          --name wordpress-server \
+          -e VIRTUAL_HOST="wordpress.example.com" \
+          wordpress
+```
+- **Docker Registry**
+```
+docker run --network frontend \
+          --name docker-registry \
+          -e VIRTUAL_HOST='https://registry.example.com/v2 -> /v2; client_max_body_size 2g' \
+          -e PROXY_BASIC_AUTH="registry.example.com -> user1:password,user2:password2,user3:password3" \
+          registry:2
+
+
+# Configure `nginx-proxy`
+Following directries can be made into volumes to persist configurations
+- `/etc/nginx/conf.d` nginx configuration directory. You can add your own server configurations here
+- `/etc/nginx/dhparam` the directory for storing DH parameter for ssl connections
+- `/etc/ssl` directory for storing ssl certificates, ssl private key and Let's Encrypt account key.
+- `/var/log/nginx` directory nginx logs
+- `/tmp/acme-challenges` directory for storing challenge content when registering Let's Encrypt certificate
+
+Some of the default behaviour of `nginx-proxy` can be changed with environment variables.
+-   `DHPARAM_SIZE`  Default - `2048` : Set size of dhparam usd for ssl certificates
+-   `CLIENT_MAX_BODY_SIZE` Default - `1m` : Set default max body size for all the servers.
+6:T94e,# SSL Support
+Issuing of SSL certificate is done using acme-nginx library for Let's Encrypt. If a precheck determines that
+the domain we are trying to issue certificate is not owned by current machine, a self-signed certificate is
+generated instead.
+
+### Using SSL for exposing endpoint
+Certificate is automatically requested by the nginx-proxy container.
+It requests for a challenge and verifies the challenge to obtain the certificate.
+It is saved under directory `/etc/ssl/certs` and the private key is located inside
+directoy `/etc/ssl/private`
+
+### Using your Own SSL certificate
+If you already have a ssl certificate that you want to use, copy it under the `/etc/ssl/certs` directory and it's key under the directory `/etc/ssl/private` file should be named `domain.crt` and `domain.key`.
+
+Wildcard certificates can be used. For example to use `*.example.com` wildcard, you should create files
+`/etc/ssl/certs/*.example.com.crt` and `/etc/ssl/private/*.example.com.key` in the container's filesystem.
+
+**Note that `*.com` or `*` is not a valid wildcard.** Wild card must have at least 2 dots.
+
+`/etc/ssl/certs/*.example.com.crt` certificate will :
+- be used for `host1.example.com`
+- be used for `www.example.com`
+- not be used for `xyz.host1.example.com`
+- not be used for `example.com`
+
+***DHPARAM_SIZE :***
+Default size of DH key used for https connection is `2048`bits. The key size can be changed by changing `DHPARAM_SIZE` environment variable
+
+### Manually obtaining certificate.
+You can manually obtain Let's encrypt certificate using the nginx-proxy container.
+Note that you must set ip in  DNS entry to point the correct server.
+
+To issue a certificate for a domain you can simply use this command.
+-  `docker exec nginx-proxy getssl www.example.com`
+
+    Obtained certificate is saved on `/etc/ssl/certs/www.example.com` and private is saved on `/etc/ssl/private/www.example.com`
+
+To issue certificates for multiple domain you can simply add more parameters to the above command
+
+- `docker exec nginx-proxy getssl www.example.com example.com ww.example.com`
+
+    All the domains are registered on the same certificate and the filename is set from the first parameter
+    passed to the command. so `/etc/ssl/certs/www.example.com`  and `/etc/ssl/private/www.example.com` are generated
+
+Use  `docker exec nginx-proxy getssl --help`   for getting help with the command
+a:["slug","introduction","d"]
+0:["l1JSgdhaB8UBYNWElvree",[[["",{"children":["docs",{"children":[["slug","introduction","d"],{"children":["__PAGE__?{\"slug\":\"introduction\"}",{}]}]}]},"$undefined","$undefined",true],["",{"children":["docs",{"children":[["slug","introduction","d"],{"children":["__PAGE__",{},[["$L1",["$","div",null,{"className":"min-h-screen bg-gradient-to-br from-slate-50 to-gray-100","children":[["$","$L2",null,{}],["$","div",null,{"className":"flex","children":[["$","$L3",null,{"categories":[{"name":"Getting Started","order":1,"docs":[{"slug":"virtual-host-configuration","title":"Virtual Host Configuration","category":"Getting Started","description":"Detailed guide on configuring virtual hosts using the VIRTUAL_HOST environment variable, including WebSocket support and multiple hosts.","order":7,"seo":{"title":"Nginx-Proxy Virtual Host","description":"Configure VIRTUAL_HOST for Nginx-Proxy, including WebSocket, multiple hosts, and custom Nginx directives.","keywords":["docker","nginx-proxy","reverse proxy","web server","VIRTUAL_HOST","websockets","multiple hosts","nginx directives","proxy pass"]},"content":"$4","headings":[{"id":"configure-environment-virtual-host-in-your-containers","text":"Configure environment `VIRTUAL_HOST` in your containers","level":1},{"id":"support-for-websocket","text":"Support for websocket","level":3},{"id":"multiple-virtual-hosts-on-same-container","text":"Multiple Virtual Hosts on same container","level":3}]},{"slug":"quick-setup","title":"Quick Setup Guide","category":"Getting Started","description":"Get started quickly with Nginx-Proxy by following these setup instructions for the proxy and your containers.","order":9,"seo":{"title":"Nginx-Proxy Quick Start","description":"Fast setup guide for Nginx-Proxy Docker container and example container configurations.","keywords":["docker","nginx-proxy","reverse proxy","web server","installation","setup guide","docker run","virtual host"]},"content":"$5","headings":[{"id":"quick-setup","text":"Quick Setup","level":1},{"id":"setup-nginx-proxy","text":"Setup nginx-proxy","level":2},{"id":"setup-your-container","text":"Setup your container","level":2},{"id":"configure-nginx-proxy","text":"Configure `nginx-proxy`","level":1}]}]},{"name":"Detail dive","order":100,"docs":[{"slug":"introduction","title":"Introduction to Nginx-Proxy","description":"An overview of the Nginx-Proxy Docker container and its key features.","category":"Detail dive","order":1,"seo":{"title":"Nginx-Proxy Overview","description":"Learn about the Nginx-Proxy Docker container for automatic Nginx configuration, SSL, and more.","keywords":["docker","nginx-proxy","reverse proxy","web server","containerization","automatic configuration","SSL certificates","basic authentication"]},"content":"# Nginx-Proxy Overview\nDocker container for automatically creating nginx configuration based on active containers in docker host.\n\n- Easy server configuration with environment variables\n- Map multiple containers to different locations on same server\n- Automatic Let's Encrypt ssl certificate registration\n- Basic Authorization\n\n## Table of Contents\n- [Quick Setup](/docs/quick-setup)\n- [Nginx-Proxy Configuration](/docs/nginx-proxy-configuration)\n- [Virtual Host Configuration](/docs/virtual-host-configuration)\n- [Redirection](/docs/redirection)\n- [SSL Support](/docs/ssl-support)\n- [Basic Authorization](/docs/basic-authorization)\n- [Default Server](/docs/default-server)\n","headings":[{"id":"nginx-proxy-overview","text":"Nginx-Proxy Overview","level":1},{"id":"table-of-contents","text":"Table of Contents","level":2}]},{"slug":"ssl-support","title":"SSL Support and Certificates","description":"A comprehensive guide to SSL certificate management in Nginx-Proxy, including automatic Let's Encrypt, custom certificates, and manual acquisition.","order":4,"category":"Detail dive","seo":{"title":"Nginx-Proxy SSL Certificates","description":"Manage SSL certificates with Nginx-Proxy: automatic Let's Encrypt, custom certificates, wildcard support, and manual issuance.","keywords":["docker","nginx-proxy","reverse proxy","web server","Let's Encrypt","SSL certificate","HTTPS","custom SSL","wildcard SSL","getssl"]},"content":"$6","headings":[{"id":"ssl-support","text":"SSL Support","level":1},{"id":"using-ssl-for-exposing-endpoint","text":"Using SSL for exposing endpoint","level":3},{"id":"using-your-own-ssl-certificate","text":"Using your Own SSL certificate","level":3},{"id":"manually-obtaining-certificate","text":"Manually obtaining certificate.","level":3}]},{"slug":"basic-authorization","title":"Basic Authorization","description":"Implement basic authentication for your Nginx-Proxy containers using the PROXY_BASIC_AUTH environment variable.","category":"Detail dive","order":5,"seo":{"title":"Nginx-Proxy Basic Auth","description":"Enable basic authorization in Nginx-Proxy with PROXY_BASIC_AUTH for secure access to your virtual hosts.","keywords":["docker","nginx-proxy","reverse proxy","web server","PROXY_BASIC_AUTH","basic auth","authentication","security"]},"content":"# Basic Authorization\nBasic Auth can be enabled on the container with environment variable `PROXY_BASIC_AUTH`.\n- `PROXY_BASIC_AUTH=user1:password1,user2:password2,user3:password3` adds basic auth feature to your configured `VIRTUAL_HOST` server root.\n- `PROXY_BASIC_AUTH=example.com/api/v1/admin -> admin1:password1,admin2:password2` adds basic auth only to the location starting from `api/v1/admin`\n\n**Note:** Basic authorization will be ignored if the container's host doesn't use `https`\n","headings":[{"id":"basic-authorization","text":"Basic Authorization","level":1}]},{"slug":"default-server","title":"Default Server Configuration","description":"Configure a default server in Nginx-Proxy to handle requests for unregistered server names.","category":"Detail dive","order":6,"seo":{"title":"Nginx-Proxy Default Server","description":"Set up a default server in Nginx-Proxy using PROXY_DEFAULT_SERVER for unhandled requests.","keywords":["docker","nginx-proxy","reverse proxy","web server","default server","503 error","unregistered domains"]},"content":"# Default Server\nWhen request comes for a server name that is not registered in `nginx-proxy`, It responds with 503 by default.\nIf you want the requested to be passed to a container instead, when setting up the container you can add `PROXY_DEFAULT_SERVER=true` environment along with `VIRTUAL_HOST`.\n\nThis much is sufficient for http connections, but for https connections, you might want to setup\n[wildcard certificates](#using-your-own-ssl-certificate) so that your users dont get invalid ssl certificate errors.\n","headings":[{"id":"default-server","text":"Default Server","level":1}]},{"slug":"redirection","title":"Redirection with Nginx-Proxy","description":"How to set up full URL redirections using the PROXY_FULL_REDIRECT environment variable in Nginx-Proxy.","order":8,"category":"Detail dive","seo":{"title":"Nginx-Proxy Redirection","description":"Configure URL redirections in Nginx-Proxy using PROXY_FULL_REDIRECT for multiple domains.","keywords":["docker","nginx-proxy","reverse proxy","web server","PROXY_FULL_REDIRECT","URL redirect","domain redirect"]},"content":"# Redirection\nLet's say you want to serve a website on `example.uk`. You might want users visiting `www.example.uk`,`example.com`,`www.example.com`\nto redirect to  `example.uk`.  You can simply use `PROXY_FULL_REDIRECT` environment variable.\n```\n-e 'VIRTUAL_HOST=https://example.uk -> :7000' \\\n-e 'PROXY_FULL_REDIRECT=example.com,www.example.com,www.example.uk->example.uk'\n","headings":[{"id":"redirection","text":"Redirection","level":1}]}]}],"currentSlug":"introduction"}],["$","main",null,{"className":"flex-1 min-w-0","children":["$","div",null,{"className":"flex","children":[["$","div",null,{"className":"flex-1 min-w-0","children":["$","div",null,{"className":"container mx-auto max-w-4xl px-8 py-8","children":[["$","div",null,{"className":"mb-8","children":[["$","$L7",null,{"href":"/docs","children":["$","button",null,{"className":"inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 hover:bg-accent hover:text-accent-foreground h-10 px-4 py-2 mb-4","children":[["$","svg",null,{"xmlns":"http://www.w3.org/2000/svg","width":24,"height":24,"viewBox":"0 0 24 24","fill":"none","stroke":"currentColor","strokeWidth":2,"strokeLinecap":"round","strokeLinejoin":"round","className":"lucide lucide-arrow-left w-4 h-4 mr-2","children":[["$","path","1l729n",{"d":"m12 19-7-7 7-7"}],["$","path","x3x0zl",{"d":"M19 12H5"}],"$undefined"]}],"Back to Documentation"]}]}],["$","h1",null,{"className":"text-4xl font-bold text-gray-900 mb-4","children":"Introduction to Nginx-Proxy"}],["$","p",null,{"className":"text-xl text-gray-600","children":"An overview of the Nginx-Proxy Docker container and its key features."}]]}],["$","div",null,{"className":"prose prose-lg max-w-none","children":[["$","h1",null,{"id":"nginx-proxy-overview","node":{"type":"element","tagName":"h1","properties":{},"children":[{"type":"text","value":"Nginx-Proxy Overview","position":{"start":{"line":1,"column":3,"offset":2},"end":{"line":1,"column":23,"offset":22}}}],"position":{"start":{"line":1,"column":1,"offset":0},"end":{"line":1,"column":23,"offset":22}}},"children":"Nginx-Proxy Overview"}],"\n",["$","p","p-0",{"children":"Docker container for automatically creating nginx configuration based on active containers in docker host."}],"\n",["$","ul","ul-0",{"children":["\n",["$","li","li-0",{"children":"Easy server configuration with environment variables"}],"\n",["$","li","li-1",{"children":"Map multiple containers to different locations on same server"}],"\n",["$","li","li-2",{"children":"Automatic Let's Encrypt ssl certificate registration"}],"\n",["$","li","li-3",{"children":"Basic Authorization"}],"\n"]}],"\n",["$","h2",null,{"id":"table-of-contents","node":{"type":"element","tagName":"h2","properties":{},"children":[{"type":"text","value":"Table of Contents","position":{"start":{"line":9,"column":4,"offset":331},"end":{"line":9,"column":21,"offset":348}}}],"position":{"start":{"line":9,"column":1,"offset":328},"end":{"line":9,"column":21,"offset":348}}},"children":"Table of Contents"}],"\n",["$","ul","ul-1",{"children":["\n",["$","li","li-0",{"children":["$","a","a-0",{"href":"/docs/quick-setup","children":"Quick Setup"}]}],"\n",["$","li","li-1",{"children":["$","a","a-0",{"href":"/docs/nginx-proxy-configuration","children":"Nginx-Proxy Configuration"}]}],"\n",["$","li","li-2",{"children":["$","a","a-0",{"href":"/docs/virtual-host-configuration","children":"Virtual Host Configuration"}]}],"\n",["$","li","li-3",{"children":["$","a","a-0",{"href":"/docs/redirection","children":"Redirection"}]}],"\n",["$","li","li-4",{"children":["$","a","a-0",{"href":"/docs/ssl-support","children":"SSL Support"}]}],"\n",["$","li","li-5",{"children":["$","a","a-0",{"href":"/docs/basic-authorization","children":"Basic Authorization"}]}],"\n",["$","li","li-6",{"children":["$","a","a-0",{"href":"/docs/default-server","children":"Default Server"}]}],"\n"]}]]}],["$","div",null,{"className":"flex justify-between items-center mt-12 pt-8 border-t","children":[["$","div",null,{"children":null}],["$","div",null,{"children":["$","$L7",null,{"href":"/docs/ssl-support","children":["$","button",null,{"className":"inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-10 px-4 py-2","children":["SSL Support and Certificates",["$","svg",null,{"xmlns":"http://www.w3.org/2000/svg","width":24,"height":24,"viewBox":"0 0 24 24","fill":"none","stroke":"currentColor","strokeWidth":2,"strokeLinecap":"round","strokeLinejoin":"round","className":"lucide lucide-arrow-right w-4 h-4 ml-2","children":[["$","path","1ays0h",{"d":"M5 12h14"}],["$","path","xquz4c",{"d":"m12 5 7 7-7 7"}],"$undefined"]}]]}]}]}]]}]]}]}],["$","$L8",null,{"headings":[{"id":"nginx-proxy-overview","text":"Nginx-Proxy Overview","level":1},{"id":"table-of-contents","text":"Table of Contents","level":2}]}]]}]}]]}],["$","footer",null,{"className":"bg-gray-900 text-white py-12 px-4","children":["$","div",null,{"className":"container mx-auto max-w-6xl","children":[["$","div",null,{"className":"grid md:grid-cols-4 gap-8","children":[["$","div",null,{"children":[["$","div",null,{"className":"flex items-center space-x-2 mb-4","children":[["$","div",null,{"className":"w-8 h-8 bg-emerald-600 rounded-lg flex items-center justify-center","children":["$","svg",null,{"xmlns":"http://www.w3.org/2000/svg","width":24,"height":24,"viewBox":"0 0 24 24","fill":"none","stroke":"currentColor","strokeWidth":2,"strokeLinecap":"round","strokeLinejoin":"round","className":"lucide lucide-network w-5 h-5 text-white","children":[["$","rect","4q2zg0",{"x":"16","y":"16","width":"6","height":"6","rx":"1"}],["$","rect","8cvhb9",{"x":"2","y":"16","width":"6","height":"6","rx":"1"}],["$","rect","1egb70",{"x":"9","y":"2","width":"6","height":"6","rx":"1"}],["$","path","1jsf9p",{"d":"M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"}],["$","path","2874zd",{"d":"M12 12V8"}],"$undefined"]}]}],["$","h3",null,{"className":"text-xl font-bold","children":"nginx-proxy"}]]}],["$","p",null,{"className":"text-gray-400","children":"Automatic nginx configuration for Docker containers with SSL certificates."}]]}],["$","div",null,{"children":[["$","h4",null,{"className":"font-semibold mb-4","children":"Documentation"}],["$","ul",null,{"className":"space-y-2 text-gray-400","children":[["$","li",null,{"children":["$","$L7",null,{"href":"/docs","className":"hover:text-white","children":"Getting Started"}]}],["$","li",null,{"children":["$","$L7",null,{"href":"/docs","className":"hover:text-white","children":"Configuration"}]}],["$","li",null,{"children":["$","$L7",null,{"href":"/docs","className":"hover:text-white","children":"Examples"}]}],["$","li",null,{"children":["$","$L7",null,{"href":"/docs","className":"hover:text-white","children":"API Reference"}]}]]}]]}],["$","div",null,{"children":[["$","h4",null,{"className":"font-semibold mb-4","children":"Resources"}],["$","ul",null,{"className":"space-y-2 text-gray-400","children":[["$","li",null,{"children":["$","$L7",null,{"href":"/blog","className":"hover:text-white","children":"Blog"}]}],["$","li",null,{"children":["$","a",null,{"href":"https://github.com/mesudip/nginx-proxy","className":"hover:text-white","children":"GitHub"}]}],["$","li",null,{"children":["$","a",null,{"href":"https://hub.docker.com/r/mesudip/nginx-proxy","className":"hover:text-white","children":"Docker Hub"}]}],["$","li",null,{"children":["$","a",null,{"href":"https://github.com/mesudip/nginx-proxy/issues","className":"hover:text-white","children":"Issues"}]}]]}]]}]]}],["$","div",null,{"className":"border-t border-gray-800 mt-8 pt-8 text-center text-gray-400","children":["$","p",null,{"children":"© 2024 nginx-proxy. Open source project."}]}]]}]}]]}],null],null],null]},[null,["$","$L9",null,{"parallelRouterKey":"children","segmentPath":["children","docs","children","$a","children"],"error":"$undefined","errorStyles":"$undefined","errorScripts":"$undefined","template":["$","$Lb",null,{}],"templateStyles":"$undefined","templateScripts":"$undefined","notFound":"$undefined","notFoundStyles":"$undefined"}]],null]},[null,["$","$L9",null,{"parallelRouterKey":"children","segmentPath":["children","docs","children"],"error":"$undefined","errorStyles":"$undefined","errorScripts":"$undefined","template":["$","$Lb",null,{}],"templateStyles":"$undefined","templateScripts":"$undefined","notFound":"$undefined","notFoundStyles":"$undefined"}]],null]},[[[["$","link","0",{"rel":"stylesheet","href":"/_next/static/css/2b4180effbb7f334.css","precedence":"next","crossOrigin":"$undefined"}]],["$","html",null,{"lang":"en","children":[["$","head",null,{"children":[["$","link",null,{"rel":"icon","href":"/favicon.ico"}],["$","link",null,{"rel":"apple-touch-icon","sizes":"180x180","href":"/apple-touch-icon.png"}],["$","link",null,{"rel":"icon","type":"image/png","sizes":"32x32","href":"/favicon-32x32.png"}],["$","link",null,{"rel":"icon","type":"image/png","sizes":"16x16","href":"/favicon-16x16.png"}],["$","link",null,{"rel":"manifest","href":"/site.webmanifest"}],["$","link",null,{"rel":"canonical","href":"https://nginx-proxy.com"}],["$","meta",null,{"name":"theme-color","content":"#059669"}],["$","meta",null,{"name":"msapplication-TileColor","content":"#059669"}],["$","meta",null,{"name":"application-name","content":"nginx-proxy"}],["$","meta",null,{"name":"apple-mobile-web-app-title","content":"nginx-proxy"}],["$","meta",null,{"name":"apple-mobile-web-app-capable","content":"yes"}],["$","meta",null,{"name":"apple-mobile-web-app-status-bar-style","content":"default"}],["$","meta",null,{"name":"mobile-web-app-capable","content":"yes"}],["$","script",null,{"type":"application/ld+json","dangerouslySetInnerHTML":{"__html":"{\"@context\":\"https://schema.org\",\"@type\":\"SoftwareApplication\",\"name\":\"nginx-proxy\",\"description\":\"Docker container for automatically creating nginx reverse proxy configurations with SSL certificates\",\"applicationCategory\":\"DeveloperApplication\",\"operatingSystem\":\"Linux, macOS, Windows\",\"offers\":{\"@type\":\"Offer\",\"price\":\"0\",\"priceCurrency\":\"USD\"},\"author\":{\"@type\":\"Organization\",\"name\":\"nginx-proxy\",\"url\":\"https://nginx-proxy.com\"},\"publisher\":{\"@type\":\"Organization\",\"name\":\"nginx-proxy\",\"url\":\"https://nginx-proxy.com\"},\"downloadUrl\":\"https://hub.docker.com/r/mesudip/nginx-proxy\",\"softwareVersion\":\"latest\",\"programmingLanguage\":\"Docker\",\"url\":\"https://nginx-proxy.com\",\"sameAs\":[\"https://github.com/nginx-proxy/nginx-proxy\",\"https://hub.docker.com/r/mesudip/nginx-proxy\"]}"}}],["$","script",null,{"type":"application/ld+json","dangerouslySetInnerHTML":{"__html":"{\"@context\":\"https://schema.org\",\"@type\":\"Organization\",\"name\":\"nginx-proxy\",\"url\":\"https://nginx-proxy.com\",\"logo\":\"https://nginx-proxy.com/logo.png\",\"description\":\"Automatic nginx configuration for Docker containers\",\"sameAs\":[\"https://github.com/nginx-proxy/nginx-proxy\",\"https://hub.docker.com/r/mesudip/nginx-proxy\"]}"}}],["$","script",null,{"type":"application/ld+json","dangerouslySetInnerHTML":{"__html":"{\"@context\":\"https://schema.org\",\"@type\":\"WebSite\",\"name\":\"nginx-proxy\",\"url\":\"https://nginx-proxy.com\",\"description\":\"Automatic nginx configuration for Docker containers with SSL certificates\",\"potentialAction\":{\"@type\":\"SearchAction\",\"target\":\"https://nginx-proxy.com/search?q={search_term_string}\",\"query-input\":\"required name=search_term_string\"}}"}}]]}],["$","body",null,{"className":"__className_e8ce0c","children":["$","$L9",null,{"parallelRouterKey":"children","segmentPath":["children"],"error":"$undefined","errorStyles":"$undefined","errorScripts":"$undefined","template":["$","$Lb",null,{}],"templateStyles":"$undefined","templateScripts":"$undefined","notFound":[["$","title",null,{"children":"404: This page could not be found."}],["$","div",null,{"style":{"fontFamily":"system-ui,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif,\"Apple Color Emoji\",\"Segoe UI Emoji\"","height":"100vh","textAlign":"center","display":"flex","flexDirection":"column","alignItems":"center","justifyContent":"center"},"children":["$","div",null,{"children":[["$","style",null,{"dangerouslySetInnerHTML":{"__html":"body{color:#000;background:#fff;margin:0}.next-error-h1{border-right:1px solid rgba(0,0,0,.3)}@media (prefers-color-scheme:dark){body{color:#fff;background:#000}.next-error-h1{border-right:1px solid rgba(255,255,255,.3)}}"}}],["$","h1",null,{"className":"next-error-h1","style":{"display":"inline-block","margin":"0 20px 0 0","padding":"0 23px 0 0","fontSize":24,"fontWeight":500,"verticalAlign":"top","lineHeight":"49px"},"children":"404"}],["$","div",null,{"style":{"display":"inline-block"},"children":["$","h2",null,{"style":{"fontSize":14,"fontWeight":400,"lineHeight":"49px","margin":0},"children":"This page could not be found."}]}]]}]}]],"notFoundStyles":[]}]}]]}]],null],null],["$Lc",null]]]]
+c:[["$","meta","0",{"name":"viewport","content":"width=device-width, initial-scale=1"}],["$","meta","1",{"charSet":"utf-8"}],["$","title","2",{"children":"Nginx-Proxy Overview | nginx-proxy"}],["$","meta","3",{"name":"description","content":"Learn about the Nginx-Proxy Docker container for automatic Nginx configuration, SSL, and more."}],["$","link","4",{"rel":"author","href":"https://nginx-proxy.com"}],["$","meta","5",{"name":"author","content":"nginx-proxy"}],["$","meta","6",{"name":"keywords","content":"docker,nginx-proxy,reverse proxy,web server,containerization,automatic configuration,SSL certificates,basic authentication"}],["$","meta","7",{"name":"creator","content":"nginx-proxy"}],["$","meta","8",{"name":"publisher","content":"nginx-proxy"}],["$","meta","9",{"name":"robots","content":"index, follow"}],["$","meta","10",{"name":"googlebot","content":"index, follow, max-video-preview:-1, max-image-preview:large, max-snippet:-1"}],["$","meta","11",{"name":"category","content":"technology"}],["$","link","12",{"rel":"canonical","href":"https://nginx-proxy.com/"}],["$","meta","13",{"name":"format-detection","content":"telephone=no, address=no, email=no"}],["$","meta","14",{"name":"google-site-verification","content":"your-google-verification-code"}],["$","meta","15",{"name":"y_key","content":"your-yahoo-verification-code"}],["$","meta","16",{"name":"yandex-verification","content":"your-yandex-verification-code"}],["$","meta","17",{"name":"msvalidate.01","content":"your-bing-verification-code"}],["$","meta","18",{"property":"og:title","content":"Nginx-Proxy Overview"}],["$","meta","19",{"property":"og:description","content":"Learn about the Nginx-Proxy Docker container for automatic Nginx configuration, SSL, and more."}],["$","meta","20",{"property":"og:type","content":"article"}],["$","meta","21",{"name":"twitter:card","content":"summary_large_image"}],["$","meta","22",{"name":"twitter:title","content":"Nginx-Proxy Overview"}],["$","meta","23",{"name":"twitter:description","content":"Learn about the Nginx-Proxy Docker container for automatic Nginx configuration, SSL, and more."}],["$","meta","24",{"name":"next-size-adjust"}]]
+1:null
