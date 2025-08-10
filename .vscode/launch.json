@@ -1,0 +1,20 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "nginx-proxy [dummy]",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "main.py",
+            "console": "integratedTerminal",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "LETSENCRYPT_API": "https://acme-staging-v02.api.letsencrypt.org/directory",
+                "CHALLENGE_DIR": "./.run_data/acme_challenges",
+                "DUMMY_NGINX": "y",
+                "SSL_DIR": "./.run_data",
+                "NGINX_CONF_DIR": "./.run_data"
+            }
+        }
+    ]
+}

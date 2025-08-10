@@ -77,8 +77,7 @@ class WebServer:
         print("Now waiting for nginx")
         self.nginx.wait()
         print("Reachable Networks :", self.networks)
-        self.rescan_all_container()
-        self.reload(forced=True) # Initial reload should be forced and not debounced
+        self.rescan_and_reload(force=True)
         self._last_reload_actual_time = time.time() # Set initial actual reload time
         self.ssl_processor.certificate_expiry_thread.start()
 
@@ -86,6 +85,7 @@ class WebServer:
         """
         Performs the actual Nginx reload when the scheduled timer fires.
         """
+        # print("web_server._perform_throttled_reload()")
         with self._reload_lock:
             self._next_reload_scheduled_time = 0 # Reset scheduled time
             self._last_reload_actual_time = time.time() # Update actual reload time
@@ -97,6 +97,7 @@ class WebServer:
         This is called whenever there's change in container or network state.
         :return:
         """
+        # print("web_server._do_reload(forced="+str(forced)+")")
         self.redirect_processor.process_redirection(self.config_data)
         hosts: List[Host] = []
         has_default = False
@@ -170,6 +171,7 @@ class WebServer:
         If it's not configured with desired settings or is not accessible, return False
         @:returns True if the container is added to virtual hosts, false otherwise.
         """
+        # print("_regiser_container("+str(container.name))
         environments = Container.Container.get_env_map(container)
         known_networks = set(self.networks.keys())
         hosts = pre_processors.process_virtual_hosts(container, environments, known_networks)
@@ -292,9 +294,9 @@ class WebServer:
         for container in containers:
             self._register_container(container)
 
-    def rescan_and_reload(self):
+    def rescan_and_reload(self,force=False):
         self.rescan_all_container()
-        return self.reload()
+        return self.reload(force)
 
     def cleanup(self):
         self.ssl_processor.shutdown()
