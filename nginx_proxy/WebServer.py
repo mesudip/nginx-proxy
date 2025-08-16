@@ -197,7 +197,7 @@ class WebServer:
             )
             self.reload()
 
-    def reload(self, forced=False) -> bool:
+    def reload(self, immediate=False) -> bool:
         """
         Schedules or performs a reload of the Nginx configuration,
         implementing a debouncing and throttling mechanism.
@@ -210,12 +210,12 @@ class WebServer:
         :return: True if a reload was initiated or scheduled, False otherwise.
         """
         with self._reload_lock:
-            if forced:
+            if immediate:
                 if self._reload_timer and self._reload_timer.is_alive():
                     self._reload_timer.cancel()
                 self._next_reload_scheduled_time = 0 # Reset scheduled time
                 self._last_reload_actual_time = time.time() # Update actual time
-                return self._do_reload(forced=True)
+                return self._do_reload()
 
             current_time = time.time()
             # Calculate the earliest time a new reload can actually happen

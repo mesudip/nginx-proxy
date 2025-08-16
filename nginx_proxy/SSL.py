@@ -59,18 +59,15 @@ class SSL:
                 domain,key_type="ecdsa"
             ) 
         if len(result.issued):
-            print("[ New Certificates      ] : ",', '.join(flatten_2d_array([x.domains for x in result.issued])))
+            print("[ New Certificates      ] : ",', '.join(flatten_2d_array(sorted([x.domains for x in result.issued]))))
         if len(result.existing):
-            print("[ Existing Certificates ] : ",', '.join(flatten_2d_array([x.domains for x in result.existing])))
+            print("[ Existing Certificates ] : ",', '.join(flatten_2d_array(sorted([x.domains for x in result.existing]))))
         return result.issued + result.existing
 
 
 
     def register_certificate_or_selfsign(self, domain, no_self_check=False, ignore_existing=False)->List[IssuedCert]:
-        print("[ Requested Certificates] : ", ", ".join(domain))
-        obtained_certificates = []
-        
-
+        obtained_certificates: List[IssuedCert] = []        
         for i in range(0, len(domain), 50):
             sub_list = domain[i : i + 50]
             # Filter out blacklisted domains from the sublist
@@ -90,11 +87,11 @@ class SSL:
                 )
 
                 if obtained:
-                    obtained_certificates.extend(flatten_2d_array([x.domains for x in obtained]))
+                    obtained_certificates.extend(obtained)
             except CertApiException as e:
                 tb.print_exception(e)
                 pass
-        processed_set = set(obtained_certificates).union(set(blacklisted))
+        processed_set = set(flatten_2d_array([c.domains for c in obtained_certificates])).union(set(blacklisted))
         self_signed = [x for x in domain if x not in processed_set]
         if self_signed:
             # Add the self-signed domains to the blacklist
@@ -103,7 +100,7 @@ class SSL:
             print("[   Self Signing        ] : ", ', '.join(self_signed))
             self.register_certificate_self_sign(self_signed)
 
-        return obtained
+        return obtained_certificates
 
     def register_certificate_self_sign(self, domain):
         if type(domain) is str:

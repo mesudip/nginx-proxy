@@ -83,7 +83,7 @@ class SslCertificateProcessor:
         # Reuse the wildcard certificate if available and registered
         wildcard = self.wildcard_domain_name(host.hostname)
         if wildcard is not None:
-            if  wildcard in registered:
+            if  (wildcard in registered) or (wildcard in self.cache):
                 host.ssl_file = wildcard
                 return True
         return False
@@ -93,17 +93,17 @@ class SslCertificateProcessor:
         Updates host.ssl_file, self.cache, and host.ssl_expiry based on registration status.
         Assumes host.secured is True.
         """
-        if host.hostname not in registered:
+        if (host.hostname  in registered) or (host.hostname in self.cache):
+            host.ssl_file = host.hostname 
+             
+        else:
             wildcard_domain = self.wildcard_domain_name(host.hostname)
-            if wildcard_domain and (wildcard_domain in registered or wildcard_domain in self.cache):
+            if wildcard_domain and ((wildcard_domain in registered) or (wildcard_domain in self.cache)):
                 host.ssl_file = wildcard_domain
-            return
-
-        if host.hostname in self.cache or host.hostname in registered:
-            host.ssl_file = host.hostname
-        else: 
-            host.ssl_file = host.hostname + ".selfsigned"
-            self.self_signed.add(host.hostname)                           
+            else:
+                host.ssl_file = host.hostname + ".selfsigned"
+                self.self_signed.add(host.hostname) 
+                                                
 
     def process_ssl_certificates(self, hosts: List[Host]):
         if not hosts:
@@ -111,7 +111,7 @@ class SslCertificateProcessor:
         self.lock.acquire()
         registered: Set[str] = set()
         new_certs:List[IssuedCert]=[]
-        non_wildcards=[]
+        non_wildcards: List[Host]=[]
         try:
             # First pass: Handle wildcard certificates immediately, one by one.
             for host in hosts:
@@ -119,13 +119,15 @@ class SslCertificateProcessor:
                 if host.secured and host.hostname.startswith('*.'):
                     if not self._assign_existing_cert(host, registered):
                             try:
-                                new_registrations = self.ssl.register_certificate(host.hostname)
-                                registered.add(host.hostname)
-                                new_certs.extend(new_registrations)
+                                registered_ssl = self.ssl.register_certificate(host.hostname)
+                                if len(registered_ssl) > 0:
+                                    registered.add(host.hostname)
+                                    new_certs.extend(registered_ssl)
+                                    continue
                             except Exception as e:
                                 print(f"Self signing certificate {host.hostname}: {e}")
                                 traceback.print_exception(e)
-                                self.ssl.register_certificate_self_sign(host.hostname)
+                            self.ssl.register_certificate_self_sign(host.hostname)
 
                 elif host.secured:
                     non_wildcards.append(host)
