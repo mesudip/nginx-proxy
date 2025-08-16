@@ -86,17 +86,6 @@ class SslCertificateProcessor:
             if  wildcard in registered:
                 host.ssl_file = wildcard
                 return True
-            else :
-                from_keystore= self.ssl.key_store.find_key_and_cert_by_domain(wildcard)
-                if from_keystore is not None:
-                    (id,key,cert) =from_keystore
-                    self.cache[wildcard] = cert[0].not_valid_after_utc
-                    host.ssl_file = wildcard
-
-                
-                
-
-        
         return False
 
     def _update_host_ssl_info(self, host: Host, registered: Set[str],certs:List[IssuedCert]):
@@ -106,11 +95,11 @@ class SslCertificateProcessor:
         """
         if host.hostname not in registered:
             wildcard_domain = self.wildcard_domain_name(host.hostname)
-            if wildcard_domain and wildcard_domain in registered:
+            if wildcard_domain and (wildcard_domain in registered or wildcard_domain in self.cache):
                 host.ssl_file = wildcard_domain
             return
 
-        if host.hostname in self.cache:
+        if host.hostname in self.cache or host.hostname in registered:
             host.ssl_file = host.hostname
         else: 
             host.ssl_file = host.hostname + ".selfsigned"
@@ -131,7 +120,7 @@ class SslCertificateProcessor:
                     if not self._assign_existing_cert(host, registered):
                             try:
                                 new_registrations = self.ssl.register_certificate(host.hostname)
-                                registered.update(host.hostname)
+                                registered.add(host.hostname)
                                 new_certs.extend(new_registrations)
                             except Exception as e:
                                 print(f"Self signing certificate {host.hostname}: {e}")
@@ -149,6 +138,7 @@ class SslCertificateProcessor:
                     missing_certs.append(host.hostname)
 
             # Batch process regular certificates
+            # TODO missing_cert includes the domains already included by wildcard too.
             if len(missing_certs) > 0:
                 new_registrations = self.ssl.register_certificate_or_selfsign(
                     missing_certs

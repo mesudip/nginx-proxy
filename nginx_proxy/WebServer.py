@@ -189,6 +189,12 @@ class WebServer:
     def remove_container(self, container_id: str):
         deleted, deleted_domain = self.config_data.remove_container(container_id)
         if deleted:
+            print(
+                "Container removed   ",
+                "Id:" + container_id[:12],
+                "    " + deleted.name,
+                sep="\t",
+            )
             self.reload()
 
     def reload(self, forced=False) -> bool:

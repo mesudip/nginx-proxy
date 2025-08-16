@@ -7,11 +7,8 @@ import time
 from os.path import join
 from typing import List
 
-import OpenSSL
-from OpenSSL import crypto
 from nginx.Nginx import Nginx
-import certapi
-from certapi import CloudflareChallengeSolver,AcmeCertManager,FileSystemKeystore
+from certapi import CloudflareChallengeSolver,AcmeCertManager,FileSystemKeyStore,CertApiException
 from certapi.issuers import AcmeCertIssuer, SelfCertIssuer
 from certapi.http.types import IssuedCert
 from nginx.NginxChallengeSolver import NginxChallengeSolver
@@ -36,9 +33,8 @@ class SSL:
         
         
         self.challenge_store = NginxChallengeSolver(nginx.challenge_dir, nginx)
-        self.key_store = FileSystemKeystore(ssl_path, keys_dir_name="private")
+        self.key_store = FileSystemKeyStore(ssl_path, keys_dir_name="private")
         acme_key=self.key_store._get_or_generate_key("acme_account","rsa")[0]
-        print(acme_key)
         cert_issuer=AcmeCertIssuer(acme_key,self.challenge_store,acme_url=self.api_url)
 
 
@@ -46,8 +42,7 @@ class SSL:
         if os.getenv("CLOUDFLARE_API_KEY") is not None:
             cloudflare=CloudflareChallengeSolver(os.getenv("CLOUDFLARE_API_KEY").strip())
             all_stores.append(cloudflare)
-            print("Sireto.dev supported",cloudflare.supports_domain('sireto.dev'))
-
+            cloudflare.cleanup_old_challenges()
 
         self.cert_manager = AcmeCertManager(
             self.key_store,cert_issuer ,all_stores
@@ -63,12 +58,16 @@ class SSL:
         result= self.cert_manager.issue_certificate(
                 domain,key_type="ecdsa"
             ) 
+        if len(result.issued):
+            print("[ New Certificates      ] : ",', '.join(flatten_2d_array([x.domains for x in result.issued])))
+        if len(result.existing):
+            print("[ Existing Certificates ] : ",', '.join(flatten_2d_array([x.domains for x in result.existing])))
         return result.issued + result.existing
 
 
 
     def register_certificate_or_selfsign(self, domain, no_self_check=False, ignore_existing=False)->List[IssuedCert]:
-        print("[CertificateOrSelfSign] Checking domains:", ", ".join(domain))
+        print("[ Requested Certificates] : ", ", ".join(domain))
         obtained_certificates = []
         
 
@@ -80,24 +79,28 @@ class SSL:
             if len(blacklisted)  >0 :
                 print("[Blacklist] ignoring previously failed domain for 3 mins:", ", ".join(blacklisted))
 
-            # Proceed only with the filtered sublist
-            obtained:  List[IssuedCert] = (
-                self.register_certificate(
-                    valid_list,
+            try:
+                # Proceed only with the filtered sublist
+                obtained:  List[IssuedCert] = (
+                    self.register_certificate(
+                        valid_list,
+                    )
+                    if valid_list
+                    else []
                 )
-                if valid_list
-                else []
-            )
 
-            if obtained:
-                obtained_certificates.extend(domain for x in obtained for domain in x.domains)
+                if obtained:
+                    obtained_certificates.extend(flatten_2d_array([x.domains for x in obtained]))
+            except CertApiException as e:
+                tb.print_exception(e)
+                pass
         processed_set = set(obtained_certificates).union(set(blacklisted))
         self_signed = [x for x in domain if x not in processed_set]
         if self_signed:
             # Add the self-signed domains to the blacklist
             for domain in self_signed:
                 self.blacklist.add(domain) # Blacklist class doesn't take duration, it's a simple blacklist
-            print("[Self Signing certificates]", self_signed)
+            print("[   Self Signing        ] : ", ', '.join(self_signed))
             self.register_certificate_self_sign(self_signed)
 
         return obtained
@@ -110,3 +113,7 @@ class SSL:
                 (key, cert) = self.self_signer.generate_key_and_cert_for_domain(d, key_type="ecdsa")
                 key_id = self.key_store.save_key(key, d + ".selfsigned")
                 self.key_store.save_cert(key_id, cert, [d], name=d + ".selfsigned")
+
+
+def flatten_2d_array(two_d_array):
+    return [item for sublist in two_d_array for item in sublist]

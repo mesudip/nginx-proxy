@@ -1,4 +1,4 @@
-from typing import Dict, Any, Set
+from typing import Dict, Any, List, Union
 
 from . import Container
 
@@ -12,7 +12,7 @@ class Location:
         self.http = is_http_backend
         self.websocket = is_websocket_backend
         self.name = name
-        self.containers: Set[Container.Container] = set()
+        self.containers: List[Container.Container] = []
         self.extras: Dict[str, Any] = {}
 
     def update_extras(self, extras: Dict[str, Any]):
@@ -29,15 +29,18 @@ class Location:
                 self.extras[x] = extras[x]
 
     def add(self, container: Container.Container):
-        self.containers.add(container)
+        if not any(c.id == container.id for c in self.containers):
+            self.containers.append(container)
 
     def isempty(self):
         return len(self.containers) == 0
 
-    def remove(self, container: Container.Container):
-        if container in self.containers:
-            self.containers.remove(container)
-            return True
+    def remove(self, container: Union[Container.Container, str]):
+        container_id = container.id if isinstance(container, Container.Container) else container
+        for i, c in enumerate(self.containers):
+            if c.id == container_id:
+                del self.containers[i]
+                return c
         return False
 
     def __eq__(self, other) -> bool:

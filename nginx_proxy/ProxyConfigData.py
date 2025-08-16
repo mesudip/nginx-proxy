@@ -1,5 +1,6 @@
 from typing import Dict, Set, Generator, Tuple, Union
 
+from nginx_proxy.Container import Container
 from nginx_proxy.Host import Host
 from nginx_proxy.Location import Location
 
@@ -47,14 +48,15 @@ class ProxyConfigData:
             for container in location.containers:
                 self.containers.add(container.id)
 
-    def remove_container(self, container_id: str) -> Tuple[bool, Set[Tuple[str, int]]]:
+    def remove_container(self, container_id: str) -> Tuple[Union[Container,None], Set[Tuple[str, int]]]:
         removed_domains = set()
         result = False
         if container_id in self.containers:
             self.containers.remove(container_id)
             for host in self.host_list():
-                if host.remove_container(container_id):
-                    result = True
+                removed= host.remove_container(container_id)
+                if removed:
+                    result = removed
                     if host.isempty():
                         host.extras = {}
                         removed_domains.add((host.hostname, host.port))

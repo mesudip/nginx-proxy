@@ -115,9 +115,12 @@ def host_generator(container: DockerContainer, service_id: str = None, known_net
     else:
         raise UnreachableNetwork(c.networks)
 
+    container_name = container.attrs["Name"].replace("/", "")
+
     for host_config in static_hosts:
         host, location, container_data, extras = _parse_host_entry(host_config)
         container_data.id = container.id
+        container_data.name = container_name
         host.secured = "https" in host.scheme or "wss" in host.scheme or host.port == 443
         if host.port is None:
             host.port = 443 if host.secured else 80
@@ -137,6 +140,7 @@ def host_generator(container: DockerContainer, service_id: str = None, known_net
         host, location, container_data, extras = _parse_host_entry(host_config)
         container_data.address = ip_address
         container_data.id = container.id
+        container_data.name = container_name
         if override_port:
             container_data.port = override_port
         elif container_data.port is None:
