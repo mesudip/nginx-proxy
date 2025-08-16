@@ -46,7 +46,7 @@ if len(debug_config):
     print("Starting nginx-proxy in debug mode. Trying to connect to debug server ", str(debug_config))
     pydevd.settrace(stdoutToServer=True, stderrToServer=True, **debug_config)
 
-# fix for https://trello.com/c/dMG5lcTZ
+
 try:
     client = docker.from_env()
     client.version()
