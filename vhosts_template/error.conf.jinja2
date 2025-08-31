@@ -1,0 +1,24 @@
+error_page 404 /404.html;
+error_page 502 /502.html;
+error_page 503 /503.html;
+error_page 504 /504.html;
+
+location = /404.html {
+    root {{ config.vhosts_template_dir }}/errors;
+    internal;
+}
+
+location = /502.html {
+    root {{ config.vhosts_template_dir }}/errors;
+    internal;
+}
+
+location = /503.html {
+    root {{ config.vhosts_template_dir }}/errors;
+    internal;
+}
+
+location = /504.html {
+    root {{ config.vhosts_template_dir }}/errors;
+    internal;
+}

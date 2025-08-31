@@ -28,7 +28,7 @@ client_max_body_size {{ config.client_max_body_size }};
 server{
         server_name {{ server.hostname }};
 
-        include /app/vhosts_template/error.conf;{% if server.secured  %}
+        include {{ config.rendered_error_conf_path }};{% if server.secured  %}
         listen {{ server.port }} ssl {{ server.extras.default_server }} ;
         http2 on;
         ssl_certificate /etc/ssl/certs/{{ server.ssl_file }}.crt;
@@ -45,7 +45,7 @@ server{
             auth_basic_user_file {{ location.extras.security_file }};{% endif %} {% if location.upstream %}
             proxy_pass {{ location.container.scheme }}://{{ location.upstream }}{{location.container.path}};    # container: {{ location.container.id[:12] }}{% else %}
             proxy_pass {{location.container.scheme }}://{{ location.container.address }}:{{ location.container.port }}{{ location.container.path }};  # container: {{ location.container.id[:12] }}{% endif %}{% if location.name != '/' %}
-            proxy_redirect $scheme://$http_host{{ location.container.path if location.container.path else '/' }} $scheme://$http_host{{location.name}};{% endif %} {% if location.websocket  and location.http %}
+            proxy_redirect $scheme://$http_host{{ location.container.path if location.container.path else '/' }} $scheme://$http_host{{location.name}};{% endif %} {% if location.websocket and location.http %}
             proxy_set_header Host $http_host;
             proxy_set_header Connection $connection_upgrade;
             proxy_set_header Upgrade $http_upgrade;
@@ -66,7 +66,7 @@ server{
         }{% endif %}
 }{% else %}
 server {
-        include /app/vhosts_template/error.conf;
+        include {{ config.rendered_error_conf_path }};
         listen 80 {{ server.extras.default_server }};
         server_name {{ server.hostname }};
         location /.well-known/acme-challenge/ {
@@ -89,7 +89,7 @@ server{
         error_page 503 /503_default.html;
 
         location = /503_default.html {
-            root /app/vhosts_template/errors;
+            root {{ config.vhosts_template_dir }}/errors;
             internal;
         }
 

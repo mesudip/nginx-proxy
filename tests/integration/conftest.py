@@ -6,6 +6,10 @@ import websocket
 import os
 import re
 from urllib.parse import urlparse
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 @pytest.fixture(scope="session")
 def docker_host_ip():
@@ -30,7 +34,7 @@ def docker_client():
     client.close()
 
 @pytest.fixture(scope="session")
-def test_network(docker_client):
+def test_network(docker_client:docker.DockerClient):
     network_name = "test-frontend"
     try:
         network = docker_client.networks.get(network_name)
@@ -40,15 +44,21 @@ def test_network(docker_client):
     print(f"Waiting a moment before removing network {network_name}...")
     time.sleep(2) # Give Docker time to clean up endpoints
     try:
+        network.reload() # Reload network to get updated container list
+        for container in network.containers:
+            print(f"Stopping and removing container {container.name} from network {network_name}...")
+            try:
+                container.remove(force=True)
+                print(f"Container {container.name} stopped and removed.")
+            except docker.errors.APIError as container_e:
+                print(f"Error stopping/removing container {container.name}: {container_e}")
         network.remove()
         print(f"Network {network_name} removed successfully.")
     except docker.errors.APIError as e:
         print(f"Error removing network {network_name}: {e}")
-        # Optionally, try to disconnect and remove containers if the error persists
-        # This might involve listing containers on the network and forcing their removal
 
 @pytest.fixture(scope="session")
-def nginx_proxy_container(docker_client, test_network):
+def nginx_proxy_container(docker_client: docker.DockerClient, test_network,docker_host_ip):
     image_name = "mesudip/nginx-proxy:test"
     container_name = "nginx-proxy-test-container"
 
@@ -80,9 +90,14 @@ def nginx_proxy_container(docker_client, test_network):
             image_name,
             detach=True,
             ports={'80/tcp': None, '443/tcp': None}, # Let Docker assign random ports
-            volumes={'/var/run/docker.sock': {'bind': '/var/run/docker.sock', 'mode': 'ro'}},
+            volumes={'/var/run/docker.sock': {'bind': '/var/run/docker.sock', 'mode': 'ro'},
+                     'nginx-test-dhparam': {'bind': '/etc/nginx/dhparam', 'mode': 'rw'},
+                     'nginx-test-ssl': {'bind': '/etc/ssl', 'mode': 'rw'}
+                     },
             network=test_network.name,
             name=container_name,
+            environment={"LETSENCRYPT_API": "https://acme-staging-v02.api.letsencrypt.org/directory",
+                        "DHPARAM_SIZE": "256"},
             restart_policy={"Name": "no"}
         )
         
@@ -98,7 +113,7 @@ def nginx_proxy_container(docker_client, test_network):
         for i in range(120): # wait up to 120 seconds (2 minutes)
             try:
                 # Use localhost for health check as it's from within the test runner's perspective
-                response = requests.get(f"http://localhost:{port_80}", headers={"Host": "nonexistent.example.com"}, timeout=1)
+                response = requests.get(f"http://{docker_host_ip}:{port_80}", headers={"Host": "nonexistent.example.com"}, timeout=1)
                 if response.status_code == 503: # Default 503 response means nginx is up
                     print(f"nginx-proxy is ready after {i+1} seconds.")
                     ready = True
@@ -119,3 +134,43 @@ def nginx_proxy_container(docker_client, test_network):
             print("Stopping and removing nginx-proxy-test-container...")
             container.stop()
             container.remove()
+
+class NginxRequest(requests.Session):
+
+    def __init__(self, base_url_http: str, base_url_https: str):
+        super().__init__()
+        self.verify = False  # Disable SSL verification for testing
+        self.base_url_http = base_url_http
+        self.base_url_https = base_url_https
+
+    def _get_host_header(self, url: str) -> str:
+        parsed_url = urlparse(url)
+        return parsed_url.hostname
+
+    def request(self, method, url, **kwargs):
+        host_header = self._get_host_header(url)
+        headers = kwargs.pop("headers", {})
+        headers["Host"] = host_header
+        
+        # Use the base_url_http for the actual request, but keep the original URL's path
+        parsed_original_url = urlparse(url)
+        target_url =  (self.base_url_https if 'https' in self.base_url_http else self.base_url_http ) \
+            + parsed_original_url.path
+        
+        return super().request(method, target_url, headers=headers, **kwargs)
+
+    def websocket_connect(self, url: str, **kwargs):
+        host_header = self._get_host_header(url)
+        headers = kwargs.pop("header", {}) # websocket library uses 'header' not 'headers'
+        headers["Host"] = host_header
+        # Construct the websocket URL using the base_url_http's host and port
+        parsed_base_url = urlparse(self.base_url_http)
+        ws_url = f"ws://{parsed_base_url.netloc}{urlparse(url).path}"
+        return websocket.create_connection(ws_url, header=headers, **kwargs)
+
+@pytest.fixture(scope="session")
+def nginx_request(nginx_proxy_container, docker_host_ip):
+    _, port_80, port_443 = nginx_proxy_container
+    base_url_http = f"http://{docker_host_ip}:{port_80}"
+    base_url_https = f"https://{docker_host_ip}:{port_443}"
+    return NginxRequest(base_url_http, base_url_https)
