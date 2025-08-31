@@ -160,8 +160,8 @@ def test_http_block(loaded_config):
     assert http.default_type == "application/octet-stream"
 
     # 
-    assert http.log_formats["main"] == "'$remote_addr - $remote_user [$time_local] ' \"$request\" $status $bytes_sent ' \"$http_referer\" \"$http_user_agent\" ' \"$gzip_ratio\"'"
-    assert http.log_formats["download"] == "'$remote_addr - $remote_user [$time_local] ' \"$request\" $status $bytes_sent ' \"$http_referer\" \"$http_user_agent\" ' \"$http_range\" \"$sent_http_content_range\"'"
+    assert http.log_formats["main"] == "'$remote_addr - $remote_user [$time_local] ' '\"$request\" $status $bytes_sent ' '\"$http_referer\" \"$http_user_agent\" ' '\"$gzip_ratio\"'"
+    assert http.log_formats["download"] == "'$remote_addr - $remote_user [$time_local] ' '\"$request\" $status $bytes_sent ' '\"$http_referer\" \"$http_user_agent\" ' '\"$http_range\" \"$sent_http_content_range\"'"
     assert http.client_header_timeout == "3m"
     assert http.client_body_timeout == "3m"
     assert http.send_timeout == "3m"
