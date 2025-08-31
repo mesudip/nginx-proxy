@@ -24,10 +24,14 @@ from nginx_proxy.Host import Host
 RELOAD_INTERVAL = 5  # seconds
 
 class WebServer:
-    def __init__(self, client: DockerClient, *args):
-        self.config = self.loadconfig()
+    """
+    In nginx-proxy Webserver is the controller class to manage nginx config and nginx process
+    Events are sent to this class by DockerEventListener or other injectors.
+    """
+    def __init__(self, docker_client: DockerClient):
+        self.config = WebServer.loadconfig()
         self.shouldExit = False
-        self.client = client
+        self.client = docker_client
         self._reload_timer = None
         self._reload_lock = threading.Lock()
         self._last_reload_actual_time = 0 # Timestamp of when the last reload actually completed
@@ -41,9 +45,14 @@ class WebServer:
         self.services = set()
         self.networks = {}
         self.conf_file_name = self.config["conf_dir"] + "/conf.d/default.conf"
-        file = open("vhosts_template/default.conf.jinja2")
-        self.template = Template(file.read())
-        file.close()
+        vhosts_template_path = os.path.join(self.config["vhosts_template_dir"], "default.conf.jinja2")
+        with open(vhosts_template_path) as f:
+            self.template = Template(f.read())
+
+        error_template_path = os.path.join(self.config["vhosts_template_dir"], "error.conf.jinja2")
+        with open(error_template_path) as f:
+            self.error_template = Template(f.read())
+
         self.learn_yourself()
         self.ssl_processor = post_processors.SslCertificateProcessor(
             self.nginx, self, start_ssl_thread=False, ssl_dir=self.config["ssl_dir"]
@@ -51,31 +60,12 @@ class WebServer:
         self.basic_auth_processor = post_processors.BasicAuthProcessor(self.config["conf_dir"] + "/basic_auth")
         self.redirect_processor = post_processors.RedirectProcessor()
 
-        if self.nginx.config_test():
-            print("Config test succeed")
-            if (
-                len(self.nginx.last_working_config) < 50
-            ):  # if the config is too short, just force restart, we might not have any consequences.
-                print("Writing default config before reloading server.")
-                if not self.nginx.force_start(self.template.render(config=self.config)):
-                    print("Nginx failed when reloaded with default config", file=sys.stderr)
-                    print("Exiting .....", file=sys.stderr)
-                    exit(1)
-            elif not self.nginx.start():
-                print("ERROR: Config test succeded but nginx failed to start", file=sys.stderr)
-                print("Exiting .....", file=sys.stderr)
-                exit(1)
-        else:
-            print(
-                "ERROR: Existing nginx configuration has error, trying to override with default configuration",
-                file=sys.stderr,
-            )
-            if not self.nginx.force_start(self.template.render(config=self.config)):
-                print("Nginx failed when reloaded with default config", file=sys.stderr)
-                print("Exiting .....", file=sys.stderr)
-                exit(1)
-        print("Now waiting for nginx")
-        self.nginx.wait()
+        # Render default config for Nginx setup
+        default_nginx_config = self.template.render(config=self.config)
+        if not self.nginx.setup(default_nginx_config):
+            print("Nginx setup failed. Exiting.", file=sys.stderr)
+            sys.exit(1)
+
         print("Reachable Networks :", self.networks)
         self.rescan_and_reload(force=True)
         self._last_reload_actual_time = time.time() # Set initial actual reload time
@@ -123,6 +113,15 @@ class WebServer:
         self.basic_auth_processor.process_basic_auth(hosts)
         self.ssl_processor.process_ssl_certificates(hosts)
         self.config["default_server"] = not has_default
+
+        # Render error.conf.jinja2 and save it
+        rendered_error_conf_path = os.path.join(self.config["conf_dir"], "error.conf")
+        with open(rendered_error_conf_path, "w") as f:
+            f.write(self.error_template.render(config=self.config))
+
+        # Pass the path to the rendered error file to the main template
+        self.config["rendered_error_conf_path"] = rendered_error_conf_path
+
         output = self.template.render(virtual_servers=hosts, config=self.config)
         if forced:
             response = self.nginx.force_start(output)
@@ -308,7 +307,9 @@ class WebServer:
         self.ssl_processor.shutdown()
         self.nginx.stop()
 
-    def loadconfig(self):
+
+    @staticmethod
+    def loadconfig():
         return {
             "dummy_nginx": os.getenv("DUMMY_NGINX") is not None,
             "ssl_dir": strip_end(os.getenv("SSL_DIR", "/etc/ssl").strip()),
@@ -317,6 +318,7 @@ class WebServer:
             "challenge_dir": strip_end(os.getenv("CHALLENGE_DIR", "/tmp/acme-challenges").strip())
             + "/",  # the nginx challenge dir must end with a /
             "default_server": os.getenv("DEFAULT_HOST", "true").strip().lower() == "true",
+            "vhosts_template_dir": strip_end(os.getenv("VHOSTS_TEMPLATE_DIR", "./vhosts_template").strip()),
         }
 
 
