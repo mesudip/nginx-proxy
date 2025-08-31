@@ -70,21 +70,22 @@ class ConfigParser:
         while self.i < self.length:
             if self.config[self.i] == "\n":  # multiline value
                 if buf and param_name:
-                    if param_value is None:
-                        param_value = []
-                    param_value.append(buf.strip())
-                    buf = ""
+                    buf += " " # Treat newline as space
             elif self.config[self.i] == " ":
-                if not param_name and len(buf.strip()) > 0:
+                if not param_name and buf.strip():
                     param_name = buf.strip()
                     buf = ""
-                else:
+                elif buf:
                     buf += self.config[self.i]
             elif self.config[self.i] == ";":
-                if isinstance(param_value, list):
-                    param_value.append(buf.strip())
-                else:
-                    param_value = buf.strip()
+                current_value = " ".join(buf.split())
+                if current_value.startswith("'") and current_value.endswith("'"):
+                    current_value = current_value[1:-1]
+                elif current_value.startswith('"') and current_value.endswith('"'):
+                    current_value = current_value[1:-1]
+
+                param_value = current_value
+                
                 if param_name:
                     block.append(Direction(param_name, param_value))
                 else:

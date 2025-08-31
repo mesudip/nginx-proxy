@@ -213,3 +213,37 @@ class Nginx:
             result = sock.connect_ex(("127.0.0.1", 80))
         sock.close()
         print("Nginx is alive")
+
+    def setup(self, default_config_content: str) -> bool:
+        """
+        Sets up the Nginx server, performing initial configuration tests and starting it.
+        If the existing configuration is invalid, it attempts to force-start with a default config.
+        :param default_config_content: The content of the default Nginx configuration.
+        :return: True if Nginx is successfully set up and started, False otherwise.
+        """
+        if self.config_test():
+            print("Config test succeed")
+            if (
+                len(self.last_working_config) < 50
+            ):  # if the config is too short, just force restart, we might not have any consequences.
+                print("Writing default config before reloading server.")
+                if not self.force_start(default_config_content):
+                    print("Nginx failed when reloaded with default config", file=sys.stderr)
+                    print("Exiting .....", file=sys.stderr)
+                    return False
+            elif not self.start():
+                print("ERROR: Config test succeded but nginx failed to start", file=sys.stderr)
+                print("Exiting .....", file=sys.stderr)
+                return False
+        else:
+            print(
+                "ERROR: Existing nginx configuration has error, trying to override with default configuration",
+                file=sys.stderr,
+            )
+            if not self.force_start(default_config_content):
+                print("Nginx failed when reloaded with default config", file=sys.stderr)
+                print("Exiting .....", file=sys.stderr)
+                return False
+        print("Now waiting for nginx")
+        self.wait()
+        return True
