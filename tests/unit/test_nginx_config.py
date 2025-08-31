@@ -242,3 +242,18 @@ def test_location_blocks(loaded_config):
     assert loc4.root == "/spool/www"
     assert loc4.access_log == "off"
     assert loc4.expires == "30d"
+
+def test_http_block_parse():
+    from nginx.NginxConf import HttpBlock
+    http_block_str = """
+        proxy_headers on;
+        server {
+            listen 80;
+            server_name example.com;
+        }
+    """
+    http_block = HttpBlock.parse(http_block_str)
+    assert http_block is not None
+    assert len(http_block.servers) == 1
+    assert http_block.servers[0].listen == "80"
+    assert http_block.servers[0].server_names == ["example.com"]

@@ -91,6 +91,19 @@ class HttpBlock:
         self.block = block
         self.servers: List['ServerBlock'] = [ServerBlock(b) for b in self.block.get_blocks("server")]
 
+    @staticmethod
+    def parse(http_block_str: str) -> 'HttpBlock':
+        parser = ConfigParser()
+        if not http_block_str.strip().startswith('http'):
+            config_str = f"http {{ {http_block_str} }}"
+        else:
+            config_str = http_block_str
+        
+        parser.load(config_str)
+        
+        http_block_obj = parser.data.get_blocks('http')[0]
+        return HttpBlock(http_block_obj)
+
     @property
     def include(self) -> Optional[str]:
         return self._get_directive_value("include")
