@@ -21,14 +21,12 @@ from nginx_proxy import ProxyConfigData
 from nginx_proxy.Host import Host
 
 
-RELOAD_INTERVAL = 5  # seconds
-
 class WebServer:
     """
     In nginx-proxy Webserver is the controller class to manage nginx config and nginx process
     Events are sent to this class by DockerEventListener or other injectors.
     """
-    def __init__(self, docker_client: DockerClient):
+    def __init__(self, docker_client: DockerClient,nginx_update_throtle_ms=5*1000):
         self.config = WebServer.loadconfig()
         self.shouldExit = False
         self.client = docker_client
@@ -37,6 +35,7 @@ class WebServer:
         self._last_reload_actual_time = 0 # Timestamp of when the last reload actually completed
         self._next_reload_scheduled_time = 0 # Timestamp of when the next reload is scheduled to occur
         conf_file = self.config["conf_dir"] + "/conf.d/default.conf"
+        self.reload_interval=nginx_update_throtle_ms
         challenge_dir = self.config["challenge_dir"]
         self.nginx = (
             DummyNginx(conf_file, challenge_dir) if self.config["dummy_nginx"] else Nginx(conf_file, challenge_dir)
@@ -218,14 +217,14 @@ class WebServer:
 
             current_time = time.time()
             # Calculate the earliest time a new reload can actually happen
-            next_possible_actual_reload_time = self._last_reload_actual_time + RELOAD_INTERVAL
+            next_possible_actual_reload_time = self._last_reload_actual_time + self.reload_interval
 
             if current_time >= next_possible_actual_reload_time:
                 # Enough time has passed since the last actual reload, perform immediately
                 if self._reload_timer and self._reload_timer.is_alive():
                     self._reload_timer.cancel() # Cancel any lingering timer
                 self._next_reload_scheduled_time = 0 # No longer scheduled
-                self._last_reload_actual_time = current_time # Update actual time
+                self._last_reload_actual_time = current_time # Update actual timereload_interval
                 return self._do_reload()
             else:
                 # Not enough time has passed, schedule if not already scheduled
