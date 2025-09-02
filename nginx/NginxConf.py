@@ -94,16 +94,18 @@ class HttpBlock:
     @staticmethod
     def parse(http_block_str: str) -> 'HttpBlock':
         parser = ConfigParser()
-        if not http_block_str.strip().startswith('http'):
-            config_str = f"http {{ {http_block_str} }}"
-        else:
-            config_str = http_block_str
-        
-        parser.load(config_str)
-        
-        http_block_obj = parser.data.get_blocks('http')[0]
-        return HttpBlock(http_block_obj)
+        parser.load(http_block_str)
+        return HttpBlock(parser.data)
 
+
+    @property
+    def return_code(self) -> Optional[str]:
+        return self._get_directive_value("return")
+    
+    @property
+    def upstreams(self) ->  list['Block']:
+        return self.block.get_blocks('upstream')
+    
     @property
     def include(self) -> Optional[str]:
         return self._get_directive_value("include")
@@ -115,6 +117,7 @@ class HttpBlock:
     @property
     def default_type(self) -> Optional[str]:
         return self._get_directive_value("default_type")
+
 
     @default_type.setter
     def default_type(self, value: str):
@@ -193,9 +196,74 @@ class HttpBlock:
     def keepalive_timeout(self) -> Optional[str]:
         return self._get_directive_value("keepalive_timeout")
 
+    @property
+    def maps(self) -> List['MapBlock']:
+        blocks = self.block.get_blocks("map")
+        return [MapBlock(b) for b in blocks]
+
+    @property
+    def server_names_hash_bucket_size(self) -> Optional[str]:
+        return self._get_directive_value("server_names_hash_bucket_size")
+
+    @property
+    def proxy_cache(self) -> Optional[str]:
+        return self._get_directive_value("proxy_cache")
+
+    @property
+    def proxy_request_buffering(self) -> Optional[str]:
+        return self._get_directive_value("proxy_request_buffering")
+
+    @property
+    def ssl_ciphers(self) -> Optional[str]:
+        return self._get_directive_value("ssl_ciphers")
+
+    @property
+    def ssl_protocols(self) -> Optional[str]:
+        return self._get_directive_value("ssl_protocols")
+
+    @property
+    def ssl_prefer_server_ciphers(self) -> Optional[str]:
+        return self._get_directive_value("ssl_prefer_server_ciphers")
+
+    @property
+    def ssl_session_timeout(self) -> Optional[str]:
+        return self._get_directive_value("ssl_session_timeout")
+
+    @property
+    def ssl_session_cache(self) -> Optional[str]:
+        return self._get_directive_value("ssl_session_cache")
+
+    @property
+    def ssl_session_tickets(self) -> Optional[str]:
+        return self._get_directive_value("ssl_session_tickets")
+
+    @property
+    def ssl_stapling(self) -> Optional[str]:
+        return self._get_directive_value("ssl_stapling")
+
+    @property
+    def ssl_stapling_verify(self) -> Optional[str]:
+        return self._get_directive_value("ssl_stapling_verify")
+
+    @property
+    def add_headers(self) -> List[str]:
+        headers = []
+        for d in self.block.get_directives("add_header"):
+            headers.append(" ".join(d.values))
+        return headers
+
+    @property
+    def access_log(self) -> Optional[str]:
+        return self._get_directive_value("access_log")
+
+    @property
+    def client_max_body_size(self) -> Optional[str]:
+        return self._get_directive_value("client_max_body_size")
+
     def _get_directive_value(self, name: str) -> Optional[str]:
         dirs = self.block.get_directives(name)
         return " ".join(filter(None, dirs[0].values)).strip() if dirs else None
+
 
 class ServerBlock:
     def __init__(self, block: 'Block'):
@@ -209,6 +277,10 @@ class ServerBlock:
     @listen.setter
     def listen(self, value: str):
         self.block.set_directive("listen", value)
+
+    @property
+    def return_code(self) -> Optional[str]:
+        return self._get_directive_value("return")
 
     @property
     def server_names(self) -> List[str]:
@@ -261,9 +333,16 @@ class LocationBlock:
     def proxy_redirect(self, value: str):
         self.block.set_directive("proxy_redirect", value)
 
+
+    @property
+    def return_code(self) -> Optional[str]:
+        return self._get_directive_value("return")
+    
     @property
     def client_max_body_size(self) -> Optional[str]:
         return self._get_directive_value("client_max_body_size")
+
+
 
     @client_max_body_size.setter
     def client_max_body_size(self, value: str):
@@ -371,7 +450,31 @@ class LocationBlock:
     def root(self) -> Optional[str]:
         return self._get_directive_value("root")
 
+    @property
+    def alias(self) -> Optional[str]:
+        return self._get_directive_value("alias")
+    @property
+    def try_files(self) -> Optional[str]:
+        return self._get_directive_value("try_files")
+
+    @property
+    def internal(self) -> Optional[str]:
+        return self._get_directive_value("internal")
+
     # Add setters similarly where needed
+
+    def _get_directive_value(self, name: str) -> Optional[str]:
+        dirs = self.block.get_directives(name)
+        return " ".join(filter(None, dirs[0].values)).strip() if dirs else None
+
+class MapBlock:
+    def __init__(self, block: 'Block'):
+        self.block = block
+        self.parameters: str = block.parameters # e.g., "$http_upgrade $connection_upgrade"
+        self.directives: Dict[str, str] = {}
+        for item in self.block.contents:
+            if item.is_direction():
+                self.directives[item.name] = " ".join(item.values).strip()
 
     def _get_directive_value(self, name: str) -> Optional[str]:
         dirs = self.block.get_directives(name)

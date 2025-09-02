@@ -26,16 +26,16 @@ class WebServer:
     In nginx-proxy Webserver is the controller class to manage nginx config and nginx process
     Events are sent to this class by DockerEventListener or other injectors.
     """
-    def __init__(self, docker_client: DockerClient,nginx_update_throtle_ms=5*1000):
+    def __init__(self, docker_client: DockerClient,nginx_update_throtle_sec=5):
         self.config = WebServer.loadconfig()
         self.shouldExit = False
         self.client = docker_client
         self._reload_timer = None
         self._reload_lock = threading.Lock()
-        self._last_reload_actual_time = 0 # Timestamp of when the last reload actually completed
-        self._next_reload_scheduled_time = 0 # Timestamp of when the next reload is scheduled to occur
+        self._last_reload_actual_time = time.time() # Timestamp of when the last reload actually completed
+        self._next_reload_scheduled_time = time.time() # Timestamp of when the next reload is scheduled to occur
         conf_file = self.config["conf_dir"] + "/conf.d/default.conf"
-        self.reload_interval=nginx_update_throtle_ms
+        self.reload_interval=nginx_update_throtle_sec
         challenge_dir = self.config["challenge_dir"]
         self.nginx = (
             DummyNginx(conf_file, challenge_dir) if self.config["dummy_nginx"] else Nginx(conf_file, challenge_dir)

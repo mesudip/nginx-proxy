@@ -18,12 +18,14 @@ class DockerEventListener:
         print("Starting Docker event listener loop.")
         filters = {
             "type": ["service", "network", "container"],
-            "event": ["start", "stop", "create", "destroy", "health_status"],
+            "event": ["start", "stop", "create", "destroy", "die", "health_status"],
         }
         for event in self.client.events(decode=True, filters=filters):
             try:
                 eventType = event.get("Type")
                 eventAction = event.get("Action")
+                print("New event",eventType,eventAction)
+
 
                 if eventType == "service":
                     self._process_service_event(eventAction, event)
@@ -51,8 +53,7 @@ class DockerEventListener:
         if action == "start":
             # print("container started", event["id"])
             self.web_server.update_container(event["id"])
-        elif action == "stop" or action == 'die':
-            # print("container died", event["id"])
+        elif action == "stop" or action == 'die' or action == "destroy":
             self.web_server.remove_container(event["id"])
 
     def _process_network_event(self, action, event):
