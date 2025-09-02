@@ -4,7 +4,7 @@ import time
 from unittest.mock import MagicMock, patch
 from typing import List
 
-from nginx.NginxConf import NginxConfig
+from nginx.NginxConf import HttpBlock, NginxConfig
 from nginx_proxy.WebServer import WebServer
 from nginx.DummyNginx import DummyNginx
 from nginx.NginxChallengeSolver import NginxChallengeSolver
@@ -17,20 +17,6 @@ import os
 
 from tests.helpers.docker_test_client import DockerTestClient, MockContainer, MockNetwork
 from nginx_proxy.DockerEventListener import DockerEventListener
-
-def assert_config_part_in_nginx_config(expected_part: str, actual_config: str, message_prefix: str = "Expected config part not found"):
-    """
-    Helper function to assert if an expected Nginx config part is present in the actual config.
-    If not, it fails the test with a detailed, readable message.
-    """
-    if expected_part.strip() not in actual_config.strip():
-        pytest.fail(
-            f"{message_prefix} in current Nginx config.\n\n"
-            f"--- Expected Config Part ---\n{expected_part.strip()}\n\n"
-            f"--- Current Nginx Config ---\n{actual_config.strip()}"
-        )
-
-
 
 @pytest.fixture(scope="session")
 def nginx(webserver:WebServer):
@@ -59,7 +45,7 @@ def create_webserver(docker_client: DockerTestClient):
             "vhosts_template_dir" : "./vhosts_template",
         }
         # Initialize WebServer
-        webserver = WebServer(docker_client=docker_client)
+        webserver = WebServer(docker_client,10)
 
         # Start DockerEventListener in a background thread to process events
         listener = DockerEventListener(webserver, docker_client)
@@ -88,28 +74,30 @@ def webserver_instance(webserver: WebServer, nginx: DummyNginx, docker_client: D
 def test_webserver_initialization(webserver:WebServer,nginx:DummyNginx):
     assert isinstance(webserver.ssl_processor.ssl.challenge_store, NginxChallengeSolver)
     # Check initial default server block
-    expected_initial_config = """
-server{
-        listen 80 default_server;
-        server_name _ ;
-        location /.well-known/acme-challenge/ {
-            alias /tmp/acme-challenges/;
-            try_files $uri =404;
-        }
-        error_page 503 /503_default.html;
+    config = NginxConfig()
+    full_config_str = f"http {{\n{nginx.current_config}\n}}"
+    config.load(full_config_str)
 
-        location = /503_default.html {
-            root /tmp/vhosts_template/errors;
-            internal;
-        }
+    assert len(config.http.servers) == 1
+    server = config.http.servers[0]
+    assert server.listen == "80 default_server"
+    assert server.server_names == ["_"]
+    assert server.error_page == "503 /503_default.html"
 
-        location / {
-            return 503;
-        }
-}
-"""
-    actual_config = nginx.current_config
-    assert_config_part_in_nginx_config(expected_initial_config, actual_config, "Expected initial config part not found")
+    assert len(server.locations) == 3
+    loc0 = server.locations[0]
+    assert loc0.path == "/.well-known/acme-challenge/"
+    assert loc0.alias == "/tmp/acme-challenges/"
+    assert loc0.try_files == "$uri =404"
+
+    loc1 = server.locations[1]
+    assert loc1.path == "= /503_default.html"
+    assert loc1.root == "/tmp/vhosts_template/errors"
+    assert loc1.internal == True
+
+    loc2 = server.locations[2]
+    assert loc2.path == "/"
+    assert loc2.return_code == "503"
 
 def test_webserver_add_container(webserver:WebServer,docker_client:DockerTestClient,nginx:DummyNginx):
 
@@ -126,24 +114,29 @@ def test_webserver_add_container(webserver:WebServer,docker_client:DockerTestCli
     # Create container, triggering create and start events
     print("Test container started waiting for 5 secs")
     # Allow listener time to process events
-    time.sleep(5)  # Small delay for async event processing
+    time.sleep(0.1)  # Small delay for async event processing
 
-    config = NginxConfig()
-    config.load(nginx.current_config)
-    
-    expected_config_part = """
-server{
-        server_name example.com;
+    config = HttpBlock.parse(nginx.current_config)
 
-        include ./run_data/error.conf;
-        listen 443 ; 
-        location / {
-            proxy_pass http://172.18.0.2:8000;  # container: {container.id[:12]}
-        }
-}
-"""
+    # Find the server block for example.com
     
-    assert_config_part_in_nginx_config(expected_config_part, nginx.current_config, "Expected container config part not found")
+    example_server = config.servers[0]
+    for server in config.servers:
+        if "example.com" in server.server_names:
+            example_server = server
+            break
+    assert example_server is not None, "Server for example.com not found"
+
+    assert example_server.server_names == ["example.com"]
+    assert example_server.includes == ["./run_data/error.conf"]
+    assert example_server.listen == "443"
+
+    assert len(example_server.locations) == 1
+    location = example_server.locations[0]
+    assert location.path == "/"
+    # Extract the IP address from the container's network settings
+    container_ip = container.get_ip_address("frontend")
+    assert location.proxy_pass == f"http://{container_ip}:8000"
 
 def test_webserver_remove_container(webserver_instance):
     webserver, dummy_nginx, docker_client = webserver_instance
@@ -159,7 +152,7 @@ def test_webserver_remove_container(webserver_instance):
 
     # Add container using docker_client.containers.run
     container = docker_client.containers.run("nginx:alpine", name=container_name, environment=env, labels=labels, network=network_names[0])
-    time.sleep(5)  # Allow event processing
+    time.sleep(0.1)  # Allow event processing
 
     # Verify addition
     expected_config_part = "server_name example.com;"
@@ -167,32 +160,42 @@ def test_webserver_remove_container(webserver_instance):
 
     # Remove container, triggering destroy event
     container.remove()
-    time.sleep(5)  # Allow event processing
+    time.sleep(0.1)  # Allow event processing
 
     # Verify removal
-    assert expected_config_part not in dummy_nginx.current_config
-    expected_default_config = """
-server{
-        listen 80 default_server;
-        server_name _ ;
-        location /.well-known/acme-challenge/ {
-            alias /tmp/acme-challenges/;
-            try_files $uri =404;
-        }
-        error_page 503 /503_default.html;
+    config = NginxConfig()
+    full_config_str = f"http {{\n{dummy_nginx.current_config}\n}}"
+    config.load(full_config_str)
 
-        location = /503_default.html {
-            root /tmp/vhosts_template/errors;
-            internal;
-        }
+    # Assert that the example.com server is no longer present
+    example_server_found = False
+    for server in config.http.servers:
+        if "example.com" in server.server_names:
+            example_server_found = True
+            break
+    assert not example_server_found, "Server for example.com should have been removed"
 
-        location / {
-            return 503;
-        }
-}
-"""
-    actual_config = dummy_nginx.current_config
-    assert_config_part_in_nginx_config(expected_default_config, actual_config, "Expected default config part not found after container removal")
+    # Assert that the default server block is still present and correctly configured
+    assert len(config.http.servers) == 1
+    default_server = config.http.servers[0]
+    assert default_server.listen == "80 default_server"
+    assert default_server.server_names == ["_"]
+    assert default_server.error_page == "503 /503_default.html"
+
+    assert len(default_server.locations) == 3
+    loc0 = default_server.locations[0]
+    assert loc0.path == "/.well-known/acme-challenge/"
+    assert loc0.alias == "/tmp/acme-challenges/"
+    assert loc0.try_files == "$uri =404"
+
+    loc1 = default_server.locations[1]
+    assert loc1.path == "= /503_default.html"
+    assert loc1.root == "/tmp/vhosts_template/errors"
+    assert loc1.internal == True
+
+    loc2 = default_server.locations[2]
+    assert loc2.path == "/"
+    assert loc2.return_code == "503"
 
 def test_webserver_add_network(webserver_instance):
     webserver, dummy_nginx, docker_client = webserver_instance
@@ -209,25 +212,32 @@ def test_webserver_add_network(webserver_instance):
 
     # Create container on bridge using docker_client.containers.run
     container = docker_client.containers.run("nginx:alpine", name=container_name, environment=env, labels=labels, network=network_names_initial[0])
-    time.sleep(5)  # Allow event processing
+    time.sleep(0.1)  # Allow event processing
 
     # Add new network
     net = docker_client.networks.create("new_network")
     net.connect(container.id, ipv4_address=address_new_network)
-    time.sleep(5)  # Allow connect event processing
+    time.sleep(0.1)  # Allow connect event processing
 
-    expected_config_part = f"""
-server {{
-    listen 80;
-    server_name example.com;
+    config = NginxConfig()
+    full_config_str = f"http {{\n{dummy_nginx.current_config}\n}}"
+    config.load(full_config_str)
 
-    location / {{
-        proxy_pass http://{address_new_network}:8000;
-    }}
-}}
-"""
-    actual_config = dummy_nginx.current_config
-    assert_config_part_in_nginx_config(expected_config_part, actual_config, "Expected config part after adding network not found")
+    # Find the server block for example.com
+    example_server = None
+    for server in config.http.servers:
+        if "example.com" in server.server_names:
+            example_server = server
+            break
+    assert example_server is not None, "Server for example.com not found after adding network"
+
+    assert example_server.listen == "80"
+    assert example_server.server_names == ["example.com"]
+
+    assert len(example_server.locations) == 1
+    location = example_server.locations[0]
+    assert location.path == "/"
+    assert location.proxy_pass == f"http://{address_new_network}:8000"
 
 def test_webserver_remove_network(webserver_instance):
     webserver, dummy_nginx, docker_client = webserver_instance
@@ -248,51 +258,59 @@ def test_webserver_remove_network(webserver_instance):
     # Connect to the second network manually
     net_another = docker_client.networks.create("another_network")
     net_another.connect(container.id, ipv4_address=address_new_network)
-    time.sleep(5)  # Allow event processing
+    time.sleep(0.1)  # Allow event processing
 
     # Disconnect from another_network
     net_another.disconnect(container.id)
-    time.sleep(5)  # Allow disconnect event processing
+    time.sleep(0.1)  # Allow disconnect event processing
 
-    expected_config_part = f"""
-server {{
-    listen 80;
-    server_name example.com;
+    config = NginxConfig()
+    full_config_str = f"http {{\n{dummy_nginx.current_config}\n}}"
+    config.load(full_config_str)
 
-    location / {{
-        proxy_pass http://{address_bridge}:8000;
-    }}
-}}
-"""
-    actual_config = dummy_nginx.current_config
-    assert_config_part_in_nginx_config(expected_config_part, actual_config, "Expected config part after removing network not found")
+    # Find the server block for example.com
+    example_server = None
+    for server in config.http.servers:
+        if "example.com" in server.server_names:
+            example_server = server
+            break
+    assert example_server is not None, "Server for example.com not found after removing network"
+
+    assert example_server.listen == "80"
+    assert example_server.server_names == ["example.com"]
+
+    assert len(example_server.locations) == 1
+    location = example_server.locations[0]
+    assert location.path == "/"
+    assert location.proxy_pass == f"http://{address_bridge}:8000"
 
     # Clean up by removing container
     container.remove()
-    time.sleep(5)  # Allow event processing
+    time.sleep(0.1)  # Allow event processing
 
-    expected_default_config = """
-server{
-        listen 80 default_server;
-        server_name _ ;
-        location /.well-known/acme-challenge/ {
-            alias /tmp/acme-challenges/;
-            try_files $uri =404;
-        }
-        error_page 503 /503_default.html;
+    # Verify that only the default server remains
+    full_config_str = f"http {{\n{dummy_nginx.current_config}\n}}"
+    config.load(full_config_str) # Reload config after container removal
+    assert len(config.http.servers) == 1
+    default_server = config.http.servers[0]
+    assert default_server.listen == "80 default_server"
+    assert default_server.server_names == ["_"]
+    assert default_server.error_page == "503 /503_default.html"
 
-        location = /503_default.html {
-            root /tmp/vhosts_template/errors;
-            internal;
-        }
+    assert len(default_server.locations) == 3
+    loc0 = default_server.locations[0]
+    assert loc0.path == "/.well-known/acme-challenge/"
+    assert loc0.alias == "/tmp/acme-challenges/"
+    assert loc0.try_files == "$uri =404"
 
-        location / {
-            return 503;
-        }
-}
-"""
-    actual_config = dummy_nginx.current_config
-    assert_config_part_in_nginx_config(expected_default_config, actual_config, "Expected default config part not found after container removal and network changes")
+    loc1 = default_server.locations[1]
+    assert loc1.path == "= /503_default.html"
+    assert loc1.root == "/tmp/vhosts_template/errors"
+    assert loc1.internal == True
+
+    loc2 = default_server.locations[2]
+    assert loc2.path == "/"
+    assert loc2.return_code == "503"
 
 def test_webserver_update_container_labels(webserver_instance):
     webserver, dummy_nginx, docker_client = webserver_instance
@@ -308,13 +326,22 @@ def test_webserver_update_container_labels(webserver_instance):
 
     # Create with old labels
     container = docker_client.containers.run("nginx:alpine", name=container_name, environment=env_old, labels=labels_old, network=network_names[0])
-    time.sleep(5)  # Allow event processing
+    time.sleep(0.1)  # Allow event processing
 
-    assert "server_name old.example.com;" in dummy_nginx.current_config
+    config = NginxConfig()
+    config.load(dummy_nginx.current_config)
+
+    # Verify old server name exists
+    old_server_found = False
+    for server in config.http.servers:
+        if "old.example.com" in server.server_names:
+            old_server_found = True
+            break
+    assert old_server_found, "Server for old.example.com not found initially"
 
     # Remove the old container first to allow creating a new one with the same name
     container.remove()
-    time.sleep(5) # Allow event processing for removal
+    time.sleep(0.1) # Allow event processing for removal
 
     # Create new container with updated labels, same name
     labels_new = {
@@ -324,10 +351,25 @@ def test_webserver_update_container_labels(webserver_instance):
         "VIRTUAL_HOST": "new.example.com"
     }
     container_new = docker_client.containers.run("nginx:alpine", name=container_name, environment=env_new, labels=labels_new, network=network_names[0])
-    time.sleep(5)  # Allow event processing
+    time.sleep(0.1)  # Allow event processing
 
-    assert "server_name old.example.com;" not in dummy_nginx.current_config
-    assert "server_name new.example.com;" in dummy_nginx.current_config
+    config.load(dummy_nginx.current_config) # Reload config after update
+
+    # Verify old server name is gone
+    old_server_found_after_update = False
+    for server in config.http.servers:
+        if "old.example.com" in server.server_names:
+            old_server_found_after_update = True
+            break
+    assert not old_server_found_after_update, "Server for old.example.com should have been removed after update"
+
+    # Verify new server name exists
+    new_server_found = False
+    for server in config.http.servers:
+        if "new.example.com" in server.server_names:
+            new_server_found = True
+            break
+    assert new_server_found, "Server for new.example.com not found after update"
 
 def test_webserver_add_container_with_ssl(webserver_instance):
     webserver, dummy_nginx, docker_client = webserver_instance
@@ -344,28 +386,34 @@ def test_webserver_add_container_with_ssl(webserver_instance):
 
     # Create container with SSL labels using docker_client.containers.run
     docker_client.containers.run("nginx:alpine", name=container_name, environment=env, labels=labels, network=network_names[0])
-    time.sleep(5)  # Allow event processing
+    time.sleep(0.1)  # Allow event processing
 
-    expected_config_part_http = """
-server {
-    listen 80;
-    server_name ssl.example.com;
-    return 301 https://$host$request_uri;
-}
-"""
-    expected_config_part_https = """
-server {
-    listen 443 ssl;
-    server_name ssl.example.com;
+    config = NginxConfig()
+    config.load(dummy_nginx.current_config)
 
-    ssl_certificate /etc/nginx/ssl/ssl.example.com.crt;
-    ssl_certificate_key /etc/nginx/ssl/ssl.example.com.key;
+    # Find the HTTP server block for ssl.example.com
+    http_server = None
+    for server in config.http.servers:
+        if "ssl.example.com" in server.server_names and server.listen == "80":
+            http_server = server
+            break
+    assert http_server is not None, "HTTP server for ssl.example.com not found"
+    assert http_server.server_names == ["ssl.example.com"]
+    assert http_server.return_code == "301 https://$host$request_uri"
 
-    location / {
-        proxy_pass http://172.17.0.3:443;
-    }
-}
-"""
-    current_config = dummy_nginx.current_config
-    assert_config_part_in_nginx_config(expected_config_part_http, current_config, "Expected HTTP config part for SSL container not found")
-    assert_config_part_in_nginx_config(expected_config_part_https, current_config, "Expected HTTPS config part for SSL container not found")
+    # Find the HTTPS server block for ssl.example.com
+    https_server = None
+    for server in config.http.servers:
+        if "ssl.example.com" in server.server_names and server.listen == "443 ssl":
+            https_server = server
+            break
+    assert https_server is not None, "HTTPS server for ssl.example.com not found"
+    assert https_server.server_names == ["ssl.example.com"]
+    assert https_server.ssl_certificate == "/etc/nginx/ssl/ssl.example.com.crt"
+    assert https_server.ssl_certificate_key == "/etc/nginx/ssl/ssl.example.com.key"
+
+    assert len(https_server.locations) == 1
+    location = https_server.locations[0]
+    assert location.path == "/"
+    container_ip = docker_client.get_container_by_name(container_name).get_ip_address("frontend")
+    assert location.proxy_pass == f"http://{container_ip}:443"

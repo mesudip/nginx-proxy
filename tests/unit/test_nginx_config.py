@@ -257,3 +257,61 @@ def test_http_block_parse():
     assert len(http_block.servers) == 1
     assert http_block.servers[0].listen == "80"
     assert http_block.servers[0].server_names == ["example.com"]
+
+def test_http_block_parse_complex():
+    from nginx.NginxConf import HttpBlock
+    http_block_str = """
+server {
+
+        http2 on;
+        ssl_certificate /etc/ssl/certs/*.sireto.dev.crt;
+        ssl_certificate_key /etc/ssl/private/*.sireto.dev.key;
+        
+        listen 80 default_server;
+        server_name _ ;
+        location /.well-known/acme-challenge/ {
+            alias ./.run_data/acme-challenges/;
+            try_files $uri =404;
+        }
+        error_page 503 /503_default.html;
+
+        location = /503_default.html {
+            root ./vhosts_template/errors;
+            internal;
+        }
+
+        location / {
+            return 503;
+        }
+}
+    """
+    http_block = HttpBlock.parse(http_block_str)
+    assert http_block is not None
+
+    # Assert map block
+  
+
+
+    # Assert server block
+    assert len(http_block.servers) == 1
+    server = http_block.servers[0]
+    assert server.listen == "80 default_server"
+    assert server.server_names == ["_"]
+    assert server.error_page == "503 /503_default.html"
+
+    # Assert location blocks within the server block
+    assert len(server.locations) == 3
+
+    loc0 = server.locations[0]
+    assert loc0.path == "/.well-known/acme-challenge/"
+    assert loc0.alias == "./.run_data/acme-challenges/"
+    assert loc0.try_files == "$uri =404"
+
+    loc1 = server.locations[1]
+    assert loc1.path == "= /503_default.html"
+    assert loc1.root == "./vhosts_template/errors"
+    assert loc1.internal == ""
+
+    loc2 = server.locations[2]
+    assert loc2.path == "/"
+    assert loc2.return_code == "503"
