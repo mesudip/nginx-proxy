@@ -315,3 +315,19 @@ server {
     loc2 = server.locations[2]
     assert loc2.path == "/"
     assert loc2.return_code == "503"
+
+
+def test_server_block_with_no_space():
+    from nginx.NginxConf import HttpBlock
+    http_block_str = """
+server{
+        listen 80;
+        server_name example.com;
+}
+    """
+    http_block = HttpBlock.parse(http_block_str)
+    assert http_block is not None
+    assert len(http_block.servers) == 1
+    server = http_block.servers[0]
+    assert server.listen == "80"
+    assert server.server_names == ["example.com"]

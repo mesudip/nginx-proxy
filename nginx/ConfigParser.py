@@ -95,8 +95,10 @@ class ConfigParser:
                 buf = ""
             elif self.config[self.i] == "{":
                 self.i += 1
-                _block = self.parse_block(param_name, "")
-                _block.parameters = buf.strip()
+                if not param_name:
+                    param_name = buf.strip()
+                    buf = ""
+                _block = self.parse_block(param_name, buf.strip())
                 block.append(_block)
                 param_name = None
                 param_value = None
