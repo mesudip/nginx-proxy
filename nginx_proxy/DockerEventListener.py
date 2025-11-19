@@ -18,13 +18,13 @@ class DockerEventListener:
         print("Starting Docker event listener loop.")
         filters = {
             "type": ["service", "network", "container"],
-            "event": ["start", "stop", "create", "destroy", "die", "health_status"],
+            "event": ["start", "stop", "create", "destroy", "die", "health_status", "connect", "disconnect"],
         }
         for event in self.client.events(decode=True, filters=filters):
             try:
                 eventType = event.get("Type")
                 eventAction = event.get("Action")
-                print("New event",eventType,eventAction)
+                # print("New event",eventType,eventAction)
 
 
                 if eventType == "service":

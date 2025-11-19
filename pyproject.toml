@@ -6,7 +6,7 @@ line-length = 120
 minversion = "6.0"
 addopts = "-ra -s"
 testpaths = [
-    "tests",
+    "tests", '.'
 ]
 # env_files =[".env", ".test.env"]
 

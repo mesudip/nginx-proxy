@@ -1,3 +1,4 @@
+from typing import List
 import uuid
 import ipaddress
 import queue
@@ -121,7 +122,7 @@ class MockContainerCollection:
             net.connect(cont, **kwargs)  # Pass aliases, ipv4_address, etc.
             return cont
 
-    def run(self, image, command=None, **kwargs):
+    def run(self, image, command=None, **kwargs)-> 'MockContainer':
         cont = self.create(image, command, **kwargs)
         cont.start()
         return cont
@@ -132,7 +133,7 @@ class MockContainer:
         self.name = name
         self.image = image
         self.status = 'created'
-        self.client = client
+        self.client: 'DockerTestClient' = client
         self.attrs = {'Name': f'/{name}'} # Docker container names are prefixed with /
 
     def start(self, **kwargs):
@@ -209,8 +210,50 @@ class MockContainer:
                 })
 
     def remove(self, **kwargs):
+        force = kwargs.get('force', False)
         with self.client._lock:
-            if self.id in self.client._containers:
+                if self.id not in self.client._containers:
+                    raise ValueError("No such container")
+                if self.status == 'running' and not force:
+                    raise ValueError(f"You cannot remove a running container {self.name}. Stop the container before attempting removal or force=True")
+                if self.status == 'running' and force:
+                    # Emit die event for force remove
+                    self.client._emit_event({
+                        "status": "die",
+                        "id": self.id,
+                        "from": self.image,
+                        "Type": "container",
+                        "Action": "die",
+                        "Actor": {
+                            "ID": self.id,
+                            "Attributes": {
+                                "name": self.name,
+                                "image": self.image,
+                                "exitCode": "137"  # Mocked for force kill
+                            }
+                        },
+                        "scope": "local",
+                        "time": int(time.time()),
+                        "timeNano": time.time_ns()
+                    })
+                    self.status = 'stopped'
+                    self.client._emit_event({
+                        "status": "stop",
+                        "id": self.id,
+                        "from": self.image,
+                        "Type": "container",
+                        "Action": "stop",
+                        "Actor": {
+                            "ID": self.id,
+                            "Attributes": {
+                                "name": self.name,
+                                "image": self.image
+                            }
+                        },
+                        "scope": "local",
+                        "time": int(time.time()),
+                        "timeNano": time.time_ns()
+                    })
                 # Disconnect from all networks
                 for net_name in list(self.attrs['NetworkSettings']['Networks']):
                     net = self.client.networks.get(net_name)
@@ -234,18 +277,16 @@ class MockContainer:
                     "time": int(time.time()),
                     "timeNano": time.time_ns()
                 })
-            else:
-                raise ValueError("No such container")
 
 class MockNetworkCollection:
     def __init__(self, client):
         self.client = client
 
-    def list(self, **kwargs):
+    def list(self, **kwargs)-> List['MockNetwork']:
         with self.client._lock:
             return list(self.client._networks.values())
 
-    def get(self, network_id, **kwargs):
+    def get(self, network_id, **kwargs) -> 'MockNetwork':
         with self.client._lock:
             if network_id in self.client._networks:
                 return self.client._networks[network_id]
@@ -254,7 +295,7 @@ class MockNetworkCollection:
                     return net
             raise ValueError("No such network")
 
-    def create(self, name, **kwargs):
+    def create(self, name, **kwargs)-> 'MockNetwork':
         with self.client._lock:
             nid = self.client._generate_id()
             net = MockNetwork(nid, name, self.client)
@@ -330,10 +371,9 @@ class MockNetwork:
             container.attrs['NetworkSettings']['Networks'][self.name] = {
                 'IPAddress': ip,
                 'Aliases': aliases,
-                'NetworkID': self.id # Add NetworkID here
+                'NetworkID': self.id
             }
             self._connected[cont_id] = {'ip': ip, 'aliases': aliases}
-            # Emit connect event
             self.client._emit_event({
                 "Type": "network",
                 "Action": "connect",

@@ -57,7 +57,7 @@ def test_network(docker_client:docker.DockerClient):
     except docker.errors.APIError as e:
         print(f"Error removing network {network_name}: {e}")
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 def nginx_proxy_container(docker_client: docker.DockerClient, test_network,docker_host_ip):
     image_name = "mesudip/nginx-proxy:test"
     container_name = "nginx-proxy-test-container"
@@ -97,11 +97,15 @@ def nginx_proxy_container(docker_client: docker.DockerClient, test_network,docke
             network=test_network.name,
             name=container_name,
             environment={"LETSENCRYPT_API": "https://acme-staging-v02.api.letsencrypt.org/directory",
-                        "DHPARAM_SIZE": "256"},
+                        "DHPARAM_SIZE": "256",
+                        "VHOSTS_TEMPLATE_DIR" : "/app/vhosts_template",
+                        "CHALLENGE_DIR" : "/etc/nginx/acme-challenges",
+                        },
             restart_policy={"Name": "no"}
         )
         
         # Get the dynamically assigned ports
+        time.sleep(2) # Give Docker a moment to update port mappings
         container.reload() # Reload container info to get updated port mappings
         port_80 = container.ports['80/tcp'][0]['HostPort']
         port_443 = container.ports['443/tcp'][0]['HostPort']
@@ -132,6 +136,9 @@ def nginx_proxy_container(docker_client: docker.DockerClient, test_network,docke
     finally:
         if container:
             print("Stopping and removing nginx-proxy-test-container...")
+            print("=========================== Container Logs Start ===========================")
+            print(container.logs().decode('utf-8'))
+            print("=========================== Container Logs End ===========================")
             container.stop()
             container.remove()
 
@@ -168,7 +175,7 @@ class NginxRequest(requests.Session):
         ws_url = f"ws://{parsed_base_url.netloc}{urlparse(url).path}"
         return websocket.create_connection(ws_url, header=headers, **kwargs)
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def nginx_request(nginx_proxy_container, docker_host_ip):
     _, port_80, port_443 = nginx_proxy_container
     base_url_http = f"http://{docker_host_ip}:{port_80}"

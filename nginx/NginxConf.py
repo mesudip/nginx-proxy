@@ -270,6 +270,11 @@ class ServerBlock:
         self.block = block
         self.locations: List['LocationBlock'] = [LocationBlock(b) for b in self.block.get_blocks("location")]
 
+    def __repr__(self) -> str:
+        server_names = ", ".join(self.server_names) if self.server_names else "N/A"
+        listen_port = self.listen if self.listen else "N/A"
+        return f"<ServerBlock(server_names='{server_names}', listen='{listen_port}', locations={len(self.locations)})>"
+
     @property
     def listen(self) -> Optional[str]:
         return self._get_directive_value("listen")
@@ -316,6 +321,11 @@ class LocationBlock:
         self.block = block
         self.path: str = block.parameters
         self.ifs: List['IfBlock'] = [IfBlock(b) for b in self.block.get_blocks("if")]
+
+    def __repr__(self) -> str:
+        proxy_pass_info = f", proxy_pass='{self.proxy_pass}'" if self.proxy_pass else ""
+        directive_count = len([c for c in self.block.contents if c.is_direction()])
+        return f"<LocationBlock(path='{self.path}', ifs={len(self.ifs)}, directive_count={directive_count}{proxy_pass_info})>"
 
     @property
     def proxy_pass(self) -> Optional[str]:

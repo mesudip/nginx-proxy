@@ -2,6 +2,6 @@ docker==7.1.0
 Jinja2==3.1.4
 pydevd==3.1.0
 bcrypt==4.3.0 # for basic auth
-certapi==0.5.0
+certapi==0.5.1
 pytest==8.2.2
 requests==2.32.3
