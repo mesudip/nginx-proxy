@@ -28,8 +28,10 @@ def test_container_start_event_v29_format():
     # Simulate the backward compatible logic
     action = "start"
     if action == "start":
-        # Try v29 format first, fallback to v28
-        container_id = event_v29.get("Actor", {}).get("ID") or event_v29.get("id")
+        # Try v29 format first with explicit None check, fallback to v28
+        container_id = event_v29.get("Actor", {}).get("ID")
+        if container_id is None:
+            container_id = event_v29.get("id")
         mock_server.update_container(container_id)
     
     # Verify update_container was called with the correct ID from Actor.ID
@@ -58,8 +60,10 @@ def test_container_stop_event_v29_format():
     # Simulate the backward compatible logic
     action = "stop"
     if action == "stop":
-        # Try v29 format first, fallback to v28
-        container_id = event_v29.get("Actor", {}).get("ID") or event_v29.get("id")
+        # Try v29 format first with explicit None check, fallback to v28
+        container_id = event_v29.get("Actor", {}).get("ID")
+        if container_id is None:
+            container_id = event_v29.get("id")
         mock_server.remove_container(container_id)
     
     # Verify remove_container was called with the correct ID from Actor.ID
@@ -88,8 +92,10 @@ def test_container_start_event_v28_format():
     # Simulate the backward compatible logic
     action = "start"
     if action == "start":
-        # Try v29 format first, fallback to v28
-        container_id = event_v28.get("Actor", {}).get("ID") or event_v28.get("id")
+        # Try v29 format first with explicit None check, fallback to v28
+        container_id = event_v28.get("Actor", {}).get("ID")
+        if container_id is None:
+            container_id = event_v28.get("id")
         mock_server.update_container(container_id)
     
     # Verify update_container was called with the correct ID from top-level id
@@ -118,8 +124,10 @@ def test_container_stop_event_v28_format():
     # Simulate the backward compatible logic
     action = "stop"
     if action == "stop":
-        # Try v29 format first, fallback to v28
-        container_id = event_v28.get("Actor", {}).get("ID") or event_v28.get("id")
+        # Try v29 format first with explicit None check, fallback to v28
+        container_id = event_v28.get("Actor", {}).get("ID")
+        if container_id is None:
+            container_id = event_v28.get("id")
         mock_server.remove_container(container_id)
     
     # Verify remove_container was called with the correct ID from top-level id
@@ -149,8 +157,10 @@ def test_event_structure_v29():
     # Test that old style event["id"] would not exist in v29
     assert "id" not in event_v29
     
-    # Test backward compatible extraction
-    container_id = event_v29.get("Actor", {}).get("ID") or event_v29.get("id")
+    # Test backward compatible extraction with explicit None check
+    container_id = event_v29.get("Actor", {}).get("ID")
+    if container_id is None:
+        container_id = event_v29.get("id")
     assert container_id == "abc123"
 
 
@@ -176,6 +186,40 @@ def test_event_structure_v28():
     # Test that Actor.ID doesn't exist in v28
     assert "ID" not in event_v28.get("Actor", {})
     
-    # Test backward compatible extraction
-    container_id = event_v28.get("Actor", {}).get("ID") or event_v28.get("id")
+    # Test backward compatible extraction with explicit None check
+    container_id = event_v28.get("Actor", {}).get("ID")
+    if container_id is None:
+        container_id = event_v28.get("id")
     assert container_id == "def456"
+
+
+def test_event_missing_id():
+    """Test that we handle events with no ID gracefully"""
+    # Create a mock server object
+    mock_server = MagicMock()
+    
+    # Malformed event with no ID anywhere
+    event_no_id = {
+        "Type": "container",
+        "Action": "start",
+        "Actor": {
+            "Attributes": {
+                "name": "test_container"
+            }
+        },
+        "scope": "local",
+        "time": 1234567890
+    }
+    
+    # Simulate the backward compatible logic with validation
+    action = "start"
+    container_id = event_no_id.get("Actor", {}).get("ID")
+    if container_id is None:
+        container_id = event_no_id.get("id")
+    
+    # Should not call update_container if no ID found
+    if container_id:
+        mock_server.update_container(container_id)
+    
+    # Verify update_container was NOT called
+    mock_server.update_container.assert_not_called()

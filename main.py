@@ -94,7 +94,14 @@ def process_service_event(action, event):
 
 def process_container_event(action, event):
     # Docker v29+ uses event["Actor"]["ID"], v28 and earlier use event["id"]
-    container_id = event.get("Actor", {}).get("ID") or event.get("id")
+    # Use explicit None check to handle empty strings properly
+    container_id = event.get("Actor", {}).get("ID")
+    if container_id is None:
+        container_id = event.get("id")
+    
+    if not container_id:
+        # Skip processing if no container ID found
+        return
     
     if action == "start":
         # print("container started", container_id)
