@@ -94,11 +94,11 @@ def process_service_event(action, event):
 
 def process_container_event(action, event):
     if action == "start":
-        # print("container started", event["id"])
-        server.update_container(event["id"])
+        # print("container started", event["Actor"]["ID"])
+        server.update_container(event["Actor"]["ID"])
     elif action == "stop" or action == 'die':
-        # print("container died", event["id"])
-        server.remove_container(event["id"])
+        # print("container died", event["Actor"]["ID"])
+        server.remove_container(event["Actor"]["ID"])
 
 
 def process_network_event(action, event):
