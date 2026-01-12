@@ -116,21 +116,22 @@ class SslCertificateProcessor:
             # First pass: Handle wildcard certificates immediately, one by one.
             for host in hosts:
                 self._prepare_host_for_ssl(host)
-                if host.secured and host.hostname.startswith('*.'):
-                    if not self._assign_existing_cert(host, registered):
-                            try:
-                                registered_ssl = self.ssl.register_certificate(host.hostname)
-                                if len(registered_ssl) > 0:
-                                    registered.add(host.hostname)
-                                    new_certs.extend(registered_ssl)
-                                    continue
-                            except Exception as e:
-                                print(f"Self signing certificate {host.hostname}: {e}")
-                                traceback.print_exception(e)
-                            self.ssl.register_certificate_self_sign(host.hostname)
+                if host.secured :
+                    if host.hostname.startswith('*.'):
+                        if not self._assign_existing_cert(host, registered):
+                                try:
+                                    registered_ssl = self.ssl.register_certificate(host.hostname)
+                                    if len(registered_ssl) > 0:
+                                        registered.add(host.hostname)
+                                        new_certs.extend(registered_ssl)
+                                        continue
+                                except Exception as e:
+                                    print(f"Self signing certificate {host.hostname}: {e}")
+                                    traceback.print_exception(e)
+                                self.ssl.register_certificate_self_sign(host.hostname)
 
-                elif host.secured:
-                    non_wildcards.append(host)
+                    else:
+                        non_wildcards.append(host)
             
             missing_certs: List[str] = []
 
@@ -142,11 +143,15 @@ class SslCertificateProcessor:
             # Batch process regular certificates
             # TODO missing_cert includes the domains already included by wildcard too.
             if len(missing_certs) > 0:
-                new_registrations = self.ssl.register_certificate_or_selfsign(
-                    missing_certs
-                )
-                registered.update(domain for x in new_registrations for domain in x.domains)
-                new_certs.extend(new_registrations)
+                try:
+                    new_registrations = self.ssl.register_certificate_or_selfsign(
+                        missing_certs
+                    )
+                    registered.update(domain for x in new_registrations for domain in x.domains)
+                    new_certs.extend(new_registrations)
+                except Exception as e:
+                    print(f"Self signing certificate {host.hostname}: {e}")
+                    traceback.print_exception(e)
 
             # Final pass: Update SSL info for all hosts
             for host in hosts:
