@@ -22,6 +22,9 @@ class SslCertificateProcessor:
         self.server: WebServer = server
         self.next_ssl_expiry: Union[datetime, None] = None
         self.certificate_expiry_thread: threading.Thread = threading.Thread(target=self.update_ssl_certificates)
+        self.update_threshold = (90 * 24 * 3600) - (4 * 60) # Trigger refresh within 4 minutes for testing
+        self.update_threshold = 2 * 24 * 3600 # 2 days in seconds (must not be more thaan 70 days)
+
         if start_ssl_thread:
             self.certificate_expiry_thread.start()
 
@@ -33,9 +36,9 @@ class SslCertificateProcessor:
                 self.lock.wait()
             else:
                 now = datetime.now(timezone.utc)
-                remaining_days = (self.next_ssl_expiry - now).days
+                remaining_seconds = (self.next_ssl_expiry - now).total_seconds()
 
-                if remaining_days > 2:
+                if remaining_seconds > self.update_threshold:
                     print("[SSL Refresh Thread] SSL certificate status:")
 
                     max_size = max([len(x) for x in self.cache])
@@ -48,18 +51,23 @@ class SslCertificateProcessor:
                         print(
                             f"  {host:<{max_size + 2}} -  {days} days, {hours:02} hours, {minutes:02} minutes, {seconds:02} sec"
                         )
-                    sleep_time = (32 if remaining_days > 30 else remaining_days) - 2
+                    # Sleep until threshold, but cap at 32 days if expiry is far away
+                    max_sleep_seconds = 32 * 24 * 3600
+                    sleep_seconds = min(remaining_seconds - self.update_threshold, max_sleep_seconds)
+                    
                     print(
-                        "[SSL Refresh Thread] All the certificates are up to date sleeping for "
-                        + str(sleep_time)
-                        + " days."
+                        f"[SSL Refresh Thread] All the certificates are up to date sleeping for {sleep_seconds} seconds."
                     )
-                    self.lock.wait(sleep_time * 3600 * 24 - 10)
+                    self.lock.wait(sleep_seconds)
                 else:
                     print("[SSL Refresh Thread] Looks like we need to refresh certificates that are about to expire")
                     for x in self.cache:
                         print("Remaining days :", x, ":", (self.cache[x] - now).days)
-                    x = [x for x in self.cache if (self.cache[x] - now).days < 6]
+                    
+                    # Refresh certificates that are within (threshold + 5 days) for some buffer
+                    buffer_seconds = 5 * 24 * 3600
+                    x = [x for x in self.cache if (self.cache[x] - now).total_seconds() < (self.update_threshold + buffer_seconds)]
+
                     for host in x:
                         del self.cache[host]
                     self.server.reload()
@@ -168,7 +176,7 @@ class SslCertificateProcessor:
                 expiry = min(self.cache.values())
                 if expiry != self.next_ssl_expiry:
                     self.next_ssl_expiry = expiry
-                    if (self.next_ssl_expiry - datetime.now(timezone.utc)).days < 3:
+                    if (self.next_ssl_expiry - datetime.now(timezone.utc)).total_seconds() < 3 * 24 * 3600:
                         self.lock.notify()
         except Exception as e:
             print("Unexpected error processing ssl certificates.")
