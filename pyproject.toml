@@ -4,14 +4,19 @@ line-length = 120
 [tool.pytest.ini_options]
 
 minversion = "6.0"
-addopts = "-ra -q"
+addopts = "-ra -s"
 testpaths = [
-    "tests",
+    "tests", "."
 ]
-env_files =[".env", ".test.env"]
+# env_files =[".env", ".test.env"]
+
+[project]
+name = "nginx-proxy"
+version = "0.1.0"
+
+[tool.setuptools.packages]
+find = {}
 
 [build-system]
 requires = ["setuptools>=42"]
 build-backend = "setuptools.build_meta"
-
-

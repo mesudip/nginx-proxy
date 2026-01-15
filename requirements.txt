@@ -1,7 +1,6 @@
 docker==7.1.0
-Jinja2==3.1.4
+Jinja2==3.1.6
 pydevd==3.1.0
-bcrypt==4.3.0 # for basic auth
-certapi==0.5.0
-pytest==8.2.2
-requests==2.32.3
+bcrypt==4.3.0 # 5.0.0 requires rust so ignoring
+certapi==0.6.0
+requests==2.32.5

@@ -11,6 +11,8 @@ from certapi.crypto import certs_from_pem
 
 
 import traceback
+
+
 class SslCertificateProcessor:
     def __init__(self, nginx: Nginx, server: WebServer, start_ssl_thread=False, ssl_dir="/etc/ssl"):
         self.cache: Dict[str:date] = {}
@@ -22,6 +24,9 @@ class SslCertificateProcessor:
         self.server: WebServer = server
         self.next_ssl_expiry: Union[datetime, None] = None
         self.certificate_expiry_thread: threading.Thread = threading.Thread(target=self.update_ssl_certificates)
+        # self.update_threshold = (90 * 24 * 3600) - (4 * 60)  # Trigger refresh within 4 minutes for testing
+        self.update_threshold = 52 * 24 * 3600 # 52 days in seconds (must not be more thaan 70 days)
+
         if start_ssl_thread:
             self.certificate_expiry_thread.start()
 
@@ -33,9 +38,9 @@ class SslCertificateProcessor:
                 self.lock.wait()
             else:
                 now = datetime.now(timezone.utc)
-                remaining_days = (self.next_ssl_expiry - now).days
+                remaining_seconds = (self.next_ssl_expiry - now).total_seconds()
 
-                if remaining_days > 2:
+                if remaining_seconds > self.update_threshold:
                     print("[SSL Refresh Thread] SSL certificate status:")
 
                     max_size = max([len(x) for x in self.cache])
@@ -44,25 +49,34 @@ class SslCertificateProcessor:
                         days = remaining.days
                         hours, remainder = divmod(remaining.seconds, 3600)
                         minutes, seconds = divmod(remainder, 60)
-                        
+
                         print(
                             f"  {host:<{max_size + 2}} -  {days} days, {hours:02} hours, {minutes:02} minutes, {seconds:02} sec"
                         )
-                    sleep_time = (32 if remaining_days > 30 else remaining_days) - 2
+                    # Sleep until threshold, but cap at 32 days even if expiry is far away
+                    max_sleep_seconds = 32 * 24 * 3600
+                    sleep_seconds = min(remaining_seconds - self.update_threshold, max_sleep_seconds)
+
                     print(
-                        "[SSL Refresh Thread] All the certificates are up to date sleeping for "
-                        + str(sleep_time)
-                        + " days."
+                        f"[SSL Refresh Thread] All the certificates are up to date sleeping for {sleep_seconds} seconds."
                     )
-                    self.lock.wait(sleep_time * 3600 * 24 - 10)
+                    self.lock.wait(sleep_seconds)
                 else:
                     print("[SSL Refresh Thread] Looks like we need to refresh certificates that are about to expire")
                     for x in self.cache:
                         print("Remaining days :", x, ":", (self.cache[x] - now).days)
-                    x = [x for x in self.cache if (self.cache[x] - now).days < 6]
+
+                    # Refresh certificates that are within (threshold + 5 days) for some buffer
+                    buffer_seconds = 5 * 24 * 3600
+                    x = [
+                        x
+                        for x in self.cache
+                        if (self.cache[x] - now).total_seconds() < (self.update_threshold + buffer_seconds)
+                    ]
+
                     for host in x:
                         del self.cache[host]
-                    self.server.reload()
+                    self.server.reload()  # this doesn't renew the certificates.
 
     def _prepare_host_for_ssl(self, host: Host):
         """Sets SSL redirect and port if applicable."""
@@ -79,45 +93,45 @@ class SslCertificateProcessor:
             host.ssl_file = host.hostname
             registered.add(host.hostname)
             return True
-        
+
         # Reuse the wildcard certificate if available and registered
         wildcard = self.wildcard_domain_name(host.hostname)
         if wildcard is not None:
-            if  (wildcard in registered) or (wildcard in self.cache):
+            if (wildcard in registered) or (wildcard in self.cache):
                 host.ssl_file = wildcard
                 return True
         return False
 
-    def _update_host_ssl_info(self, host: Host, registered: Set[str],certs:List[IssuedCert]):
+    def _update_host_ssl_info(self, host: Host, registered: Set[str], certs: List[IssuedCert]):
         """
         Updates host.ssl_file, self.cache, and host.ssl_expiry based on registration status.
         Assumes host.secured is True.
         """
-        if (host.hostname  in registered) or (host.hostname in self.cache):
-            host.ssl_file = host.hostname 
-             
+        if (host.hostname in registered) or (host.hostname in self.cache):
+            host.ssl_file = host.hostname
+
         else:
             wildcard_domain = self.wildcard_domain_name(host.hostname)
             if wildcard_domain and ((wildcard_domain in registered) or (wildcard_domain in self.cache)):
                 host.ssl_file = wildcard_domain
             else:
                 host.ssl_file = host.hostname + ".selfsigned"
-                self.self_signed.add(host.hostname) 
-                                                
+                self.self_signed.add(host.hostname)
 
     def process_ssl_certificates(self, hosts: List[Host]):
         if not hosts:
             return
         self.lock.acquire()
         registered: Set[str] = set()
-        new_certs:List[IssuedCert]=[]
-        non_wildcards: List[Host]=[]
+        new_certs: List[IssuedCert] = []
+        non_wildcards: List[Host] = []
         try:
             # First pass: Handle wildcard certificates immediately, one by one.
             for host in hosts:
-                self._prepare_host_for_ssl(host)
-                if host.secured and host.hostname.startswith('*.'):
-                    if not self._assign_existing_cert(host, registered):
+                if host.secured:
+                    self._prepare_host_for_ssl(host)
+                    if host.hostname.startswith("*."):
+                        if not self._assign_existing_cert(host, registered):
                             try:
                                 registered_ssl = self.ssl.register_certificate(host.hostname)
                                 if len(registered_ssl) > 0:
@@ -129,9 +143,9 @@ class SslCertificateProcessor:
                                 traceback.print_exception(e)
                             self.ssl.register_certificate_self_sign(host.hostname)
 
-                elif host.secured:
-                    non_wildcards.append(host)
-            
+                    else:
+                        non_wildcards.append(host)
+
             missing_certs: List[str] = []
 
             # First read from the cache.
@@ -142,33 +156,35 @@ class SslCertificateProcessor:
             # Batch process regular certificates
             # TODO missing_cert includes the domains already included by wildcard too.
             if len(missing_certs) > 0:
-                new_registrations = self.ssl.register_certificate_or_selfsign(
-                    missing_certs
-                )
-                registered.update(domain for x in new_registrations for domain in x.domains)
-                new_certs.extend(new_registrations)
+                try:
+                    new_registrations = self.ssl.register_certificate_or_selfsign(missing_certs)
+                    registered.update(domain for x in new_registrations for domain in x.domains)
+                    new_certs.extend(new_registrations)
+                except Exception as e:
+                    print(f"Self signing certificate {host.hostname}: {e}")
+                    traceback.print_exception(e)
 
             # Final pass: Update SSL info for all hosts
             for host in hosts:
                 if host.secured:
-                    self._update_host_ssl_info(host, registered,new_certs)
+                    self._update_host_ssl_info(host, registered, new_certs)
 
             for cert in new_certs:
                 for domain in cert.domains:
-                    full_chain = certs_from_pem(cert.certificate.encode('utf-8'))
-                    self.cache[domain]=full_chain[0].not_valid_after_utc
-                    
+                    full_chain = certs_from_pem(cert.certificate.encode("utf-8"))
+                    self.cache[domain] = full_chain[0].not_valid_after_utc
+
             # # Update next_ssl_expiry
             if len(self.cache):
                 expiry = min(self.cache.values())
                 if expiry != self.next_ssl_expiry:
                     self.next_ssl_expiry = expiry
-                    if (self.next_ssl_expiry - datetime.now(timezone.utc)).days < 3:
+                    if (self.next_ssl_expiry - datetime.now(timezone.utc)).total_seconds() < self.update_threshold:
                         self.lock.notify()
         except Exception as e:
             print("Unexpected error processing ssl certificates.")
             traceback.print_exception(e)
-        finally:    
+        finally:
             self.lock.release()
 
     def wildcard_domain_name(self, domain, wild_char="*"):

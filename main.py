@@ -3,130 +3,51 @@ import re
 import signal
 import subprocess
 import sys
-import traceback
+from nginx_proxy.NginxProxyApp import NginxProxyApp
 
-import docker
-
-from nginx_proxy.WebServer import WebServer
-
-server = None
+app = None
 
 
 # Handle exit signal to respond to stop command.
 def receiveSignal(signalNumber, frame):
-    global server
+    global app
     if signalNumber == 15:
         print("\nShutdown Requested")
-        if server is not None:
-            server.cleanup()
-            server = None
+        if app is not None:
+            app.stop()
+            app = None
         sys.exit(0)
 
 
 signal.signal(signal.SIGTERM, receiveSignal)
 
-# Enable pydevd for debugging locally.
-debug_config = {}
-if "PYTHON_DEBUG_PORT" in os.environ:
-    if os.environ["PYTHON_DEBUG_PORT"].strip():
-        debug_config["port"] = int(os.environ["PYTHON_DEBUG_PORT"].strip())
-if "PYTHON_DEBUG_HOST" in os.environ:
-    debug_config["host"] = os.environ["PYTHON_DEBUG_HOST"]
-if "PYTHON_DEBUG_ENABLE" in os.environ:
-    if os.environ["PYTHON_DEBUG_ENABLE"].strip() == "true":
-        if "host" not in debug_config:
-            debug_config["host"] = re.findall(
-                r"([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)+",
-                subprocess.run(["ip", "route"], stdout=subprocess.PIPE).stdout.decode().split("\n")[0],
-            )[0]
 
-if len(debug_config):
-    import pydevd
+def setup_debug_mode():
+    """
+    This is useful to debug running python container from IDE like PyCharm or VSCode
+    """
+    debug_config = {}
+    if "PYTHON_DEBUG_PORT" in os.environ:
+        if os.environ["PYTHON_DEBUG_PORT"].strip():
+            debug_config["port"] = int(os.environ["PYTHON_DEBUG_PORT"].strip())
+    if "PYTHON_DEBUG_HOST" in os.environ:
+        debug_config["host"] = os.environ["PYTHON_DEBUG_HOST"]
+    if "PYTHON_DEBUG_ENABLE" in os.environ:
+        if os.environ["PYTHON_DEBUG_ENABLE"].strip() == "true":
+            if "host" not in debug_config:
+                debug_config["host"] = re.findall(
+                    r"([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)+",
+                    subprocess.run(["ip", "route"], stdout=subprocess.PIPE).stdout.decode().split("\n")[0],
+                )[0]
 
-    print("Starting nginx-proxy in debug mode. Trying to connect to debug server ", str(debug_config))
-    pydevd.settrace(stdoutToServer=True, stderrToServer=True, **debug_config)
+    if len(debug_config):
+        import pydevd
 
-
-try:
-    client = docker.from_env()
-    client.version()
-except Exception as e:
-    print(
-        "There was error connecting with the docker server \nHave you correctly mounted /var/run/docker.sock?\n"
-        + str(e.args),
-        file=sys.stderr,
-    )
-    sys.exit(1)
+        print("Starting nginx-proxy in debug mode. Trying to connect to debug server ", str(debug_config))
+        pydevd.settrace(stdoutToServer=True, stderrToServer=True, **debug_config)
 
 
-def eventLoop():
-    filters = {
-        "type": ["service", "network", "container"],
-        "event": ["start", "stop", "create", "destroy", "health_status"],
-    }
-    for event in client.events(decode=True, filters=filters):
-        try:
-            eventType = event.get("Type")
-            eventAction = event.get("Action")
-
-            if eventType == "service":
-                process_service_event(eventAction, event)
-            elif eventType == "network":
-                process_network_event(eventAction, event)
-            elif eventType == "container":
-                if eventAction == "health_status":
-                    # process_container_health_event(event)
-                    continue
-                else:
-                    process_container_event(eventAction, event)
-
-        except (KeyboardInterrupt, SystemExit):
-            raise
-        except Exception as e:
-            print("Unexpected error :" + e.__class__.__name__ + " -> " + str(e), file=sys.stderr)
-            traceback.print_exc(limit=10)
-
-
-def process_service_event(action, event):
-    if action == "create":
-        print("service created")
-
-
-def process_container_event(action, event):
-    if action == "start":
-        # print("container started", event["id"])
-        server.update_container(event["id"])
-    elif action == "stop" or action == 'die':
-        # print("container died", event["id"])
-        server.remove_container(event["id"])
-
-
-def process_network_event(action, event):
-    if action == "create":
-        # print("network created")
-        pass
-    elif "container" in event["Actor"]["Attributes"]:
-        if action == "disconnect":
-            # print("network disconnect")
-            server.disconnect(
-                network=event["Actor"]["ID"], container=event["Actor"]["Attributes"]["container"], scope=event["scope"]
-            )
-        elif action == "connect":
-            # print("network connect")
-            server.connect(
-                network=event["Actor"]["ID"], container=event["Actor"]["Attributes"]["container"], scope=event["scope"]
-            )
-    elif action == "destroy":
-        # print("network destryed")
-        pass
-
-
-try:
-    server = WebServer(client)
-    eventLoop()
-except (KeyboardInterrupt, SystemExit) as e:
-    # traceback.print_exception(e)
-    print("-------------------------------\nPerforming Graceful ShutDown !!")
-    if server is not None:
-        server.cleanup()
-        print("---- See You ----")
+if __name__ == "__main__":
+    setup_debug_mode()
+    app = NginxProxyApp()
+    app.run_forever()

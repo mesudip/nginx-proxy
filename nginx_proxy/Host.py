@@ -76,7 +76,7 @@ class Host:
                     deletions.append(path)
             self.container_set.remove(container_id)
         for path in deletions:
-            del self.locations[path]            
+            del self.locations[path]
         return removed
 
     def isempty(self) -> bool:

@@ -48,13 +48,13 @@ class ProxyConfigData:
             for container in location.containers:
                 self.containers.add(container.id)
 
-    def remove_container(self, container_id: str) -> Tuple[Union[Container,None], Set[Tuple[str, int]]]:
+    def remove_container(self, container_id: str) -> Tuple[Union[Container, None], Set[Tuple[str, int]]]:
         removed_domains = set()
         result = False
         if container_id in self.containers:
             self.containers.remove(container_id)
             for host in self.host_list():
-                removed= host.remove_container(container_id)
+                removed = host.remove_container(container_id)
                 if removed:
                     result = removed
                     if host.isempty():

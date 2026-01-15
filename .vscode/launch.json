@@ -15,6 +15,21 @@
                 "SSL_DIR": "./.run_data",
                 "NGINX_CONF_DIR": "./.run_data"
             }
+        },
+        {
+            "name": "nginx-proxy [devcontainer]",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/main.py",
+            "args": [],
+            "env": {
+                "LETSENCRYPT_API": "https://acme-staging-v02.api.letsencrypt.org/directory",
+                "CHALLENGE_DIR": "./.run_data/acme_challenges",
+                "SSL_DIR": "/etc/ssl",
+                "NGINX_CONF_DIR": "/etc/nginx"
+            },
+            "console": "integratedTerminal",
+            "justMyCode": true
         }
     ]
 }

@@ -8,7 +8,7 @@ from os.path import join
 from typing import List
 
 from nginx.Nginx import Nginx
-from certapi import CloudflareChallengeSolver,AcmeCertManager,FileSystemKeyStore,CertApiException
+from certapi import CloudflareChallengeSolver, AcmeCertManager, FileSystemKeyStore, CertApiException
 from certapi.issuers import AcmeCertIssuer, SelfCertIssuer
 from certapi.http.types import IssuedCert
 from nginx.NginxChallengeSolver import NginxChallengeSolver
@@ -30,55 +30,53 @@ class SSL:
                 self.api_url = "https://acme-staging-v02.api.letsencrypt.org/directory"
         else:
             self.api_url = "https://acme-v02.api.letsencrypt.org/directory"
-        
-        
+
         self.challenge_store = NginxChallengeSolver(nginx.challenge_dir, nginx)
         self.key_store = FileSystemKeyStore(ssl_path, keys_dir_name="private")
-        acme_key=self.key_store._get_or_generate_key("acme_account","rsa")[0]
-        cert_issuer=AcmeCertIssuer(acme_key,self.challenge_store,acme_url=self.api_url)
-
+        acme_key = self.key_store._get_or_generate_key("acme_account", "rsa")[0]
+        cert_issuer = AcmeCertIssuer(acme_key, self.challenge_store, acme_url=self.api_url)
 
         all_stores = [self.challenge_store]
-        if os.getenv("CLOUDFLARE_API_KEY") is not None:
-            cloudflare=CloudflareChallengeSolver(os.getenv("CLOUDFLARE_API_KEY").strip())
-            all_stores.append(cloudflare)
-            cloudflare.cleanup_old_challenges()
+        for key, value in os.environ.items():
+            if key.startswith("CLOUDFLARE_API_KEY"):
+                if value:  # Ensure the value is not None or empty
+                    cloudflare = CloudflareChallengeSolver(value.strip())
+                    all_stores.append(cloudflare)
+                    cloudflare.cleanup_old_challenges()
 
-        self.cert_manager = AcmeCertManager(
-            self.key_store,cert_issuer ,all_stores
-        )
+        self.cert_manager = AcmeCertManager(self.key_store, cert_issuer, all_stores)
         self.cert_manager.setup()
-        self.self_signer=SelfCertIssuer(acme_key,"NP","Bagmati","Buddhanagar","nginx-proxy","local.nginx-proxy.com")
+        self.self_signer = SelfCertIssuer(
+            acme_key, "NP", "Bagmati", "Buddhanagar", "nginx-proxy", "local.nginx-proxy.com"
+        )
 
-
-    def register_certificate(
-        self, req_domain
-    )-> List[IssuedCert]:  
+    def register_certificate(self, req_domain) -> List[IssuedCert]:
         domain = [req_domain] if type(req_domain) is str else req_domain
-        result= self.cert_manager.issue_certificate(
-                domain,key_type="ecdsa"
-            ) 
+        result = self.cert_manager.issue_certificate(domain, key_type="ecdsa")
         if len(result.issued):
-            print("[ New Certificates      ] : ",', '.join(flatten_2d_array(sorted([x.domains for x in result.issued]))))
+            print(
+                "[ New Certificates      ] : ", ", ".join(flatten_2d_array(sorted([x.domains for x in result.issued])))
+            )
         if len(result.existing):
-            print("[ Existing Certificates ] : ",', '.join(flatten_2d_array(sorted([x.domains for x in result.existing]))))
+            print(
+                "[ Existing Certificates ] : ",
+                ", ".join(flatten_2d_array(sorted([x.domains for x in result.existing]))),
+            )
         return result.issued + result.existing
 
-
-
-    def register_certificate_or_selfsign(self, domain, no_self_check=False, ignore_existing=False)->List[IssuedCert]:
-        obtained_certificates: List[IssuedCert] = []        
+    def register_certificate_or_selfsign(self, domain, no_self_check=False, ignore_existing=False) -> List[IssuedCert]:
+        obtained_certificates: List[IssuedCert] = []
         for i in range(0, len(domain), 50):
             sub_list = domain[i : i + 50]
             # Filter out blacklisted domains from the sublist
-            valid_list,blacklisted = self.blacklist.partition(sub_list)
+            valid_list, blacklisted = self.blacklist.partition(sub_list)
 
-            if len(blacklisted)  >0 :
+            if len(blacklisted) > 0:
                 print("[Blacklist] ignoring previously failed domain for 3 mins:", ", ".join(blacklisted))
 
             try:
                 # Proceed only with the filtered sublist
-                obtained:  List[IssuedCert] = (
+                obtained: List[IssuedCert] = (
                     self.register_certificate(
                         valid_list,
                     )
@@ -96,8 +94,8 @@ class SSL:
         if self_signed:
             # Add the self-signed domains to the blacklist
             for domain in self_signed:
-                self.blacklist.add(domain) # Blacklist class doesn't take duration, it's a simple blacklist
-            print("[   Self Signing        ] : ", ', '.join(self_signed))
+                self.blacklist.add(domain)  # Blacklist class doesn't take duration, it's a simple blacklist
+            print("[   Self Signing        ] : ", ", ".join(self_signed))
             self.register_certificate_self_sign(self_signed)
 
         return obtained_certificates

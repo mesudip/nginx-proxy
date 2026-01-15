@@ -1,4 +1,5 @@
 import re
+from typing import List, Union
 
 
 class ConfigNode:
@@ -52,6 +53,28 @@ class Block(ConfigNode):
 
     def __len__(self):
         return len(self.contents)
+
+    def get_directives(self, name: str) -> list["Direction"]:
+        return [c for c in self.contents if c.is_direction() and c.name == name]
+
+    def get_blocks(self, name: str) -> list["Block"]:
+        return [c for c in self.contents if c.is_block() and c.name == name]
+
+    def add_directive(self, name: str, value: Union[str, List[str]]):
+        if isinstance(value, str):
+            value = [value]
+        d = Direction(name, value)
+        self.append(d)
+
+    def set_directive(self, name: str, value: Union[str, List[str]]):
+        dirs = self.get_directives(name)
+        if not dirs:
+            self.add_directive(name, value)
+        else:
+            if isinstance(value, str):
+                dirs[0].values = [value]
+            else:
+                dirs[0].values = value
 
     def __getitem__(self, item):
         if type(item) is str:

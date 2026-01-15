@@ -4,8 +4,8 @@ from docker.models.containers import Container as DockerContainer
 
 
 class Container:
-    def __init__(self, id: str, scheme: Union[str] = "http", address=None, port=None, path=None,name=None):
-        self.name=name
+    def __init__(self, id: str, scheme: Union[str] = "http", address=None, port=None, path=None, name=None):
+        self.name = name
         self.id = id
         self.address: str = address
         self.port: int = port
