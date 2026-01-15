@@ -250,10 +250,9 @@ class WebServer:
                 del self.networks[network]
                 del self.networks[rev_id]
                 self.rescan_and_reload()
-        elif container in self.containers and network in self.networks:
+        elif self.config_data.has_container(container) and network in self.networks:
             if not self.update_container(container):
                 self.remove_container(container)
-                self.reload()
 
     def connect(self, network, container, scope):
         if self.id is not None and container == self.id:

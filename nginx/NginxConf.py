@@ -305,6 +305,14 @@ class ServerBlock:
         self.block.set_directive("access_log", value)
 
     @property
+    def ssl_certificate(self) -> Optional[str]:
+        return self._get_directive_value("ssl_certificate")
+
+    @property
+    def ssl_certificate_key(self) -> Optional[str]:
+        return self._get_directive_value("ssl_certificate_key")
+
+    @property
     def error_page(self) -> Optional[str]:
         return self._get_directive_value("error_page")
 
