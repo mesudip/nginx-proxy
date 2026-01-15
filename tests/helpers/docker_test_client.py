@@ -5,13 +5,16 @@ import queue
 import time
 import json
 import threading
+import docker
 
 class DockerTestClient:
     def __init__(self):
         self._containers = {}  # id -> MockContainer
         self._networks = {}    # id -> MockNetwork
+        self._images = {}      # tag -> MockImage
         self.containers = MockContainerCollection(self)
         self.networks = MockNetworkCollection(self)
+        self.images = MockImageCollection(self)
         self._lock = threading.RLock()
         self._event_queue = queue.Queue()
         # Default bridge network
@@ -23,6 +26,9 @@ class DockerTestClient:
             bridge._connected = {}
             self._networks[bridge_id] = bridge
             self._next_subnet = 18  # For incremental subnets like 172.18.0.0/16
+    def close(self):
+        """Signals the event stream to stop."""
+        self._emit_event(None)
 
     def _generate_id(self):
         return uuid.uuid4().hex + uuid.uuid4().hex
@@ -37,6 +43,8 @@ class DockerTestClient:
 
     def events(self, decode=False, filters=None):
         def match(event):
+            if event is None:
+                return True
             if not filters:
                 return True
             for key, values in filters.items():
@@ -52,6 +60,11 @@ class DockerTestClient:
 
         while True:
             event = self._event_queue.get()
+            if event is None:
+                # Sentinel value to stop the iterator
+                self._event_queue.put(None) # Put it back for other listeners if any
+                break 
+
             if match(event):
                 if decode:
                     yield event
@@ -126,6 +139,69 @@ class MockContainerCollection:
         cont = self.create(image, command, **kwargs)
         cont.start()
         return cont
+
+class MockImageCollection:
+    def __init__(self, client:'DockerTestClient'):
+        self.client: 'DockerTestClient' = client
+
+    def build(self, path, tag, **kwargs):
+        """Mock image build - just registers the tag without actually building"""
+        with self.client._lock:
+            image_id = self.client._generate_id()
+            image = MockImage(image_id, tag, self.client)
+            self.client._images[tag] = image
+            # Optionally emit build event
+            self.client._emit_event({
+                "status": "build",
+                "id": image_id,
+                "Type": "image",
+                "Action": "build",
+                "Actor": {
+                    "ID": image_id,
+                    "Attributes": {
+                        "name": tag
+                    }
+                },
+                "scope": "local",
+                "time": int(time.time()),
+                "timeNano": time.time_ns()
+            })
+            return image, []  # Return image and empty logs list
+
+    def get(self, image_tag):
+        with self.client._lock:
+            if image_tag in self.client._images:
+                return self.client._images[image_tag]
+            raise ValueError("No such image")
+
+    def list(self, **kwargs):
+        with self.client._lock:
+            return list(self.client._images.values())
+
+class MockImage:
+    def __init__(self, id, tag, client):
+        self.id = id
+        self.tags = [tag] if tag else []
+        self.client: 'DockerTestClient' = client
+        self.attrs = {
+            'Id': id,
+            'RepoTags': self.tags
+        }
+
+    def tag(self, repository, tag=None, **kwargs):
+        """Add a tag to this image"""
+        full_tag = f"{repository}:{tag}" if tag else repository
+        if full_tag not in self.tags:
+            self.tags.append(full_tag)
+            self.attrs['RepoTags'] = self.tags
+        return True
+
+    def remove(self, **kwargs):
+        """Remove this image"""
+        with self.client._lock:
+            for tag in self.tags:
+                if tag in self.client._images:
+                    del self.client._images[tag]
 
 class MockContainer:
     def __init__(self, id, name, image, client):
@@ -277,7 +353,10 @@ class MockContainer:
                     "time": int(time.time()),
                     "timeNano": time.time_ns()
                 })
-
+    def reload (self,**kwargs):
+        pass
+    def logs(self,**kwargs):
+        return b""
 class MockNetworkCollection:
     def __init__(self, client):
         self.client = client
@@ -293,8 +372,8 @@ class MockNetworkCollection:
             for net in self.client._networks.values():
                 if net.name == network_id:
                     return net
-            raise ValueError("No such network")
-
+            # network not found
+            raise docker.errors.NotFound("No such network: "+network_id)
     def create(self, name, **kwargs)-> 'MockNetwork':
         with self.client._lock:
             nid = self.client._generate_id()
@@ -326,11 +405,22 @@ class MockNetwork:
     def __init__(self, id, name, client):
         self.id = id
         self.name = name
-        self.client = client
+        self.client:'DockerTestClient' = client
         self.attrs = {}
         self._next_ip = None
         self._connected = {}
-
+    @property
+    def containers(self):
+        with self.client._lock:
+            conts = []
+            for cont_id in self._connected.keys():
+                cont = self.client.containers.get(cont_id)
+                if cont:
+                    conts.append(cont)
+            return conts
+    def reload(self,*args, **kwargs):
+        time.sleep(0.01)
+        pass # all data is already in sync
     def remove(self):
         with self.client._lock:
             if self.name == 'bridge':

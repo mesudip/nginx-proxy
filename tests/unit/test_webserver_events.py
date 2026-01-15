@@ -23,6 +23,7 @@ from nginx_proxy.DockerEventListener import DockerEventListener
 @pytest.fixture()
 def nginx(webserver:WebServer):
     return webserver.nginx
+    
 # @pytest.fixture(scope="session")
 @pytest.fixture()
 def docker_client():
@@ -31,7 +32,8 @@ def docker_client():
 # @pytest.fixture(scope="session")
 @pytest.fixture()
 def webserver(docker_client:DockerTestClient):
-    yield create_webserver(docker_client)
+    yield from create_webserver(docker_client)
+
 def create_webserver(docker_client: DockerTestClient):
     # Initialize DockerTestClient
     docker_client.networks.create("frontend")  # Default network
@@ -51,14 +53,23 @@ def create_webserver(docker_client: DockerTestClient):
             "vhosts_template_dir" : "./vhosts_template",
         }
         # Initialize WebServer
-        webserver = WebServer(docker_client,0.1)
+        webserver = WebServer(docker_client,nginx_update_throtle_sec=0.1)
 
         # Start DockerEventListener in a background thread to process events
         listener = DockerEventListener(webserver, docker_client)
         listener_thread = threading.Thread(target=listener.run, daemon=True)
         listener_thread.start()
         # Yield components for testing
-        return webserver
+        yield webserver
+        
+        # Stop the listener by closing the docker client (sends sentinel to event queue)
+        docker_client.close()
+        # Wait for the thread to finish
+        listener_thread.join(timeout=2)
+        
+        # Stop the SSL refresh thread
+        webserver.cleanup()
+        webserver.ssl_processor.certificate_expiry_thread.join(timeout=2)
 
 pattern = re.compile(r'^http://172\.18\.\d{1,3}\.\d{1,3}:80')
 
