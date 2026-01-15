@@ -1,5 +1,9 @@
 Nginx-Proxy
 ===================================================
+[![Run Tests](https://github.com/mesudip/nginx-proxy/actions/workflows/run-tests.yml/badge.svg?branch=master)](https://github.com/mesudip/nginx-proxy/actions/workflows/run-tests.yml)
+[![codecov](https://codecov.io/github/mesudip/nginx-proxy/graph/badge.svg?token=S2GZ0ISOON)](https://codecov.io/github/mesudip/nginx-proxy)
+![Docker Pulls](https://img.shields.io/docker/pulls/mesudip/nginx-proxy)
+
 Docker container for automatically creating nginx configuration based on active containers in docker host.
 
 - Easy server configuration with environment variables
