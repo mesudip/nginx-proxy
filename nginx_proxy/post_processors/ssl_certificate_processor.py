@@ -24,8 +24,8 @@ class SslCertificateProcessor:
         self.server: WebServer = server
         self.next_ssl_expiry: Union[datetime, None] = None
         self.certificate_expiry_thread: threading.Thread = threading.Thread(target=self.update_ssl_certificates)
-        self.update_threshold = (90 * 24 * 3600) - (4 * 60)  # Trigger refresh within 4 minutes for testing
-        # self.update_threshold = 2 * 24 * 3600 # 2 days in seconds (must not be more thaan 70 days)
+        # self.update_threshold = (90 * 24 * 3600) - (4 * 60)  # Trigger refresh within 4 minutes for testing
+        self.update_threshold = 52 * 24 * 3600 # 52 days in seconds (must not be more thaan 70 days)
 
         if start_ssl_thread:
             self.certificate_expiry_thread.start()
@@ -53,7 +53,7 @@ class SslCertificateProcessor:
                         print(
                             f"  {host:<{max_size + 2}} -  {days} days, {hours:02} hours, {minutes:02} minutes, {seconds:02} sec"
                         )
-                    # Sleep until threshold, but cap at 32 days if expiry is far away
+                    # Sleep until threshold, but cap at 32 days even if expiry is far away
                     max_sleep_seconds = 32 * 24 * 3600
                     sleep_seconds = min(remaining_seconds - self.update_threshold, max_sleep_seconds)
 

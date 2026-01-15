@@ -195,5 +195,5 @@ class CloudflareTunnelManager:
 
 
 if __name__ == "__main__":
-    manager = CloudflareTunnelManager("eloAG9YYLzhMpWi99_iLTxsc7Bou7ERP5CJsCZqu")
-    manager.add_tunnel("postgres.bhattarai.me")
+    manager = CloudflareTunnelManager(os.environ["CLOUDFLARE_API_KEY"])
+    manager.add_tunnel("test.bhattarai.me")

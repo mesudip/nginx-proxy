@@ -225,7 +225,7 @@ class WebServer:
                 if self._reload_timer and self._reload_timer.is_alive():
                     self._reload_timer.cancel()  # Cancel any lingering timer
                 self._next_reload_scheduled_time = 0  # No longer scheduled
-                self._last_reload_actual_time = current_time  # Update actual timereload_interval
+                self._last_reload_actual_time = current_time  # Update actual time
                 return self._do_reload()
             else:
                 # Not enough time has passed, schedule if not already scheduled
