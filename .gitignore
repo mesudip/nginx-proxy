@@ -6,3 +6,4 @@ __pycache__/
 /.run_data/
 run_data/
 .env
+*.egg-info/

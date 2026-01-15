@@ -39,10 +39,12 @@ class SSL:
 
 
         all_stores = [self.challenge_store]
-        if os.getenv("CLOUDFLARE_API_KEY") is not None:
-            cloudflare=CloudflareChallengeSolver(os.getenv("CLOUDFLARE_API_KEY").strip())
-            all_stores.append(cloudflare)
-            cloudflare.cleanup_old_challenges()
+        for key, value in os.environ.items():
+            if key.startswith("CLOUDFLARE_API_KEY"):
+                if value:  # Ensure the value is not None or empty
+                    cloudflare = CloudflareChallengeSolver(value.strip())
+                    all_stores.append(cloudflare)
+                    cloudflare.cleanup_old_challenges()
 
         self.cert_manager = AcmeCertManager(
             self.key_store,cert_issuer ,all_stores

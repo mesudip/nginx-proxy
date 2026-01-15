@@ -15,6 +15,7 @@ RUN apk --no-cache add  openssl && \
     ln -s /app/getssl /bin/getssl && ln -s /app/verify /bin/verify && \
     mv /docker-entrypoint.sh /nginx-entrypoint.sh  && \
     ln -s /app/docker-entrypoint.sh /docker-entrypoint.sh
+COPY ./vhosts_template/nginx.conf /etc/nginx/nginx.conf
 ARG LETSENCRYPT_API="https://acme-v02.api.letsencrypt.org/directory"
 ENV LETSENCRYPT_API=${LETSENCRYPT_API} \
     CHALLENGE_DIR=/tmp/acme-challenges/ \

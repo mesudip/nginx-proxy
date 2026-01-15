@@ -23,7 +23,7 @@ class SslCertificateProcessor:
         self.next_ssl_expiry: Union[datetime, None] = None
         self.certificate_expiry_thread: threading.Thread = threading.Thread(target=self.update_ssl_certificates)
         self.update_threshold = (90 * 24 * 3600) - (4 * 60) # Trigger refresh within 4 minutes for testing
-        self.update_threshold = 2 * 24 * 3600 # 2 days in seconds (must not be more thaan 70 days)
+        # self.update_threshold = 2 * 24 * 3600 # 2 days in seconds (must not be more thaan 70 days)
 
         if start_ssl_thread:
             self.certificate_expiry_thread.start()
@@ -37,7 +37,7 @@ class SslCertificateProcessor:
             else:
                 now = datetime.now(timezone.utc)
                 remaining_seconds = (self.next_ssl_expiry - now).total_seconds()
-
+                
                 if remaining_seconds > self.update_threshold:
                     print("[SSL Refresh Thread] SSL certificate status:")
 
@@ -70,7 +70,7 @@ class SslCertificateProcessor:
 
                     for host in x:
                         del self.cache[host]
-                    self.server.reload()
+                    self.server.reload() # this doesn't renew the certificates. 
 
     def _prepare_host_for_ssl(self, host: Host):
         """Sets SSL redirect and port if applicable."""
@@ -111,7 +111,6 @@ class SslCertificateProcessor:
             else:
                 host.ssl_file = host.hostname + ".selfsigned"
                 self.self_signed.add(host.hostname) 
-                                                
 
     def process_ssl_certificates(self, hosts: List[Host]):
         if not hosts:
@@ -123,8 +122,8 @@ class SslCertificateProcessor:
         try:
             # First pass: Handle wildcard certificates immediately, one by one.
             for host in hosts:
-                self._prepare_host_for_ssl(host)
                 if host.secured :
+                    self._prepare_host_for_ssl(host)
                     if host.hostname.startswith('*.'):
                         if not self._assign_existing_cert(host, registered):
                                 try:
@@ -176,7 +175,7 @@ class SslCertificateProcessor:
                 expiry = min(self.cache.values())
                 if expiry != self.next_ssl_expiry:
                     self.next_ssl_expiry = expiry
-                    if (self.next_ssl_expiry - datetime.now(timezone.utc)).total_seconds() < 3 * 24 * 3600:
+                    if (self.next_ssl_expiry - datetime.now(timezone.utc)).total_seconds() < self.update_threshold:
                         self.lock.notify()
         except Exception as e:
             print("Unexpected error processing ssl certificates.")

@@ -8,6 +8,8 @@ import re
 from urllib.parse import urlparse
 from dotenv import load_dotenv
 
+from tests.helpers.docker_test_client import DockerTestClient
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -30,6 +32,8 @@ def docker_host_ip():
 @pytest.fixture(scope="session")
 def docker_client():
     client : docker.DockerClient = docker.from_env()
+    # client : docker.DockerClient = DockerTestClient()
+
     yield client
     client.close()
 
@@ -57,7 +61,7 @@ def test_network(docker_client:docker.DockerClient):
     except docker.errors.APIError as e:
         print(f"Error removing network {network_name}: {e}")
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="session")
 def nginx_proxy_container(docker_client: docker.DockerClient, test_network,docker_host_ip):
     image_name = "mesudip/nginx-proxy:test"
     container_name = "nginx-proxy-test-container"
@@ -159,21 +163,47 @@ class NginxRequest(requests.Session):
         headers = kwargs.pop("headers", {})
         headers["Host"] = host_header
         
-        # Use the base_url_http for the actual request, but keep the original URL's path
+        # Use the base_url for the actual request, but keep the original URL's path, query, and fragment
         parsed_original_url = urlparse(url)
-        target_url =  (self.base_url_https if 'https' in self.base_url_http else self.base_url_http ) \
-            + parsed_original_url.path
+        
+        # Determine which base URL to use based on the original URL's scheme
+        base_url = self.base_url_https if parsed_original_url.scheme == 'https' else self.base_url_http
+        
+        # Reconstruct the full path with query and fragment
+        path_with_query = parsed_original_url.path
+        if parsed_original_url.query:
+            path_with_query += '?' + parsed_original_url.query
+        if parsed_original_url.fragment:
+            path_with_query += '#' + parsed_original_url.fragment
+        
+        target_url = base_url + path_with_query
+        
+        # Disable SSL verification for HTTPS requests if not explicitly set
+        if 'verify' not in kwargs and parsed_original_url.scheme == 'https':
+            kwargs['verify'] = False
         
         return super().request(method, target_url, headers=headers, **kwargs)
 
     def websocket_connect(self, url: str, **kwargs):
-        host_header = self._get_host_header(url)
-        headers = kwargs.pop("header", {}) # websocket library uses 'header' not 'headers'
-        headers["Host"] = host_header
-        # Construct the websocket URL using the base_url_http's host and port
-        parsed_base_url = urlparse(self.base_url_http)
-        ws_url = f"ws://{parsed_base_url.netloc}{urlparse(url).path}"
-        return websocket.create_connection(ws_url, header=headers, **kwargs)
+        # Parse the connection target from base_url_http (Nginx container)
+        parsed_base = urlparse(self.base_url_http)
+        target_host = parsed_base.hostname
+        target_port = parsed_base.port or 80
+
+        # Create a direct socket connection to the Nginx container
+        import socket
+        sock = socket.create_connection((target_host, target_port))
+        
+        # Create WebSocket instance and connect using the injected socket
+        ws = websocket.WebSocket()
+        
+        # websocket-client support for 'socket' vs 'sock' argument varies by version
+        try:
+            ws.connect(url, socket=sock, **kwargs)
+        except TypeError:
+            ws.connect(url, sock=sock, **kwargs)
+            
+        return ws
 
 @pytest.fixture
 def nginx_request(nginx_proxy_container, docker_host_ip):
