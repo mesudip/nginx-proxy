@@ -50,11 +50,12 @@ class DockerEventListener:
             print("service created")
 
     def _process_container_event(self, action, event):
+        container_id = event.get("Actor", {}).get("ID") or event.get("id")
         if action == "start":
             # print("container started", event["id"])
-            self.web_server.update_container(event["id"])
+            self.web_server.update_container(container_id)
         elif action == "stop" or action == 'die' or action == "destroy":
-            self.web_server.remove_container(event["id"])
+            self.web_server.remove_container(container_id)
 
     def _process_network_event(self, action, event):
         if action == "create":
