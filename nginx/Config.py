@@ -54,10 +54,10 @@ class Block(ConfigNode):
     def __len__(self):
         return len(self.contents)
 
-    def get_directives(self, name: str) -> list['Direction']:
+    def get_directives(self, name: str) -> list["Direction"]:
         return [c for c in self.contents if c.is_direction() and c.name == name]
 
-    def get_blocks(self, name: str) -> list['Block']:
+    def get_blocks(self, name: str) -> list["Block"]:
         return [c for c in self.contents if c.is_block() and c.name == name]
 
     def add_directive(self, name: str, value: Union[str, List[str]]):

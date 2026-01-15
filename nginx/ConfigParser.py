@@ -70,7 +70,7 @@ class ConfigParser:
         while self.i < self.length:
             if self.config[self.i] == "\n":  # multiline value
                 if buf and param_name:
-                    buf += " " # Treat newline as space
+                    buf += " "  # Treat newline as space
             elif self.config[self.i] == " ":
                 if not param_name and buf.strip():
                     param_name = buf.strip()
@@ -85,7 +85,7 @@ class ConfigParser:
                     current_value = current_value[1:-1]
 
                 param_value = current_value
-                
+
                 if param_name:
                     block.append(Direction(param_name, param_value))
                 else:

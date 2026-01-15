@@ -24,7 +24,7 @@ signal.signal(signal.SIGTERM, receiveSignal)
 
 def setup_debug_mode():
     """
-      This is useful to debug running python container from IDE like PyCharm or VSCode
+    This is useful to debug running python container from IDE like PyCharm or VSCode
     """
     debug_config = {}
     if "PYTHON_DEBUG_PORT" in os.environ:
@@ -42,6 +42,7 @@ def setup_debug_mode():
 
     if len(debug_config):
         import pydevd
+
         print("Starting nginx-proxy in debug mode. Trying to connect to debug server ", str(debug_config))
         pydevd.settrace(stdoutToServer=True, stderrToServer=True, **debug_config)
 

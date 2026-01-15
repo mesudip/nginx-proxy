@@ -3,7 +3,7 @@ import re
 import signal
 import subprocess
 import sys
-import threading # Re-adding threading for start_background
+import threading  # Re-adding threading for start_background
 import traceback
 import time
 
@@ -36,7 +36,6 @@ class NginxProxyApp:
     def start(self):
         self.server = WebServer(self.docker_client)
         self.docker_event_listener = DockerEventListener(self.server, self.docker_client)
-
 
     def stop(self):
         print("Stopping NginxProxyApp...")

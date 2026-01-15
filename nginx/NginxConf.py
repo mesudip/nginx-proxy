@@ -2,6 +2,7 @@ from typing import List, Optional, Dict
 from .ConfigParser import ConfigParser
 from .Config import Block, Direction
 
+
 class NginxConfig:
     def __init__(self):
         self.parser = ConfigParser()
@@ -47,12 +48,12 @@ class NginxConfig:
         self.root.set_directive("error_log", value)
 
     @property
-    def events(self) -> Optional['EventsBlock']:
+    def events(self) -> Optional["EventsBlock"]:
         blocks = self.root.get_blocks("events")
         return EventsBlock(blocks[0]) if blocks else None
 
     @property
-    def http(self) -> Optional['HttpBlock']:
+    def http(self) -> Optional["HttpBlock"]:
         blocks = self.root.get_blocks("http")
         return HttpBlock(blocks[0]) if blocks else None
 
@@ -62,8 +63,9 @@ class NginxConfig:
         dirs = self.root.get_directives(name)
         return " ".join(filter(None, dirs[0].values)).strip() if dirs else None
 
+
 class EventsBlock:
-    def __init__(self, block: 'Block'):
+    def __init__(self, block: "Block"):
         self.block = block
 
     @property
@@ -86,26 +88,26 @@ class EventsBlock:
         dirs = self.block.get_directives(name)
         return " ".join(filter(None, dirs[0].values)).strip() if dirs else None
 
+
 class HttpBlock:
-    def __init__(self, block: 'Block'):
+    def __init__(self, block: "Block"):
         self.block = block
-        self.servers: List['ServerBlock'] = [ServerBlock(b) for b in self.block.get_blocks("server")]
+        self.servers: List["ServerBlock"] = [ServerBlock(b) for b in self.block.get_blocks("server")]
 
     @staticmethod
-    def parse(http_block_str: str) -> 'HttpBlock':
+    def parse(http_block_str: str) -> "HttpBlock":
         parser = ConfigParser()
         parser.load(http_block_str)
         return HttpBlock(parser.data)
 
-
     @property
     def return_code(self) -> Optional[str]:
         return self._get_directive_value("return")
-    
+
     @property
-    def upstreams(self) ->  list['Block']:
-        return self.block.get_blocks('upstream')
-    
+    def upstreams(self) -> list["Block"]:
+        return self.block.get_blocks("upstream")
+
     @property
     def include(self) -> Optional[str]:
         return self._get_directive_value("include")
@@ -117,7 +119,6 @@ class HttpBlock:
     @property
     def default_type(self) -> Optional[str]:
         return self._get_directive_value("default_type")
-
 
     @default_type.setter
     def default_type(self, value: str):
@@ -197,7 +198,7 @@ class HttpBlock:
         return self._get_directive_value("keepalive_timeout")
 
     @property
-    def maps(self) -> List['MapBlock']:
+    def maps(self) -> List["MapBlock"]:
         blocks = self.block.get_blocks("map")
         return [MapBlock(b) for b in blocks]
 
@@ -266,9 +267,9 @@ class HttpBlock:
 
 
 class ServerBlock:
-    def __init__(self, block: 'Block'):
+    def __init__(self, block: "Block"):
         self.block = block
-        self.locations: List['LocationBlock'] = [LocationBlock(b) for b in self.block.get_blocks("location")]
+        self.locations: List["LocationBlock"] = [LocationBlock(b) for b in self.block.get_blocks("location")]
 
     def __repr__(self) -> str:
         server_names = ", ".join(self.server_names) if self.server_names else "N/A"
@@ -324,11 +325,12 @@ class ServerBlock:
         dirs = self.block.get_directives(name)
         return " ".join(filter(None, dirs[0].values)).strip() if dirs else None
 
+
 class LocationBlock:
-    def __init__(self, block: 'Block'):
+    def __init__(self, block: "Block"):
         self.block = block
         self.path: str = block.parameters
-        self.ifs: List['IfBlock'] = [IfBlock(b) for b in self.block.get_blocks("if")]
+        self.ifs: List["IfBlock"] = [IfBlock(b) for b in self.block.get_blocks("if")]
 
     def __repr__(self) -> str:
         proxy_pass_info = f", proxy_pass='{self.proxy_pass}'" if self.proxy_pass else ""
@@ -351,16 +353,13 @@ class LocationBlock:
     def proxy_redirect(self, value: str):
         self.block.set_directive("proxy_redirect", value)
 
-
     @property
     def return_code(self) -> Optional[str]:
         return self._get_directive_value("return")
-    
+
     @property
     def client_max_body_size(self) -> Optional[str]:
         return self._get_directive_value("client_max_body_size")
-
-
 
     @client_max_body_size.setter
     def client_max_body_size(self, value: str):
@@ -471,6 +470,7 @@ class LocationBlock:
     @property
     def alias(self) -> Optional[str]:
         return self._get_directive_value("alias")
+
     @property
     def try_files(self) -> Optional[str]:
         return self._get_directive_value("try_files")
@@ -485,10 +485,11 @@ class LocationBlock:
         dirs = self.block.get_directives(name)
         return " ".join(filter(None, dirs[0].values)).strip() if dirs else None
 
+
 class MapBlock:
-    def __init__(self, block: 'Block'):
+    def __init__(self, block: "Block"):
         self.block = block
-        self.parameters: str = block.parameters # e.g., "$http_upgrade $connection_upgrade"
+        self.parameters: str = block.parameters  # e.g., "$http_upgrade $connection_upgrade"
         self.directives: Dict[str, str] = {}
         for item in self.block.contents:
             if item.is_direction():
@@ -498,8 +499,9 @@ class MapBlock:
         dirs = self.block.get_directives(name)
         return " ".join(filter(None, dirs[0].values)).strip() if dirs else None
 
+
 class IfBlock:
-    def __init__(self, block: 'Block'):
+    def __init__(self, block: "Block"):
         self.block = block
         self.condition: str = block.parameters
 

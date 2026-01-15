@@ -2,6 +2,7 @@ from typing import Any, List, Tuple
 
 import time
 
+
 class Blacklist:
     def __init__(self, blacklist_duration_secs: int = 180) -> None:
         self.blacklisted_items: dict[Any, float] = {}

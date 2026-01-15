@@ -2,6 +2,7 @@ import os
 import pathlib
 import difflib
 
+
 class DummyNginx:
 
     def __init__(self, config_file_path, challenge_dir="/tmp/acme-challenges/"):
@@ -16,7 +17,7 @@ class DummyNginx:
             pathlib.Path(os.path.dirname(config_file_path)).mkdir(parents=True)
         if not os.path.exists(challenge_dir):
             pathlib.Path(self.challenge_dir).mkdir(parents=True)
-        self.last_diff=''
+        self.last_diff = ""
 
     def start(self) -> bool:
         print("DummyNginx: Start")
@@ -42,8 +43,8 @@ class DummyNginx:
             diff = difflib.unified_diff(
                 self.current_config.splitlines(keepends=True),
                 config_str.splitlines(keepends=True),
-                fromfile='old_config',
-                tofile='new_config'
+                fromfile="old_config",
+                tofile="new_config",
             )
             print("DummyNginx: Config Diff:\n" + "".join(diff))
         with open(self.config_file_path, "w") as file:
@@ -65,12 +66,12 @@ class DummyNginx:
         diff = difflib.unified_diff(
             self.current_config.splitlines(keepends=True),
             config_str.splitlines(keepends=True),
-            fromfile='old_config',
-            tofile='new_config'
+            fromfile="old_config",
+            tofile="new_config",
         )
         self.last_diff = "".join(diff)
-        print("DummyNginx: Config Diff:\n" , self.last_diff,sep="")
-        
+        print("DummyNginx: Config Diff:\n", self.last_diff, sep="")
+
         with open(self.config_file_path, "w") as file:
             file.write(config_str)
         self.current_config = config_str
@@ -92,8 +93,8 @@ class DummyNginx:
             diff = difflib.unified_diff(
                 self.current_config.splitlines(keepends=True),
                 config_str.splitlines(keepends=True),
-                fromfile='old_config',
-                tofile='new_config'
+                fromfile="old_config",
+                tofile="new_config",
             )
             print("DummyNginx: Config Diff:\n" + "".join(diff))
         with open(self.config_file_path, "w") as file:
@@ -104,6 +105,7 @@ class DummyNginx:
     def wait(self):
         print("DummyNginx: Wait (no actual wait performed)")
         pass
+
     def setup(self, config_str) -> bool:
         print("DummyNginx: Setup (config written to file)")
         return self.forced_update(config_str)

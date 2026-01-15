@@ -1,6 +1,8 @@
 import pytest
 
 from nginx.NginxConf import NginxConfig
+
+
 @pytest.fixture
 def loaded_config():
     CONFIG = """
@@ -140,6 +142,7 @@ http {
     config.load(CONFIG.strip())
     return config
 
+
 def test_top_level_directives(loaded_config):
     config = loaded_config
     assert config.user == "www www"
@@ -147,11 +150,13 @@ def test_top_level_directives(loaded_config):
     assert config.pid == "/var/run/nginx.pid"
     assert config.error_log == "/var/log/nginx.error_log info"
 
+
 def test_events_block(loaded_config):
     events = loaded_config.events
     assert events is not None
     assert events.worker_connections == "2000"
     assert events.use == "kqueue"
+
 
 def test_http_block(loaded_config):
     http = loaded_config.http
@@ -159,9 +164,15 @@ def test_http_block(loaded_config):
     assert http.include == "conf/mime.types"
     assert http.default_type == "application/octet-stream"
 
-    # 
-    assert http.log_formats["main"] == "'$remote_addr - $remote_user [$time_local] ' '\"$request\" $status $bytes_sent ' '\"$http_referer\" \"$http_user_agent\" ' '\"$gzip_ratio\"'"
-    assert http.log_formats["download"] == "'$remote_addr - $remote_user [$time_local] ' '\"$request\" $status $bytes_sent ' '\"$http_referer\" \"$http_user_agent\" ' '\"$http_range\" \"$sent_http_content_range\"'"
+    #
+    assert (
+        http.log_formats["main"]
+        == "'$remote_addr - $remote_user [$time_local] ' '\"$request\" $status $bytes_sent ' '\"$http_referer\" \"$http_user_agent\" ' '\"$gzip_ratio\"'"
+    )
+    assert (
+        http.log_formats["download"]
+        == '\'$remote_addr - $remote_user [$time_local] \' \'"$request" $status $bytes_sent \' \'"$http_referer" "$http_user_agent" \' \'"$http_range" "$sent_http_content_range"\''
+    )
     assert http.client_header_timeout == "3m"
     assert http.client_body_timeout == "3m"
     assert http.send_timeout == "3m"
@@ -179,6 +190,7 @@ def test_http_block(loaded_config):
     assert http.send_lowat == "12000"
     assert http.keepalive_timeout == "75 20"
 
+
 def test_server_block(loaded_config):
     http = loaded_config.http
     assert len(http.servers) == 1
@@ -187,6 +199,7 @@ def test_server_block(loaded_config):
     assert server.server_names == ["one.example.com", "www.one.example.com"]
     assert server.access_log == "/var/log/nginx.access_log main"
     assert server.error_page == "404 /404.html"
+
 
 def test_location_blocks(loaded_config):
     server = loaded_config.http.servers[0]
@@ -243,8 +256,10 @@ def test_location_blocks(loaded_config):
     assert loc4.access_log == "off"
     assert loc4.expires == "30d"
 
+
 def test_http_block_parse():
     from nginx.NginxConf import HttpBlock
+
     http_block_str = """
         proxy_headers on;
         server {
@@ -258,8 +273,10 @@ def test_http_block_parse():
     assert http_block.servers[0].listen == "80"
     assert http_block.servers[0].server_names == ["example.com"]
 
+
 def test_http_block_parse_complex():
     from nginx.NginxConf import HttpBlock
+
     http_block_str = """
 server {
 
@@ -289,8 +306,6 @@ server {
     assert http_block is not None
 
     # Assert map block
-  
-
 
     # Assert server block
     assert len(http_block.servers) == 1
@@ -319,6 +334,7 @@ server {
 
 def test_server_block_with_no_space():
     from nginx.NginxConf import HttpBlock
+
     http_block_str = """
 server{
         listen 80;

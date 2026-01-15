@@ -26,16 +26,17 @@ class WebServer:
     In nginx-proxy Webserver is the controller class to manage nginx config and nginx process
     Events are sent to this class by DockerEventListener or other injectors.
     """
-    def __init__(self, docker_client: DockerClient,nginx_update_throtle_sec=5):
+
+    def __init__(self, docker_client: DockerClient, nginx_update_throtle_sec=5):
         self.config = WebServer.loadconfig()
         self.shouldExit = False
         self.client = docker_client
         self._reload_timer = None
         self._reload_lock = threading.Lock()
-        self._last_reload_actual_time = time.time() # Timestamp of when the last reload actually completed
-        self._next_reload_scheduled_time = time.time() # Timestamp of when the next reload is scheduled to occur
+        self._last_reload_actual_time = time.time()  # Timestamp of when the last reload actually completed
+        self._next_reload_scheduled_time = time.time()  # Timestamp of when the next reload is scheduled to occur
         conf_file = self.config["conf_dir"] + "/conf.d/default.conf"
-        self.reload_interval=nginx_update_throtle_sec
+        self.reload_interval = nginx_update_throtle_sec
         challenge_dir = self.config["challenge_dir"]
         self.nginx = (
             DummyNginx(conf_file, challenge_dir) if self.config["dummy_nginx"] else Nginx(conf_file, challenge_dir)
@@ -67,7 +68,7 @@ class WebServer:
 
         print("Reachable Networks :", self.networks)
         self.rescan_and_reload(force=True)
-        self._last_reload_actual_time = time.time() # Set initial actual reload time
+        self._last_reload_actual_time = time.time()  # Set initial actual reload time
         self.ssl_processor.certificate_expiry_thread.start()
 
     def _perform_throttled_reload(self):
@@ -76,8 +77,8 @@ class WebServer:
         """
         # print("web_server._perform_throttled_reload()")
         with self._reload_lock:
-            self._next_reload_scheduled_time = 0 # Reset scheduled time
-            self._last_reload_actual_time = time.time() # Update actual reload time
+            self._next_reload_scheduled_time = 0  # Reset scheduled time
+            self._last_reload_actual_time = time.time()  # Update actual reload time
             self._do_reload()
 
     def _do_reload(self, forced=False) -> bool:
@@ -211,8 +212,8 @@ class WebServer:
             if immediate:
                 if self._reload_timer and self._reload_timer.is_alive():
                     self._reload_timer.cancel()
-                self._next_reload_scheduled_time = 0 # Reset scheduled time
-                self._last_reload_actual_time = time.time() # Update actual time
+                self._next_reload_scheduled_time = 0  # Reset scheduled time
+                self._last_reload_actual_time = time.time()  # Update actual time
                 return self._do_reload()
 
             current_time = time.time()
@@ -222,9 +223,9 @@ class WebServer:
             if current_time >= next_possible_actual_reload_time:
                 # Enough time has passed since the last actual reload, perform immediately
                 if self._reload_timer and self._reload_timer.is_alive():
-                    self._reload_timer.cancel() # Cancel any lingering timer
-                self._next_reload_scheduled_time = 0 # No longer scheduled
-                self._last_reload_actual_time = current_time # Update actual timereload_interval
+                    self._reload_timer.cancel()  # Cancel any lingering timer
+                self._next_reload_scheduled_time = 0  # No longer scheduled
+                self._last_reload_actual_time = current_time  # Update actual timereload_interval
                 return self._do_reload()
             else:
                 # Not enough time has passed, schedule if not already scheduled
@@ -234,10 +235,10 @@ class WebServer:
                     self._reload_timer = threading.Timer(time_to_wait, self._perform_throttled_reload)
                     self._reload_timer.start()
                     self._next_reload_scheduled_time = next_possible_actual_reload_time
-                    return True # Reload scheduled
+                    return True  # Reload scheduled
                 else:
                     # A reload is already scheduled, merge this request into it
-                    return False # No new action taken
+                    return False  # No new action taken
 
     def disconnect(self, network, container, scope):
 
@@ -297,14 +298,13 @@ class WebServer:
         for container in containers:
             self._register_container(container)
 
-    def rescan_and_reload(self,force=False):
+    def rescan_and_reload(self, force=False):
         self.rescan_all_container()
         return self.reload(force)
 
     def cleanup(self):
         self.ssl_processor.shutdown()
         self.nginx.stop()
-
 
     @staticmethod
     def loadconfig():
