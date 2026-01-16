@@ -13,7 +13,6 @@ from nginx_proxy.Container import Container
 from nginx_proxy.Host import Host
 from nginx_proxy.Location import Location
 from nginx_proxy.ProxyConfigData import ProxyConfigData
-from nginx_proxy.SSL import SSL
 import os
 
 from tests.helpers.docker_test_client import DockerTestClient, MockContainer, MockNetwork
@@ -57,6 +56,7 @@ def create_webserver(docker_client: DockerTestClient):
             "challenge_dir": "./.run_data/acme-challenges/",
             "default_server": True,
             "vhosts_template_dir": "./vhosts_template",
+            "cert_renew_threshold_days": 10,
         }
         # Initialize WebServer
         webserver = WebServer(docker_client, nginx_update_throtle_sec=0.1)
@@ -75,7 +75,7 @@ def create_webserver(docker_client: DockerTestClient):
 
         # Stop the SSL refresh thread
         webserver.cleanup()
-        webserver.ssl_processor.certificate_expiry_thread.join(timeout=2)
+        webserver.ssl_processor.ssl.certificate_expiry_thread.join(timeout=2)
 
 
 pattern = re.compile(r"^http://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:80")

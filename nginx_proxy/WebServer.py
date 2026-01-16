@@ -55,7 +55,11 @@ class WebServer:
 
         self.learn_yourself()
         self.ssl_processor = post_processors.SslCertificateProcessor(
-            self.nginx, self, start_ssl_thread=False, ssl_dir=self.config["ssl_dir"]
+            self.nginx,
+            self,
+            start_ssl_thread=True,
+            ssl_dir=self.config["ssl_dir"],
+            update_threshold_days=self.config["cert_renew_threshold_days"],
         )
         self.basic_auth_processor = post_processors.BasicAuthProcessor(self.config["conf_dir"] + "/basic_auth")
         self.redirect_processor = post_processors.RedirectProcessor()
@@ -69,7 +73,6 @@ class WebServer:
         print("Reachable Networks :", self.networks)
         self.rescan_and_reload(force=True)
         self._last_reload_actual_time = time.time()  # Set initial actual reload time
-        self.ssl_processor.certificate_expiry_thread.start()
 
     def _perform_throttled_reload(self):
         """
@@ -123,10 +126,7 @@ class WebServer:
         self.config["rendered_error_conf_path"] = rendered_error_conf_path
 
         output = self.template.render(virtual_servers=hosts, config=self.config)
-        if forced:
-            response = self.nginx.force_start(output)
-        else:
-            response = self.nginx.update_config(output)
+        response = self.nginx.update_config(output, force=forced)
         return response
 
     def learn_yourself(self):
@@ -196,7 +196,7 @@ class WebServer:
             )
             self.reload()
 
-    def reload(self, immediate=False) -> bool:
+    def reload(self, immediate=False, force=False) -> bool:
         """
         Schedules or performs a reload of the Nginx configuration,
         implementing a debouncing and throttling mechanism.
@@ -214,7 +214,7 @@ class WebServer:
                     self._reload_timer.cancel()
                 self._next_reload_scheduled_time = 0  # Reset scheduled time
                 self._last_reload_actual_time = time.time()  # Update actual time
-                return self._do_reload()
+                return self._do_reload(force)
 
             current_time = time.time()
             # Calculate the earliest time a new reload can actually happen
@@ -226,7 +226,7 @@ class WebServer:
                     self._reload_timer.cancel()  # Cancel any lingering timer
                 self._next_reload_scheduled_time = 0  # No longer scheduled
                 self._last_reload_actual_time = current_time  # Update actual time
-                return self._do_reload()
+                return self._do_reload(force)
             else:
                 # Not enough time has passed, schedule if not already scheduled
                 if not (self._reload_timer and self._reload_timer.is_alive()):
@@ -303,12 +303,16 @@ class WebServer:
         return self.reload(force)
 
     def cleanup(self):
+        with self._reload_lock:
+            if self._reload_timer and self._reload_timer.is_alive():
+                self._reload_timer.cancel()
         self.ssl_processor.shutdown()
         self.nginx.stop()
 
     @staticmethod
     def loadconfig():
         return {
+            "cert_renew_threshold_days": int(os.getenv("CERT_RENEW_THRESHOLD_DAYS", "30").strip()),
             "dummy_nginx": os.getenv("DUMMY_NGINX") is not None,
             "ssl_dir": strip_end(os.getenv("SSL_DIR", "/etc/ssl").strip()),
             "conf_dir": strip_end(os.getenv("NGINX_CONF_DIR", "/etc/nginx").strip()),
