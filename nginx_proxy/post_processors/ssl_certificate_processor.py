@@ -14,7 +14,9 @@ import traceback
 
 
 class SslCertificateProcessor:
-    def __init__(self, nginx: Nginx, server: WebServer, start_ssl_thread=False, ssl_dir="/etc/ssl",update_threshold_days=10):
+    def __init__(
+        self, nginx: Nginx, server: WebServer, start_ssl_thread=False, ssl_dir="/etc/ssl", update_threshold_days=10
+    ):
         # self.update_threshold = (90 * 24 * 3600) - (3 * 60) - 3600  # Trigger refresh within 4 minutes for testing
         self.self_signed: Set[str] = set()
         self.nginx: Nginx = nginx

@@ -20,20 +20,24 @@ from nginx_proxy.utils.Blacklist import Blacklist
 
 class SSL:
 
-    def __init__(self, ssl_path, nginx: Nginx, update_threshold_seconds: float, server=None, start_ssl_thread: bool = False):
+    def __init__(
+        self, ssl_path, nginx: Nginx, update_threshold_seconds: float, server=None, start_ssl_thread: bool = False
+    ):
         self.ssl_path = ssl_path
         self.nginx = nginx
         self.server = server
         self.blacklist = Blacklist()
         self.update_threshold_secs = update_threshold_seconds
         self.cert_min_renew_threshold_secs = max(self.update_threshold_secs, 10 * 24 * 3600)
-        
+
         # Internal state for background refresh
         self.cache: Dict[str, date] = {}
         self.next_ssl_expiry: Union[datetime, None] = None
         self.shutdown_requested: bool = False
         self.lock: threading.Condition = threading.Condition()
-        self.certificate_expiry_thread: threading.Thread = threading.Thread(target=self.update_ssl_certificates, name="SSL-Refresh-Thread")
+        self.certificate_expiry_thread: threading.Thread = threading.Thread(
+            target=self.update_ssl_certificates, name="SSL-Refresh-Thread"
+        )
 
         x = os.environ.get("LETSENCRYPT_API")
         if x is not None:
@@ -60,8 +64,9 @@ class SSL:
         # make sure that the certificates are updated at least every 10 days
         # Convert threshold from seconds to days for AcmeCertManager
         cert_min_renew_threshold_days = self.cert_min_renew_threshold_secs // (24 * 3600)
-        self.cert_manager = AcmeCertManager(self.key_store, cert_issuer, all_stores, 
-                    renew_threshold_days=cert_min_renew_threshold_days)
+        self.cert_manager = AcmeCertManager(
+            self.key_store, cert_issuer, all_stores, renew_threshold_days=cert_min_renew_threshold_days
+        )
         self.cert_manager.setup()
         self.self_signer = SelfCertIssuer(
             acme_key, "NP", "Bagmati", "Buddhanagar", "nginx-proxy", "local.nginx-proxy.com"
@@ -84,32 +89,37 @@ class SSL:
                 now = datetime.now(timezone.utc)
                 remaining_seconds = (self.next_ssl_expiry - now).total_seconds()
 
-
-
                 if remaining_seconds > self.update_threshold_secs:
                     print("[SSL Refresh Thread] SSL certificate status:")
 
                     max_size = max([len(x) for x in self.cache]) if self.cache else 10
                     for host in self.cache:
-                        print(f"  {host:<{max_size + 2}} -  {self._format_duration((self.cache[host] - now).total_seconds())}")
+                        print(
+                            f"  {host:<{max_size + 2}} -  {self._format_duration((self.cache[host] - now).total_seconds())}"
+                        )
 
                     # Sleep until threshold, but cap at 32 days even if expiry is far away
                     max_sleep_seconds = 32 * 24 * 3600
                     # sleep 5 mins more to avoid race condition
                     sleep_seconds = min(remaining_seconds - self.update_threshold_secs + 300, max_sleep_seconds)
 
-                    print(f"[SSL Refresh Thread] All the certificates are up to date sleeping for {self._format_duration(sleep_seconds)}")
+                    print(
+                        f"[SSL Refresh Thread] All the certificates are up to date sleeping for {self._format_duration(sleep_seconds)}"
+                    )
                     self.lock.wait(sleep_seconds)
                     continue
 
                 else:
-                    print(f"[SSL Refresh Thread] Update threshold reached: {self._format_duration(self.update_threshold_secs)}")
+                    print(
+                        f"[SSL Refresh Thread] Update threshold reached: {self._format_duration(self.update_threshold_secs)}"
+                    )
                     for host_name in self.cache:
-                        print(f"Remaining  : {host_name} : {self._format_duration((self.cache[host_name] - now).total_seconds())}")
+                        print(
+                            f"Remaining  : {host_name} : {self._format_duration((self.cache[host_name] - now).total_seconds())}"
+                        )
 
-                    
                     # at least gather all the certificates that expires in 10 days
-                    update_threshold_secs=max(self.update_threshold_secs, self.cert_min_renew_threshold_secs)
+                    update_threshold_secs = max(self.update_threshold_secs, self.cert_min_renew_threshold_secs)
                     expired_hosts = [
                         host_name
                         for host_name in self.cache
@@ -118,7 +128,6 @@ class SSL:
 
                     for host_name in expired_hosts:
                         del self.cache[host_name]
-                    time.sleep(5)
 
             if self.server:
                 self.server.reload()

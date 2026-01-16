@@ -52,7 +52,7 @@ class DummyNginx:
         self.current_config = config_str
         return True
 
-    def update_config(self, config_str,force=False) -> bool:
+    def update_config(self, config_str, force=False) -> bool:
         """
         Change the nginx configuration.
         :param config_str: string containing configuration to be written into config file

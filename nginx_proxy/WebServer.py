@@ -55,8 +55,11 @@ class WebServer:
 
         self.learn_yourself()
         self.ssl_processor = post_processors.SslCertificateProcessor(
-            self.nginx, self, start_ssl_thread=True, ssl_dir=self.config["ssl_dir"],
-            update_threshold_days=self.config["cert_renew_threshold_days"]
+            self.nginx,
+            self,
+            start_ssl_thread=True,
+            ssl_dir=self.config["ssl_dir"],
+            update_threshold_days=self.config["cert_renew_threshold_days"],
         )
         self.basic_auth_processor = post_processors.BasicAuthProcessor(self.config["conf_dir"] + "/basic_auth")
         self.redirect_processor = post_processors.RedirectProcessor()
@@ -123,7 +126,7 @@ class WebServer:
         self.config["rendered_error_conf_path"] = rendered_error_conf_path
 
         output = self.template.render(virtual_servers=hosts, config=self.config)
-        response=self.nginx.update_config(output,force=forced)  
+        response = self.nginx.update_config(output, force=forced)
         return response
 
     def learn_yourself(self):
@@ -193,7 +196,7 @@ class WebServer:
             )
             self.reload()
 
-    def reload(self, immediate=False,force=False) -> bool:
+    def reload(self, immediate=False, force=False) -> bool:
         """
         Schedules or performs a reload of the Nginx configuration,
         implementing a debouncing and throttling mechanism.
