@@ -41,6 +41,7 @@ def webserver_for_error_tests(docker_client: DockerTestClient):
             "challenge_dir": "./.run_data/acme-challenges/",
             "default_server": True,
             "vhosts_template_dir": "./vhosts_template",
+            "cert_renew_threshold_days": 10,
         }
         
         webserver = WebServer(docker_client, nginx_update_throtle_sec=0.1)
@@ -146,6 +147,7 @@ def test_webserver_continues_after_errors(docker_client: DockerTestClient, error
             "challenge_dir": "./.run_data/acme-challenges/",
             "default_server": True,
             "vhosts_template_dir": "./vhosts_template",
+            "cert_renew_threshold_days": 10,
         }
         
         webserver = WebServer(docker_client, nginx_update_throtle_sec=0.1)

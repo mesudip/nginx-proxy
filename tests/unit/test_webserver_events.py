@@ -56,6 +56,7 @@ def create_webserver(docker_client: DockerTestClient):
             "challenge_dir": "./.run_data/acme-challenges/",
             "default_server": True,
             "vhosts_template_dir": "./vhosts_template",
+            "cert_renew_threshold_days": 10,
         }
         # Initialize WebServer
         webserver = WebServer(docker_client, nginx_update_throtle_sec=0.1)
