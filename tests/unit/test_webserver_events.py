@@ -13,7 +13,6 @@ from nginx_proxy.Container import Container
 from nginx_proxy.Host import Host
 from nginx_proxy.Location import Location
 from nginx_proxy.ProxyConfigData import ProxyConfigData
-from nginx_proxy.SSL import SSL
 import os
 
 from tests.helpers.docker_test_client import DockerTestClient, MockContainer, MockNetwork

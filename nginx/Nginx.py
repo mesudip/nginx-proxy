@@ -97,19 +97,22 @@ class Nginx:
             self.last_working_config = config_str
             return True
 
-    def update_config(self, config_str) -> bool:
+    def update_config(self, config_str, force=False) -> bool:
         """
         Change the nginx configuration.
         :param config_str: string containing configuration to be written into config file
+        :param force: Force reload even if the configuration is same as previous
         :return: true if the new config was used false if error or if the new configuration is same as previous
         """
-        if config_str == self.last_working_config:
+
+        if config_str == self.last_working_config and not force:
             print("Configuration not changed, skipping nginx reload")
             return False
 
         with open(self.config_file_path, "w") as file:
             file.write(config_str)
         result, data = self.reload(return_error=True)
+
         if not result:
             diff = str.join(
                 "\n",
