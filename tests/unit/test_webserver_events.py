@@ -74,7 +74,7 @@ def create_webserver(docker_client: DockerTestClient):
 
         # Stop the SSL refresh thread
         webserver.cleanup()
-        webserver.ssl_processor.certificate_expiry_thread.join(timeout=2)
+        webserver.ssl_processor.ssl.certificate_expiry_thread.join(timeout=2)
 
 
 pattern = re.compile(r"^http://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:80")
