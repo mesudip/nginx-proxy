@@ -55,13 +55,13 @@ class SSL:
         self.key_store = FileSystemKeyStore(ssl_path, keys_dir_name="private")
 
         if self.use_certapi_server:
-            self.certapi_client = CertManagerClient(certapi_url,self.key_store)
-            self.cert_backend=self.certapi_client
-            self.cert_manager=None
+            self.certapi_client = CertManagerClient(certapi_url, self.key_store)
+            self.cert_backend = self.certapi_client
+            self.cert_manager = None
         else:
             self.certapi_client = None
             self.challenge_store = NginxChallengeSolver(nginx.challenge_dir, nginx)
-            cert_issuer = AcmeCertIssuer.with_keystore(self.key_store,self.challenge_store, acme_url=self.api_url)
+            cert_issuer = AcmeCertIssuer.with_keystore(self.key_store, self.challenge_store, acme_url=self.api_url)
 
             all_stores = [self.challenge_store]
             for key, value in os.environ.items():
@@ -76,7 +76,7 @@ class SSL:
                 self.key_store, cert_issuer, all_stores, renew_threshold_days=cert_min_renew_threshold_days
             )
             self.cert_manager.setup()
-            self.cert_backend=self.cert_manager
+            self.cert_backend = self.cert_manager
 
         self.self_signer = SelfCertIssuer(
             cert_issuer.acme.account_key, "NP", "Bagmati", "Buddhanagar", "nginx-proxy", "local.nginx-proxy.com"
