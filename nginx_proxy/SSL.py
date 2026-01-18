@@ -12,8 +12,9 @@ from nginx.Nginx import Nginx
 from certapi import CloudflareChallengeSolver, AcmeCertManager, FileSystemKeyStore, CertApiException
 from certapi.issuers import AcmeCertIssuer, SelfCertIssuer
 from certapi.http.types import IssuedCert
-from certapi.crypto import certs_from_pem
+from certapi.crypto import certs_from_pem, Key
 from nginx.NginxChallengeSolver import NginxChallengeSolver
+from certapi.client.cert_manager_client import CertManagerClient
 import traceback as tb
 from nginx_proxy.utils.Blacklist import Blacklist
 
@@ -48,28 +49,37 @@ class SSL:
         else:
             self.api_url = "https://acme-v02.api.letsencrypt.org/directory"
 
-        self.challenge_store = NginxChallengeSolver(nginx.challenge_dir, nginx)
+        # Check if CertManagerClient should be used
+        certapi_url = os.environ.get("CERTAPI_URL", "").strip()
+        self.use_certapi_server = bool(certapi_url)
         self.key_store = FileSystemKeyStore(ssl_path, keys_dir_name="private")
-        acme_key = self.key_store._get_or_generate_key("acme_account", "rsa")[0]
-        cert_issuer = AcmeCertIssuer(acme_key, self.challenge_store, acme_url=self.api_url)
 
-        all_stores = [self.challenge_store]
-        for key, value in os.environ.items():
-            if key.startswith("CLOUDFLARE_API_KEY"):
-                if value:  # Ensure the value is not None or empty
-                    cloudflare = CloudflareChallengeSolver(value.strip())
-                    all_stores.append(cloudflare)
-                    cloudflare.cleanup_old_challenges()
+        if self.use_certapi_server:
+            self.certapi_client = CertManagerClient(certapi_url,self.key_store)
+            self.cert_backend=self.certapi_client
+            self.cert_manager=None
+        else:
+            self.certapi_client = None
+            self.challenge_store = NginxChallengeSolver(nginx.challenge_dir, nginx)
+            cert_issuer = AcmeCertIssuer.with_keystore(self.key_store,self.challenge_store, acme_url=self.api_url)
 
-        # make sure that the certificates are updated at least every 10 days
-        # Convert threshold from seconds to days for AcmeCertManager
-        cert_min_renew_threshold_days = self.cert_min_renew_threshold_secs // (24 * 3600)
-        self.cert_manager = AcmeCertManager(
-            self.key_store, cert_issuer, all_stores, renew_threshold_days=cert_min_renew_threshold_days
-        )
-        self.cert_manager.setup()
+            all_stores = [self.challenge_store]
+            for key, value in os.environ.items():
+                if key.startswith("CLOUDFLARE_API_KEY"):
+                    if value:  # Ensure the value is not None or empty
+                        cloudflare = CloudflareChallengeSolver(value.strip())
+                        all_stores.append(cloudflare)
+                        cloudflare.cleanup_old_challenges()
+
+            cert_min_renew_threshold_days = self.cert_min_renew_threshold_secs // (24 * 3600)
+            self.cert_manager = AcmeCertManager(
+                self.key_store, cert_issuer, all_stores, renew_threshold_days=cert_min_renew_threshold_days
+            )
+            self.cert_manager.setup()
+            self.cert_backend=self.cert_manager
+
         self.self_signer = SelfCertIssuer(
-            acme_key, "NP", "Bagmati", "Buddhanagar", "nginx-proxy", "local.nginx-proxy.com"
+            cert_issuer.acme.account_key, "NP", "Bagmati", "Buddhanagar", "nginx-proxy", "local.nginx-proxy.com"
         )
 
         if start_ssl_thread:
@@ -134,7 +144,9 @@ class SSL:
 
     def register_certificate(self, req_domain) -> List[IssuedCert]:
         domain = [req_domain] if type(req_domain) is str else req_domain
-        result = self.cert_manager.issue_certificate(domain, key_type="ecdsa")
+
+        ## this will automatically use the configured backend
+        result = self.cert_backend.issue_certificate(domain, key_type="ecdsa")
         if len(result.issued):
             print(
                 "[ New Certificates      ] : ", ", ".join(flatten_2d_array(sorted([x.domains for x in result.issued])))

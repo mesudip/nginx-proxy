@@ -15,9 +15,26 @@ from certapi.http.types import IssuedCert, CertificateResponse
 
 from nginx_proxy.WebServer import WebServer
 from nginx_proxy.Host import Host
+from nginx_proxy.NginxProxyApp import NginxProxyAppConfig
 from nginx.NginxConf import HttpBlock
 
 from tests.helpers.docker_test_client import DockerTestClient
+
+
+def get_test_config() -> NginxProxyAppConfig:
+    """Create a test configuration for WebServer."""
+    return NginxProxyAppConfig(
+        dummy_nginx=True,
+        ssl_dir="./.run_data",
+        conf_dir="./run_data",
+        client_max_body_size="1m",
+        challenge_dir="./.run_data/acme-challenges/",
+        default_server=True,
+        vhosts_template_dir="./vhosts_template",
+        cert_renew_threshold_days=10,
+        certapi_url="",
+        wellknown_path="/.well-known/acme-challenge/",
+    )
 
 
 @pytest.fixture()
@@ -30,22 +47,10 @@ def webserver_for_error_tests(docker_client: DockerTestClient):
     """Create a webserver instance for error testing without starting background threads"""
     docker_client.networks.create("frontend")
 
-    with patch("nginx_proxy.WebServer.WebServer.loadconfig") as mock_loadconfig, patch(
-        "certapi.manager.acme_cert_manager.AcmeCertManager.setup"
-    ) as mock_acme_setup:
+    with patch("certapi.manager.acme_cert_manager.AcmeCertManager.setup") as mock_acme_setup:
         mock_acme_setup.return_value = None
-        mock_loadconfig.return_value = {
-            "dummy_nginx": True,
-            "ssl_dir": "./.run_data",
-            "conf_dir": "./run_data",
-            "client_max_body_size": "1m",
-            "challenge_dir": "./.run_data/acme-challenges/",
-            "default_server": True,
-            "vhosts_template_dir": "./vhosts_template",
-            "cert_renew_threshold_days": 10,
-        }
-
-        webserver = WebServer(docker_client, nginx_update_throtle_sec=0.1)
+        config = get_test_config()
+        webserver = WebServer(docker_client, config, nginx_update_throtle_sec=0.1)
         yield webserver
 
         docker_client.close()
@@ -219,22 +224,10 @@ def test_webserver_continues_after_errors(docker_client: DockerTestClient, error
     """Test that webserver continues running after various errors"""
     docker_client.networks.create("frontend")
 
-    with patch("nginx_proxy.WebServer.WebServer.loadconfig") as mock_loadconfig, patch(
-        "certapi.manager.acme_cert_manager.AcmeCertManager.setup"
-    ) as mock_acme_setup:
+    with patch("certapi.manager.acme_cert_manager.AcmeCertManager.setup") as mock_acme_setup:
         mock_acme_setup.return_value = None
-        mock_loadconfig.return_value = {
-            "dummy_nginx": True,
-            "ssl_dir": "./.run_data",
-            "conf_dir": "./run_data",
-            "client_max_body_size": "1m",
-            "challenge_dir": "./.run_data/acme-challenges/",
-            "default_server": True,
-            "vhosts_template_dir": "./vhosts_template",
-            "cert_renew_threshold_days": 10,
-        }
-
-        webserver = WebServer(docker_client, nginx_update_throtle_sec=0.1)
+        config = get_test_config()
+        webserver = WebServer(docker_client, config, nginx_update_throtle_sec=0.1)
 
         # Simulate error
         with patch.object(webserver.ssl_processor.ssl.cert_manager, "issue_certificate", side_effect=error):

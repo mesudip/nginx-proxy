@@ -5,7 +5,7 @@ import difflib
 
 class DummyNginx:
 
-    def __init__(self, config_file_path, challenge_dir="/tmp/acme-challenges/"):
+    def __init__(self, config_file_path, challenge_dir="/etc/nginx/challenges/"):
         self.challenge_dir = challenge_dir
         self.config_file_path = config_file_path
         if os.path.exists(config_file_path):

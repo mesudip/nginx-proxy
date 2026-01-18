@@ -60,18 +60,20 @@ server{
             proxy_read_timeout  1h;
             proxy_send_timeout 1h;{% endif %}
         }{% endfor %} {% endif %}{% if server.port == 80 %}
-        location /.well-known/acme-challenge/ {
+        location {{ config.wellknown_path }} { {% if config.certapi_url %}
+            proxy_pass {{ config.certapi_url }}{{ config.wellknown_path }};{% else %}
             alias {{ config.challenge_dir }};
-            try_files $uri =404;
+            try_files $uri =404;{% endif %}
         }{% endif %}
 }{% else %}
 server {
         include {{ config.rendered_error_conf_path }};
         listen 80 {{ server.extras.default_server }};
         server_name {{ server.hostname }};
-        location /.well-known/acme-challenge/ {
+        location {{ config.wellknown_path }} { {% if config.certapi_url %}
+            proxy_pass {{ config.certapi_url }}{{ config.wellknown_path }};{% else %}
             alias {{ config.challenge_dir }};
-            try_files $uri =404;
+            try_files $uri =404;{% endif %}
         }
         location /{ {% if server.is_redirect %}
                 return 301 https://{{ server.full_redirect.hostname }}$request_uri;{% else %}
@@ -82,9 +84,10 @@ server {
 server{
         listen 80 default_server;
         server_name _ ;
-        location /.well-known/acme-challenge/ {
+        location {{ config.wellknown_path }} { {% if config.certapi_url %}
+            proxy_pass {{ config.certapi_url }}{{ config.wellknown_path }};{% else %}
             alias {{ config.challenge_dir }};
-            try_files $uri =404;
+            try_files $uri =404;{% endif %}
         }
         error_page 503 /503_default.html;
 

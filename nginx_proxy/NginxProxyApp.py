@@ -6,19 +6,81 @@ import sys
 import threading  # Re-adding threading for start_background
 import traceback
 import time
+from typing import TypedDict
 
 import docker
 from docker import DockerClient
 
 from nginx_proxy.WebServer import WebServer
 from nginx_proxy.DockerEventListener import DockerEventListener
+from nginx_proxy.NginxConfig import render_nginx_conf
+
+
+class NginxProxyAppConfig(TypedDict):
+    """Configuration for the NginxProxyApp loaded from environment variables."""
+
+    cert_renew_threshold_days: int
+    dummy_nginx: bool
+    ssl_dir: str
+    conf_dir: str
+    client_max_body_size: str
+    challenge_dir: str
+    default_server: bool
+    vhosts_template_dir: str
+    certapi_url: str
+    wellknown_path: str
+
+
+def _strip_end(s: str, char="/") -> str:
+    return s[:-1] if s.endswith(char) else s
 
 
 class NginxProxyApp:
     def __init__(self):
-        self.server = None
-        self.docker_event_listener = None
+        self.server: WebServer | None = None
+        self.docker_event_listener: DockerEventListener | None = None
+        self.config: NginxProxyAppConfig = self._loadconfig()
+        self._setup_nginx_conf()
         self.docker_client = self._init_docker_client()
+
+    def _loadconfig(self) -> NginxProxyAppConfig:
+        """
+        Load application configuration from environment variables.
+        """
+        certapi_url = os.getenv("CERTAPI_URL", "").strip()
+        wellknown_path = os.getenv("WELLKNOWN_PATH", "/.well-known/acme-challenge/").strip()
+        # Ensure wellknown_path starts with / and ends with /
+        if not wellknown_path.startswith("/"):
+            wellknown_path = "/" + wellknown_path
+        if not wellknown_path.endswith("/"):
+            wellknown_path = wellknown_path + "/"
+
+        return NginxProxyAppConfig(
+            cert_renew_threshold_days=int(os.getenv("CERT_RENEW_THRESHOLD_DAYS", "30").strip()),
+            dummy_nginx=os.getenv("DUMMY_NGINX") is not None,
+            ssl_dir=_strip_end(os.getenv("SSL_DIR", "/etc/ssl").strip()),
+            conf_dir=_strip_end(os.getenv("NGINX_CONF_DIR", "/etc/nginx").strip()),
+            client_max_body_size=os.getenv("CLIENT_MAX_BODY_SIZE", "1m").strip(),
+            challenge_dir=_strip_end(os.getenv("CHALLENGE_DIR", "/etc/nginx/challenges").strip())
+            + "/",  # the nginx challenge dir must end with a /
+            default_server=os.getenv("DEFAULT_HOST", "true").strip().lower() == "true",
+            vhosts_template_dir=_strip_end(os.getenv("VHOSTS_TEMPLATE_DIR", "./vhosts_template").strip()),
+            certapi_url=certapi_url,
+            wellknown_path=wellknown_path,
+        )
+
+    def _setup_nginx_conf(self):
+        """
+        Render nginx.conf from template using environment variables.
+        This allows customization of nginx settings like worker_processes and worker_connections.
+        """
+        template_path = os.path.join(self.config["vhosts_template_dir"], "nginx.conf.jinja2")
+        output_path = os.path.join(self.config["conf_dir"], "nginx.conf")
+
+        if os.path.exists(template_path):
+            render_nginx_conf(template_path, output_path)
+        else:
+            print(f"[INFO] nginx.conf template not found at {template_path}, using existing nginx.conf")
 
     def _init_docker_client(self) -> DockerClient:
         try:
@@ -34,7 +96,7 @@ class NginxProxyApp:
             sys.exit(1)
 
     def start(self):
-        self.server = WebServer(self.docker_client)
+        self.server = WebServer(self.docker_client, self.config)
         self.docker_event_listener = DockerEventListener(self.server, self.docker_client)
 
     def stop(self):

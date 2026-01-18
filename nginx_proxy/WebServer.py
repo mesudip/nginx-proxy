@@ -1,11 +1,7 @@
 import copy
 import os
-import re
 import sys
-import threading
-import time
-from typing import List
-import json
+from typing import List, TYPE_CHECKING
 
 import requests
 from docker import DockerClient
@@ -19,6 +15,10 @@ from nginx.DummyNginx import DummyNginx
 from nginx_proxy import Container
 from nginx_proxy import ProxyConfigData
 from nginx_proxy.Host import Host
+from nginx_proxy.Throttler import Throttler
+
+if TYPE_CHECKING:
+    from nginx_proxy.NginxProxyApp import NginxProxyAppConfig
 
 
 class WebServer:
@@ -27,24 +27,17 @@ class WebServer:
     Events are sent to this class by DockerEventListener or other injectors.
     """
 
-    def __init__(self, docker_client: DockerClient, nginx_update_throtle_sec=5):
-        self.config = WebServer.loadconfig()
+    def __init__(self, docker_client: DockerClient, config: "NginxProxyAppConfig", nginx_update_throtle_sec=5):
+        self.config = config
         self.shouldExit = False
         self.client = docker_client
-        self._reload_timer = None
-        self._reload_lock = threading.Lock()
-        self._last_reload_actual_time = time.time()  # Timestamp of when the last reload actually completed
-        self._next_reload_scheduled_time = time.time()  # Timestamp of when the next reload is scheduled to occur
-        conf_file = self.config["conf_dir"] + "/conf.d/default.conf"
         self.reload_interval = nginx_update_throtle_sec
-        challenge_dir = self.config["challenge_dir"]
-        self.nginx = (
-            DummyNginx(conf_file, challenge_dir) if self.config["dummy_nginx"] else Nginx(conf_file, challenge_dir)
-        )
+        self.throttler = Throttler(self.reload_interval)
+        NginxClass = DummyNginx if self.config["dummy_nginx"] else Nginx
+        self.nginx = NginxClass(self.config["conf_dir"] + "/conf.d/nginx-proxy.conf", self.config["challenge_dir"])
         self.config_data = ProxyConfigData()
         self.services = set()
         self.networks = {}
-        self.conf_file_name = self.config["conf_dir"] + "/conf.d/default.conf"
         vhosts_template_path = os.path.join(self.config["vhosts_template_dir"], "default.conf.jinja2")
         with open(vhosts_template_path) as f:
             self.template = Template(f.read())
@@ -72,17 +65,6 @@ class WebServer:
 
         print("Reachable Networks :", self.networks)
         self.rescan_and_reload(force=True)
-        self._last_reload_actual_time = time.time()  # Set initial actual reload time
-
-    def _perform_throttled_reload(self):
-        """
-        Performs the actual Nginx reload when the scheduled timer fires.
-        """
-        # print("web_server._perform_throttled_reload()")
-        with self._reload_lock:
-            self._next_reload_scheduled_time = 0  # Reset scheduled time
-            self._last_reload_actual_time = time.time()  # Update actual reload time
-            self._do_reload()
 
     def _do_reload(self, forced=False) -> bool:
         """
@@ -198,47 +180,10 @@ class WebServer:
 
     def reload(self, immediate=False, force=False) -> bool:
         """
-        Schedules or performs a reload of the Nginx configuration,
-        implementing a debouncing and throttling mechanism.
-        - If `forced` is True, performs an immediate reload.
-        - Otherwise, it ensures that reloads happen at most once every RELOAD_INTERVAL.
-          If a reload is requested within the interval since the last actual reload,
-          it schedules a reload for the next available slot.
-          Multiple requests within a scheduled window are merged into one.
-        :param forced: If True, forces an immediate reload without debouncing/throttling.
-        :return: True if a reload was initiated or scheduled, False otherwise.
+        Schedules or performs a reload of the Nginx configuration.
+        Returns True if a reload was initiated or scheduled.
         """
-        with self._reload_lock:
-            if immediate:
-                if self._reload_timer and self._reload_timer.is_alive():
-                    self._reload_timer.cancel()
-                self._next_reload_scheduled_time = 0  # Reset scheduled time
-                self._last_reload_actual_time = time.time()  # Update actual time
-                return self._do_reload(force)
-
-            current_time = time.time()
-            # Calculate the earliest time a new reload can actually happen
-            next_possible_actual_reload_time = self._last_reload_actual_time + self.reload_interval
-
-            if current_time >= next_possible_actual_reload_time:
-                # Enough time has passed since the last actual reload, perform immediately
-                if self._reload_timer and self._reload_timer.is_alive():
-                    self._reload_timer.cancel()  # Cancel any lingering timer
-                self._next_reload_scheduled_time = 0  # No longer scheduled
-                self._last_reload_actual_time = current_time  # Update actual time
-                return self._do_reload(force)
-            else:
-                # Not enough time has passed, schedule if not already scheduled
-                if not (self._reload_timer and self._reload_timer.is_alive()):
-                    # Only schedule if no reload is currently pending
-                    time_to_wait = next_possible_actual_reload_time - current_time
-                    self._reload_timer = threading.Timer(time_to_wait, self._perform_throttled_reload)
-                    self._reload_timer.start()
-                    self._next_reload_scheduled_time = next_possible_actual_reload_time
-                    return True  # Reload scheduled
-                else:
-                    # A reload is already scheduled, merge this request into it
-                    return False  # No new action taken
+        return self.throttler.throttle(lambda: self._do_reload(force), immediate=immediate or force)
 
     def disconnect(self, network, container, scope):
 
@@ -303,26 +248,6 @@ class WebServer:
         return self.reload(force)
 
     def cleanup(self):
-        with self._reload_lock:
-            if self._reload_timer and self._reload_timer.is_alive():
-                self._reload_timer.cancel()
+        self.throttler.shutdown()
         self.ssl_processor.shutdown()
         self.nginx.stop()
-
-    @staticmethod
-    def loadconfig():
-        return {
-            "cert_renew_threshold_days": int(os.getenv("CERT_RENEW_THRESHOLD_DAYS", "30").strip()),
-            "dummy_nginx": os.getenv("DUMMY_NGINX") is not None,
-            "ssl_dir": strip_end(os.getenv("SSL_DIR", "/etc/ssl").strip()),
-            "conf_dir": strip_end(os.getenv("NGINX_CONF_DIR", "/etc/nginx").strip()),
-            "client_max_body_size": os.getenv("CLIENT_MAX_BODY_SIZE", "1m").strip(),
-            "challenge_dir": strip_end(os.getenv("CHALLENGE_DIR", "/tmp/acme-challenges").strip())
-            + "/",  # the nginx challenge dir must end with a /
-            "default_server": os.getenv("DEFAULT_HOST", "true").strip().lower() == "true",
-            "vhosts_template_dir": strip_end(os.getenv("VHOSTS_TEMPLATE_DIR", "./vhosts_template").strip()),
-        }
-
-
-def strip_end(str: str, char="/"):
-    return str[:-1] if str.endswith(char) else str

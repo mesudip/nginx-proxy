@@ -21,7 +21,7 @@ class Nginx:
     command_reload = ["nginx", "-s", "reload"]
     command_start = ["nginx"]
 
-    def __init__(self, config_file_path, challenge_dir="/tmp/acme-challenges/"):
+    def __init__(self, config_file_path, challenge_dir="/etc/nginx/challenges/"):
         self.challenge_dir = challenge_dir
         self.config_file_path = config_file_path
         if path.exists(config_file_path):
