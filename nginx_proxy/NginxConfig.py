@@ -3,7 +3,7 @@ Handles nginx.conf configuration from environment variables.
 
 Environment variables supported (all prefixed with NGINX_):
 - NGINX_WORKER_PROCESSES: Number of worker processes (default: "auto")
-- NGINX_WORKER_CONNECTIONS: Number of worker connections (default: 1024)
+- NGINX_WORKER_CONNECTIONS: Number of worker connections (default: 65535)
 """
 
 import os
@@ -13,7 +13,7 @@ from jinja2 import Template
 # Default values for nginx.conf settings
 NGINX_DEFAULTS = {
     "worker_processes": "auto",
-    "worker_connections": 1024,
+    "worker_connections": 65535,
 }
 
 
@@ -24,7 +24,7 @@ def get_nginx_config():
 
     Supported variables:
     - NGINX_WORKER_PROCESSES: Number of worker processes (default: "auto")
-    - NGINX_WORKER_CONNECTIONS: Number of worker connections (default: 1024)
+    - NGINX_WORKER_CONNECTIONS: Number of worker connections (default: 65535)
 
     Returns:
         dict: Configuration dictionary with nginx settings
@@ -37,7 +37,7 @@ def get_nginx_config():
         config["worker_processes"] = worker_processes
 
     # NGINX_WORKER_CONNECTIONS - must be a positive integer
-    worker_connections = os.getenv("NGINX_WORKER_CONNECTIONS", "1024").strip()
+    worker_connections = os.getenv("NGINX_WORKER_CONNECTIONS", "65535").strip()
     if worker_connections:
         try:
             config["worker_connections"] = int(worker_connections)

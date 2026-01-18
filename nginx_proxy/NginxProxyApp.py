@@ -22,6 +22,8 @@ class NginxProxyAppConfig(TypedDict):
     cert_renew_threshold_days: int
     dummy_nginx: bool
     ssl_dir: str
+    ssl_certs_dir: str
+    ssl_key_dir: str
     conf_dir: str
     client_max_body_size: str
     challenge_dir: str
@@ -55,10 +57,16 @@ class NginxProxyApp:
         if not wellknown_path.endswith("/"):
             wellknown_path = wellknown_path + "/"
 
+        ssl_dir = _strip_end(os.getenv("SSL_DIR", "/etc/ssl").strip())
+        ssl_certs_dir = os.getenv("SSL_CERTS_DIR", ssl_dir + "/certs").strip()
+        ssl_key_dir = os.getenv("SSL_KEY_DIR", ssl_dir + "/private").strip()
+
         return NginxProxyAppConfig(
             cert_renew_threshold_days=int(os.getenv("CERT_RENEW_THRESHOLD_DAYS", "30").strip()),
             dummy_nginx=os.getenv("DUMMY_NGINX") is not None,
-            ssl_dir=_strip_end(os.getenv("SSL_DIR", "/etc/ssl").strip()),
+            ssl_dir=ssl_dir,
+            ssl_certs_dir=ssl_certs_dir,
+            ssl_key_dir=ssl_key_dir,
             conf_dir=_strip_end(os.getenv("NGINX_CONF_DIR", "/etc/nginx").strip()),
             client_max_body_size=os.getenv("CLIENT_MAX_BODY_SIZE", "1m").strip(),
             challenge_dir=_strip_end(os.getenv("CHALLENGE_DIR", "/etc/nginx/challenges").strip())
@@ -102,7 +110,6 @@ class NginxProxyApp:
     def stop(self):
         print("Stopping NginxProxyApp...")
         self.cleanup()
-        print("NginxProxyApp stopped.")
 
     def cleanup(self):
         # No explicit stop for DockerEventListener needed as it's not a thread

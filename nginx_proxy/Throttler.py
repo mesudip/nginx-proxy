@@ -18,9 +18,18 @@ class Throttler:
 
     def throttle(self, task: Callable, immediate: bool = False):
         """
-        A context manager that implements throttling/debouncing.
-        Yields True if the task should be executed immediately in the with block.
-        Yields False if the task was throttled and (if necessary) scheduled for later.
+        Executes a task with throttling/debouncing.
+
+        If called within the `interval` since the last execution, it schedules the task
+        to run after the interval passes (if not already scheduled). If called after
+        the interval, it runs the task immediately.
+
+        Args:
+            task: The callable to execute.
+            immediate: If True, bypasses throttling and runs the task immediately.
+
+        Returns:
+            The result of the task if it ran immediately, or `False` if it was throttled.
         """
         with self._lock:
             current_time = time.time()

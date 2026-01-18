@@ -31,8 +31,8 @@ server{
         include {{ config.rendered_error_conf_path }};{% if server.secured  %}
         listen {{ server.port }} ssl {{ server.extras.default_server }} ;
         http2 on;
-        ssl_certificate /etc/ssl/certs/{{ server.ssl_file }}.crt;
-        ssl_certificate_key /etc/ssl/private/{{ server.ssl_file }}.key;{% else %}
+        ssl_certificate {{ config.ssl_certs_dir }}/{{ server.ssl_file }}.crt;
+        ssl_certificate_key {{ config.ssl_key_dir }}/{{ server.ssl_file }}.key;{% else %}
         listen {{ server.port }} {{ server.extras.default_server }};{% endif %}
       {% if server.is_redirect %}
         return 301 {{  "https" if server.secured else "http" }}://{{ server.full_redirect.hostname }}$request_uri;{% elif server.is_down %}

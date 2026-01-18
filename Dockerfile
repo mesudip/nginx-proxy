@@ -4,7 +4,7 @@ FROM mesudip/python-nginx
 RUN pip install --upgrade pip
 
 HEALTHCHECK --interval=10s --timeout=2s --start-period=10s --retries=3 CMD pgrep nginx &&  pgrep python3 >> /dev/null  || exit 1
-VOLUME  ["/etc/nginx/dhparam", "/tmp/acme-challenges/","/etc/nginx/conf.d","/etc/nginx/ssl","/var/log/nginx"]
+VOLUME  ["/etc/nginx/dhparam", "/etc/nginx/challenges/","/etc/nginx/conf.d","/etc/nginx/ssl","/var/log/nginx"]
 CMD ["sh","-e" ,"/docker-entrypoint.sh"]
 COPY ./requirements.txt /requirements.txt
 RUN apk --no-cache add  openssl && \
@@ -22,7 +22,7 @@ ENV LETSENCRYPT_API=${LETSENCRYPT_API} \
     DHPARAM_SIZE=2048 \
     CLIENT_MAX_BODY_SIZE=1m \
     NGINX_WORKER_PROCESSES=auto \
-    NGINX_WORKER_CONNECTIONS=1024 \
+    NGINX_WORKER_CONNECTIONS=65535 \
     SSL_DIR=/etc/nginx/ssl \
     DEFAULT_HOST=true
 WORKDIR /app

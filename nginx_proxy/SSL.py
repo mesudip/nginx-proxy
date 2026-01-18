@@ -58,6 +58,8 @@ class SSL:
             self.certapi_client = CertManagerClient(certapi_url, self.key_store)
             self.cert_backend = self.certapi_client
             self.cert_manager = None
+            acme_account_key = self.key_store._get_or_generate_key("acme_account.key", key_type="ecdsa")
+
         else:
             self.certapi_client = None
             self.challenge_store = NginxChallengeSolver(nginx.challenge_dir, nginx)
@@ -77,9 +79,10 @@ class SSL:
             )
             self.cert_manager.setup()
             self.cert_backend = self.cert_manager
+            acme_account_key=cert_issuer.acme.account_key,
 
         self.self_signer = SelfCertIssuer(
-            cert_issuer.acme.account_key, "NP", "Bagmati", "Buddhanagar", "nginx-proxy", "local.nginx-proxy.com"
+            acme_account_key, "NP", "Bagmati", "Buddhanagar", "nginx-proxy", "local.nginx-proxy.com"
         )
 
         if start_ssl_thread:
