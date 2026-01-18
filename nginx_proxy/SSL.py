@@ -58,7 +58,7 @@ class SSL:
             self.certapi_client = CertManagerClient(certapi_url, self.key_store)
             self.cert_backend = self.certapi_client
             self.cert_manager = None
-            acme_account_key = self.key_store._get_or_generate_key("acme_account.key", key_type="ecdsa")
+            acme_account_key = self.key_store._get_or_generate_key("acme_account.key", key_type="ecdsa")[0]
 
         else:
             self.certapi_client = None
