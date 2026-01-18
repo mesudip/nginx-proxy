@@ -30,7 +30,7 @@ jobs:
 
       - name: Build and push for tags
         if: startsWith(github.ref, 'refs/tags/')
-        uses: docker/build-push-action@v3
+        uses: docker/build-push-action@v5
         with:
           file: Dockerfile
           context: .
@@ -39,13 +39,17 @@ jobs:
           tags: |
             mesudip/nginx-proxy:${{ github.ref_name }}
             mesudip/nginx-proxy:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Build and push for main branch
         if: github.ref == 'refs/heads/master'
-        uses: docker/build-push-action@v3
+        uses: docker/build-push-action@v5
         with:
           file: Dockerfile
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
           tags: mesudip/nginx-proxy:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
