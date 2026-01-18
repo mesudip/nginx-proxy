@@ -4,7 +4,6 @@ FROM mesudip/python-nginx
 RUN pip install --upgrade pip
 
 HEALTHCHECK --interval=10s --timeout=2s --start-period=10s --retries=3 CMD pgrep nginx &&  pgrep python3 >> /dev/null  || exit 1
-VOLUME  ["/etc/nginx/dhparam", "/etc/nginx/challenges/","/etc/nginx/conf.d","/etc/nginx/ssl","/var/log/nginx"]
 CMD ["sh","-e" ,"/docker-entrypoint.sh"]
 COPY ./requirements.txt /requirements.txt
 RUN apk --no-cache add  openssl && \
@@ -15,6 +14,7 @@ RUN apk --no-cache add  openssl && \
     ln -s /app/getssl /bin/getssl && ln -s /app/verify /bin/verify && \
     mv /docker-entrypoint.sh /nginx-entrypoint.sh  && \
     ln -s /app/docker-entrypoint.sh /docker-entrypoint.sh
+RUN rm -rf /var/log/nginx/* && chown nginx:nginx /var/log/nginx && truncate -s 0 /etc/nginx/conf.d/default.conf
 COPY ./vhosts_template/nginx.conf /etc/nginx/nginx.conf
 ARG LETSENCRYPT_API="https://acme-v02.api.letsencrypt.org/directory"
 ENV LETSENCRYPT_API=${LETSENCRYPT_API} \

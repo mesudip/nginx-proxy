@@ -7,3 +7,4 @@ __pycache__/
 run_data/
 .env
 *.egg-info/
+.pytest_cache/

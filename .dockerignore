@@ -10,3 +10,10 @@ __pycache__/
 /Dockerfile-staging
 /README.md
 .run_data/
+.env
+Dockerfile.test
+.devcontainer/
+.github/
+.pytest_cache/
+docker
+dev-requirements.txt
