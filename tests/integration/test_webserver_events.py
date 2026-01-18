@@ -16,7 +16,7 @@ def get_nginx_config_from_container(nginx_proxy_container: docker.models.contain
     """
     Executes a command inside the nginx_proxy_container to get the current Nginx configuration.
     """
-    _, output = nginx_proxy_container.exec_run("cat /etc/nginx/conf.d/default.conf")
+    _, output = nginx_proxy_container.exec_run("cat /etc/nginx/conf.d/nginx-proxy.conf")
     return output.decode("utf-8")
 
 

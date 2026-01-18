@@ -13,10 +13,27 @@ from nginx_proxy.Container import Container
 from nginx_proxy.Host import Host
 from nginx_proxy.Location import Location
 from nginx_proxy.ProxyConfigData import ProxyConfigData
+from nginx_proxy.NginxProxyApp import NginxProxyAppConfig
 import os
 
 from tests.helpers.docker_test_client import DockerTestClient, MockContainer, MockNetwork
 from nginx_proxy.DockerEventListener import DockerEventListener
+
+
+def get_test_config() -> NginxProxyAppConfig:
+    """Create a test configuration for WebServer."""
+    return NginxProxyAppConfig(
+        dummy_nginx=True,
+        ssl_dir="./.run_data",
+        conf_dir="./run_data",
+        client_max_body_size="1m",
+        challenge_dir="./.run_data/acme-challenges/",
+        default_server=True,
+        vhosts_template_dir="./vhosts_template",
+        cert_renew_threshold_days=10,
+        certapi_url="",
+        wellknown_path="/.well-known/acme-challenge/",
+    )
 
 
 # @pytest.fixture(scope="session")
@@ -43,23 +60,11 @@ def create_webserver(docker_client: DockerTestClient):
     docker_client.networks.create("frontend")  # Default network
     os.environ["LETSENCRYPT_API"] = "https://acme-staging-v02.api.letsencrypt.org/directory"
 
-    # Patch WebServer's loadconfig to use dummy nginx and specific paths
-    with patch("nginx_proxy.WebServer.WebServer.loadconfig") as mock_loadconfig, patch(
-        "certapi.manager.acme_cert_manager.AcmeCertManager.setup"
-    ) as mock_acme_setup:
+    with patch("certapi.manager.acme_cert_manager.AcmeCertManager.setup") as mock_acme_setup:
         mock_acme_setup.return_value = None  # Make setup do nothing
-        mock_loadconfig.return_value = {
-            "dummy_nginx": True,
-            "ssl_dir": "./.run_data",
-            "conf_dir": "./run_data",
-            "client_max_body_size": "1m",
-            "challenge_dir": "./.run_data/acme-challenges/",
-            "default_server": True,
-            "vhosts_template_dir": "./vhosts_template",
-            "cert_renew_threshold_days": 10,
-        }
-        # Initialize WebServer
-        webserver = WebServer(docker_client, nginx_update_throtle_sec=0.1)
+        # Initialize WebServer with test config
+        config = get_test_config()
+        webserver = WebServer(docker_client, config, nginx_update_throtle_sec=0.1)
 
         # Start DockerEventListener in a background thread to process events
         listener = DockerEventListener(webserver, docker_client)

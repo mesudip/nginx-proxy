@@ -2,7 +2,7 @@ Nginx-Proxy
 ===================================================
 [![Run Tests](https://github.com/mesudip/nginx-proxy/actions/workflows/run-tests.yml/badge.svg?branch=master)](https://github.com/mesudip/nginx-proxy/actions/workflows/run-tests.yml)
 [![codecov](https://codecov.io/github/mesudip/nginx-proxy/graph/badge.svg?token=S2GZ0ISOON)](https://codecov.io/github/mesudip/nginx-proxy)
-![Docker Pulls](https://img.shields.io/docker/pulls/mesudip/nginx-proxy)
+[![Docker Pulls](https://img.shields.io/docker/pulls/mesudip/nginx-proxy)](https://hub.docker.com/layers/mesudip/nginx-proxy/latest)
 
 Docker container for automatically creating nginx configuration based on active containers in docker host.
 
@@ -19,8 +19,8 @@ docker network create frontend;    # create a network for nginx proxy
 docker run  --network frontend \
             --name nginx-proxy \
             -v /var/run/docker.sock:/var/run/docker.sock:ro \
-            -v /etc/ssl:/etc/ssl \
-            -v /etc/nginx/dhparam:/etc/nginx/dhparam \
+            -v nginx_data:/etc/nginx \
+            -v nginx_logs:/var/log/nginx \
             -p 80:80 \
             -p 443:443 \
             -d --restart always mesudip/nginx-proxy
@@ -58,16 +58,17 @@ Details of Using nginx-proxy
  - [Default Server](#default-server)
 
 ## Configure `nginx-proxy`
-Following directries can be made into volumes to persist configurations
-- `/etc/nginx/conf.d` nginx configuration directory. You can add your own server configurations here
-- `/etc/nginx/dhparam` the directory for storing DH parameter for ssl connections
-- `/etc/ssl` directory for storing ssl certificates, ssl private key and Let's Encrypt account key.
+Following directries can be mounted as volumes to persist configurations
+- `/etc/nginx/conf.d` nginx configuration directory. You can add your own custom configurations here
+- `/etc/nginx/ssl` directory for storing ssl certificates, ssl private key and Let's Encrypt account key.
 - `/var/log/nginx` directory nginx logs 
-- `/tmp/acme-challenges` directory for storing challenge content when registering Let's Encrypt certificate
+- `/etc/nginx/challenges` directory for storing challenge content when registering Let's Encrypt certificate
 
 Some of the default behaviour of `nginx-proxy` can be changed with environment variables.
 -   `DHPARAM_SIZE`  Default - `2048` : Set size of dhparam usd for ssl certificates
 -   `CLIENT_MAX_BODY_SIZE` Default - `1m` : Set default max body size for all the servers.
+-   `NGINX_WORKER_PROCESSES` Default - `auto` : Set number of nginx workers.        
+-   `NGINX_WORKER_CONNECTIONS` Default - `65535` : Set number of connections per worker.        
 
 ## Configure environment `VIRTUAL_HOST` in your containers
 When you want a container's to be hosted on a domain set `VIRTUAL_HOST` environment variable to desired `server_name` entry.
@@ -142,18 +143,18 @@ generated instead.
 ### Using SSL for exposing endpoint
 Certificate is automatically requested by the nginx-proxy container.
 It requests for a challenge and verifies the challenge to obtain the certificate.
-It is saved under directory `/etc/ssl/certs` and the private key is located inside
-directoy `/etc/ssl/private`
+It is saved under directory `/etc/nginx/ssl/certs` and the private key is located inside
+directoy `/etc/nginx/ssl/private`
  
 ### Using your Own SSL certificate
-If you already have a ssl certificate that you want to use, copy it under the `/etc/ssl/certs` directory and it's key under the directory `/etc/ssl/private` file should be named `domain.crt` and `domain.key`. 
+If you already have a ssl certificate that you want to use, copy it under the `/etc/nginx/ssl/certs` directory and it's key under the directory `/etc/nginx/ssl/private` file should be named `domain.crt` and `domain.key`. 
  
 Wildcard certificates can be used. For example to use `*.example.com` wildcard, you should create files  
-`/etc/ssl/certs/*.example.com.crt` and `/etc/ssl/private/*.example.com.key` in the container's filesystem.
+`/etc/nginx/ssl/certs/*.example.com.crt` and `/etc/nginx/ssl/private/*.example.com.key` in the container's filesystem.
 
 **Note that `*.com` or `*` is not a valid wildcard.** Wild card must have at least 2 dots.
 
-`/etc/ssl/certs/*.example.com.crt` certificate will :
+`/etc/nginx/ssl/certs/*.example.com.crt` certificate will :
 - be used for `host1.example.com`
 - be used for `www.example.com`
 - not be used for `xyz.host1.example.com`
@@ -169,14 +170,14 @@ Note that you must set ip in  DNS entry to point the correct server.
 To issue a certificate for a domain you can simply use this command.
 -  `docker exec nginx-proxy getssl www.example.com`
 
-    Obtained certificate is saved on `/etc/ssl/certs/www.example.com` and private is saved on `/etc/ssl/private/www.example.com`
+    Obtained certificate is saved on `/etc/nginx/ssl/certs/www.example.com` and private is saved on `/etc/nginx/ssl/private/www.example.com`
 
 To issue certificates for multiple domain you can simply add more parameters to the above command
  
  - `docker exec nginx-proxy getssl www.example.com example.com ww.example.com`
  
     All the domains are registered on the same certificate and the filename is set from the first parameter
-    passed to the command. so `/etc/ssl/certs/www.example.com`  and `/etc/ssl/private/www.example.com` are generated
+    passed to the command. so `/etc/nginx/ssl/certs/www.example.com`  and `/etc/nginx/ssl/private/www.example.com` are generated
 
 Use  `docker exec nginx-proxy getssl --help`   for getting help with the command
 
