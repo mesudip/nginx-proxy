@@ -79,7 +79,7 @@ class SSL:
             )
             self.cert_manager.setup()
             self.cert_backend = self.cert_manager
-            acme_account_key=cert_issuer.acme.account_key,
+            acme_account_key = cert_issuer.acme.account_key
 
         self.self_signer = SelfCertIssuer(
             acme_account_key, "NP", "Bagmati", "Buddhanagar", "nginx-proxy", "local.nginx-proxy.com"
