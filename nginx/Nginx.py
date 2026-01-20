@@ -148,6 +148,7 @@ class Nginx:
         Reload nginx so that new configurations are applied.
         :return: true if nginx reload was successful false otherwise
         """
+        time.sleep(0.1)  # This is added as workaround to fix corrupted nginx config file causing nginx reload to fail
         reload_result = subprocess.run(Nginx.command_reload, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if reload_result.returncode != 0:
             if return_error:
