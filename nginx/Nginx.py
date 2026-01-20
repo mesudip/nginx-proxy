@@ -66,9 +66,11 @@ class Nginx:
 
         with open(self.config_file_path, "w") as file:
             file.write(config_str)
+            os.fsync(file.fileno())  # Ensure data is written to disk before nginx reload
         if not self.reload():
             with open(self.config_file_path, "w") as file:
                 file.write(self.config_stack[-1])
+                os.fsync(file.fileno())
             self.reload()
             return False
         else:
@@ -78,6 +80,7 @@ class Nginx:
     def pop_config(self):
         with open(self.config_file_path, "w") as file:
             file.write(self.config_stack.pop())
+            os.fsync(file.fileno())  # Ensure data is written to disk before nginx reload
         return self.reload()
 
     def force_start(self, config_str) -> bool:
@@ -89,9 +92,11 @@ class Nginx:
         """
         with open(self.config_file_path, "w") as file:
             file.write(config_str)
+            os.fsync(file.fileno())  # Ensure data is written to disk before nginx start
         if not self.start():
             with open(self.config_file_path, "w") as file:
                 file.write(self.last_working_config)
+                os.fsync(file.fileno())
             return False
         else:
             self.last_working_config = config_str
@@ -111,6 +116,7 @@ class Nginx:
 
         with open(self.config_file_path, "w") as file:
             file.write(config_str)
+            os.fsync(file.fileno())  # Ensure data is written to disk before nginx reload
         result, data = self.reload(return_error=True)
 
         if not result:
@@ -130,6 +136,7 @@ class Nginx:
             print("ERROR: New change made nginx to fail. Thus it's rolled back", file=sys.stderr)
             with open(self.config_file_path, "w") as file:
                 file.write(self.last_working_config)
+                os.fsync(file.fileno())  # Ensure data is written to disk before rollback
             return False
         else:
             print("Nginx Reloaded Successfully")
