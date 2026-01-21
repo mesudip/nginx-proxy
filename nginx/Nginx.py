@@ -14,6 +14,12 @@ import requests
 
 from nginx import Url
 
+def write_file(file_path: str, content: str):
+    """Utility function to write content to a file."""
+    with open(file_path, "w") as file:
+        file.write(content)
+        file.flush()
+        os.fsync(file.fileno()) # Ensure data is written to disk
 
 class Nginx:
     command_config_test = ["nginx", "-t"]
@@ -64,13 +70,9 @@ class Nginx:
             self.config_stack.append(config_str)
             return self.reload()
 
-        with open(self.config_file_path, "w") as file:
-            file.write(config_str)
-            os.fsync(file.fileno())  # Ensure data is written to disk before nginx reload
+        write_file(self.config_file_path, config_str)
         if not self.reload():
-            with open(self.config_file_path, "w") as file:
-                file.write(self.config_stack[-1])
-                os.fsync(file.fileno())
+            write_file(self.config_file_path, self.config_stack[-1])
             self.reload()
             return False
         else:
@@ -78,9 +80,7 @@ class Nginx:
             return True
 
     def pop_config(self):
-        with open(self.config_file_path, "w") as file:
-            file.write(self.config_stack.pop())
-            os.fsync(file.fileno())  # Ensure data is written to disk before nginx reload
+        write_file(self.config_file_path, self.config_stack.pop())
         return self.reload()
 
     def force_start(self, config_str) -> bool:
@@ -90,13 +90,9 @@ class Nginx:
         :param config_str:
         :return:
         """
-        with open(self.config_file_path, "w") as file:
-            file.write(config_str)
-            os.fsync(file.fileno())  # Ensure data is written to disk before nginx start
+        write_file(self.config_file_path, config_str)
         if not self.start():
-            with open(self.config_file_path, "w") as file:
-                file.write(self.last_working_config)
-                os.fsync(file.fileno())
+            write_file(self.config_file_path, self.last_working_config)
             return False
         else:
             self.last_working_config = config_str
@@ -114,9 +110,7 @@ class Nginx:
             print("Configuration not changed, skipping nginx reload")
             return False
 
-        with open(self.config_file_path, "w") as file:
-            file.write(config_str)
-            os.fsync(file.fileno())  # Ensure data is written to disk before nginx reload
+        write_file(self.config_file_path, config_str)
         result, data = self.reload(return_error=True)
 
         if not result:
@@ -134,9 +128,7 @@ class Nginx:
             if data is not None:
                 print(data, file=sys.stderr)
             print("ERROR: New change made nginx to fail. Thus it's rolled back", file=sys.stderr)
-            with open(self.config_file_path, "w") as file:
-                file.write(self.last_working_config)
-                os.fsync(file.fileno())  # Ensure data is written to disk before rollback
+            write_file(self.config_file_path, self.last_working_config)
             return False
         else:
             print("Nginx Reloaded Successfully")
@@ -148,7 +140,6 @@ class Nginx:
         Reload nginx so that new configurations are applied.
         :return: true if nginx reload was successful false otherwise
         """
-        time.sleep(0.1)  # This is added as workaround to fix corrupted nginx config file causing nginx reload to fail
         reload_result = subprocess.run(Nginx.command_reload, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if reload_result.returncode != 0:
             if return_error:
@@ -176,8 +167,7 @@ class Nginx:
             if path.exists(file):
                 continue
             r2 = "".join([random.choice(string.ascii_letters + string.digits) for _ in range(256)])
-            with open(file, mode="wt") as file_descriptor:
-                file_descriptor.write(r2)
+            write_file(file, r2)
             for d in domain:
                 try:
                     url = "http://%s/.well-known/acme-challenge/%s" % (d, r1)

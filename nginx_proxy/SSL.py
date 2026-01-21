@@ -26,7 +26,8 @@ class SSL:
     ):
         self.ssl_path = ssl_path
         self.nginx = nginx
-        self.server = server
+        ## import only for typing
+        self.server:'Webserver' = server
         self.blacklist = Blacklist()
         self.update_threshold_secs = update_threshold_seconds
         self.cert_min_renew_threshold_secs = max(self.update_threshold_secs, 10 * 24 * 3600)
@@ -37,7 +38,7 @@ class SSL:
         self.shutdown_requested: bool = False
         self.lock: threading.Condition = threading.Condition()
         self.certificate_expiry_thread: threading.Thread = threading.Thread(
-            target=self.update_ssl_certificates, name="SSL-Refresh-Thread"
+            target=self.ssl_renew_thread_worker, name="SSL-Refresh-Thread"
         )
 
         x = os.environ.get("LETSENCRYPT_API")
@@ -88,7 +89,7 @@ class SSL:
         if start_ssl_thread:
             self.certificate_expiry_thread.start()
 
-    def update_ssl_certificates(self):
+    def ssl_renew_thread_worker(self):
         while True:
             with self.lock:
                 if self.shutdown_requested:

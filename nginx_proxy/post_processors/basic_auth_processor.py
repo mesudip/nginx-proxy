@@ -29,6 +29,7 @@ class BasicAuthProcessor:
             for user, password in securities.items():
                 hashed = self.hash_password_bcrypt(password)
                 f.write(f"{user}:{hashed}\n")
+            f.flush()
             os.fsync(f.fileno())  # Ensure data is written to disk
         return file_path
 

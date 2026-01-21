@@ -34,7 +34,7 @@ class WebServer:
         self.reload_interval = nginx_update_throtle_sec
         self.throttler = Throttler(self.reload_interval)
         NginxClass = DummyNginx if self.config["dummy_nginx"] else Nginx
-        self.nginx = NginxClass(self.config["conf_dir"] + "/conf.d/nginx-proxy.conf", self.config["challenge_dir"])
+        self.nginx : Nginx | DummyNginx = NginxClass(self.config["conf_dir"] + "/conf.d/nginx-proxy.conf", self.config["challenge_dir"])
         self.config_data = ProxyConfigData()
         self.services = set()
         self.networks = {}
@@ -64,9 +64,18 @@ class WebServer:
             sys.exit(1)
 
         print("Reachable Networks :", self.networks)
+        self.setup_error_config()
         self.rescan_and_reload(force=True)
+    def setup_error_config(self):
+        # Render error.conf.jinja2 and save it
+        rendered_error_conf_path = os.path.join(self.config["conf_dir"], "error.conf")
+        with open(rendered_error_conf_path, "w") as f:
+            f.write(self.error_template.render(config=self.config))
 
-    def _do_reload(self, forced=False) -> bool:
+        # Pass the path to the rendered error file to the main template
+        self.config["rendered_error_conf_path"] = rendered_error_conf_path
+
+    def _do_reload(self, forced=False,has_addition=True) -> bool:
         """
         Creates a new configuration based on current state and signals nginx to reload.
         This is called whenever there's change in container or network state.
@@ -99,13 +108,6 @@ class WebServer:
         self.ssl_processor.process_ssl_certificates(hosts)
         self.config["default_server"] = not has_default
 
-        # Render error.conf.jinja2 and save it
-        rendered_error_conf_path = os.path.join(self.config["conf_dir"], "error.conf")
-        with open(rendered_error_conf_path, "w") as f:
-            f.write(self.error_template.render(config=self.config))
-
-        # Pass the path to the rendered error file to the main template
-        self.config["rendered_error_conf_path"] = rendered_error_conf_path
 
         output = self.template.render(virtual_servers=hosts, config=self.config)
         response = self.nginx.update_config(output, force=forced)
@@ -176,14 +178,14 @@ class WebServer:
                 "    " + deleted.name,
                 sep="\t",
             )
-            self.reload()
+            self.reload(has_addition=False)
 
-    def reload(self, immediate=False, force=False) -> bool:
+    def reload(self, immediate=False, force=False,has_addition=True) -> bool:
         """
         Schedules or performs a reload of the Nginx configuration.
         Returns True if a reload was initiated or scheduled.
         """
-        return self.throttler.throttle(lambda: self._do_reload(force), immediate=immediate or force)
+        return self.throttler.throttle(lambda: self._do_reload(force, has_addition), immediate=immediate or force)
 
     def disconnect(self, network, container, scope):
 
