@@ -1,7 +1,7 @@
 from docker.models.containers import Container as DockerContainer
 
 from nginx_proxy import Host, ProxyConfigData
-from nginx_proxy.Container import Container, NoHostConiguration, UnreachableNetwork
+from nginx_proxy.Container import Container, NoHostConiguration, UnreachableNetwork, InvalidHostConfiguration
 from nginx_proxy.utils import split_url
 
 
@@ -47,14 +47,31 @@ def process_virtual_hosts(container: DockerContainer, environments: map, known_n
             "networks: " + ", ".join(list(e.network_names)),
             sep="\t",
         )
+    except InvalidHostConfiguration as e:
+        print(
+            "Invalid Configuration ",
+            "Id:" + container.id[:12],
+            "    " + container.attrs["Name"].replace("/", ""),
+            sep="\t",
+        )
+        print(
+            "  Error: " + e.message,
+        )
+        if e.env_var_value:
+            print(
+                "  Value: " + e.env_var_value,
+            )
     return hosts
 
 
-def _parse_host_entry(entry_string: str):
+def _parse_host_entry(entry_string: str, is_static: bool = False):
     """
-
-    :param entry_string:
-    :return: (dict,dict)
+    Parse a virtual host entry string.
+    
+    :param entry_string: The host entry string to parse
+    :param is_static: Whether this is from STATIC_VIRTUAL_HOST (requires destination)
+    :return: (Host, location, Container, extras)
+    :raises InvalidHostConfiguration: If configuration is invalid
     """
     configs = entry_string.split(";", 1)
     extras = set()
@@ -67,6 +84,14 @@ def _parse_host_entry(entry_string: str):
     host_list = entry_string.strip().split("->")
     external, internal = host_list if len(host_list) == 2 else (host_list[0], "")
     external, internal = (split_url(external), split_url(internal))
+    
+    # Validate STATIC_VIRTUAL_HOST requires a destination
+    if is_static and not internal["host"]:
+        raise InvalidHostConfiguration(
+            f"STATIC_VIRTUAL_HOST must specify a destination address after '->' (e.g., 'example.com -> http://backend:8080')",
+            entry_string.strip()
+        )
+    
     c = Container(
         None,
         scheme=list(internal["scheme"])[0] if len(internal["scheme"]) else "http",
@@ -118,7 +143,7 @@ def host_generator(container: DockerContainer, service_id: str = None, known_net
     container_name = container.attrs["Name"].replace("/", "")
 
     for host_config in static_hosts:
-        host, location, container_data, extras = _parse_host_entry(host_config)
+        host, location, container_data, extras = _parse_host_entry(host_config, is_static=True)
         container_data.id = container.id
         container_data.name = container_name
         host.secured = "https" in host.scheme or "wss" in host.scheme or host.port == 443
@@ -137,7 +162,7 @@ def host_generator(container: DockerContainer, service_id: str = None, known_net
             override_port = env_map["VIRTUAL_PORT"]
 
     for host_config in virtual_hosts:
-        host, location, container_data, extras = _parse_host_entry(host_config)
+        host, location, container_data, extras = _parse_host_entry(host_config, is_static=False)
         container_data.address = ip_address
         container_data.id = container.id
         container_data.name = container_name
