@@ -23,7 +23,13 @@ def process_virtual_hosts(container: DockerContainer, environments: map, known_n
             if type(host) is not str:
                 host.add_container(location, proxied_container, websocket=websocket, http=http)
                 if len(extras):
-                    host.locations[location].update_extras({"injected": extras})
+                    injections = []
+                    for k, v in extras.items():
+                        if v is None:
+                            injections.append(k)
+                        else:
+                            injections.append(f"{k} {v}")
+                    host.locations[location].update_extras({"injected": injections})
                 hosts.add_host(host)
         print(
             "Valid configuration   ",
@@ -57,13 +63,18 @@ def _parse_host_entry(entry_string: str):
     :return: (dict,dict)
     """
     configs = entry_string.split(";", 1)
-    extras = set()
+    extras = {}
     if len(configs) > 1:
         entry_string = configs[0]
         for x in configs[1].split(";"):
             x = x.strip()
             if x:
-                extras.add(x)
+                # Parse as key value, e.g. 'client_max_body_size 200M'
+                if " " in x:
+                    k, v = x.split(" ", 1)
+                    extras[k.strip()] = v.strip()
+                else:
+                    extras[x] = None
     host_list = entry_string.strip().split("->")
     external, internal = host_list if len(host_list) == 2 else (host_list[0], "")
     external, internal = (split_url(external), split_url(internal))

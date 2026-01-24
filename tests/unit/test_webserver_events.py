@@ -320,3 +320,61 @@ def test_webserver_add_two_containers_with_same_virtual_host(docker_client: Dock
     # Verify server block uses upstream
     server = expect_server_up(nginx, hostname)
     assert f"http://{hostname}" in next(l.proxy_pass for l in server.locations if l.path == "/")
+
+
+def test_webserver_restart_container_extras_do_not_duplicate_servers(
+    docker_client: DockerTestClient, nginx: DummyNginx
+):
+    """Restart a container with changing VIRTUAL_HOST extras and ensure no duplicate server blocks."""
+
+    container_name = "multi_restart_container"
+    # sequence of (hostname, client_max_body_size) tuples
+    scenarios = [
+        ("first.restart.e.com", "0"),
+        ("first.restart.e.com", "5m"),
+        ("second.restart.e.com", "0"),
+        ("second.restart.e.com", "0"),
+    ]
+
+    active_container = None
+    try:
+        for hostname, client_max_body_size in scenarios:
+            # construct VIRTUAL_HOST env value
+            env_value = f"{hostname} ; client_max_body_size {client_max_body_size}"
+            # start container with current env
+            active_container = docker_client.containers.run(
+                "nginx:alpine", name=container_name, environment={"VIRTUAL_HOST": env_value}, network="frontend"
+            )
+            time.sleep(0.4)
+
+            # Ensure host appears exactly once and check client_max_body_size directive
+            config = HttpBlock.parse(nginx.current_config)
+            servers_for_host = [s for s in config.servers if hostname in s.server_names]
+            assert (
+                len(servers_for_host) == 1
+            ), f"Host {hostname} should have exactly one server block after restart, found {len(servers_for_host)}"
+            server_block = servers_for_host[0]
+            # find primary location (path '/') and assert client_max_body_size matches expected
+            loc = next((l for l in server_block.locations if l.path == "/"), None)
+            assert loc is not None, f"Location / not found for host {hostname}"
+            # Assert directive equals the client_max_body_size value
+            assert (
+                loc.client_max_body_size == client_max_body_size
+            ), f"Expected client_max_body_size {client_max_body_size} for host {hostname}, got {loc.client_max_body_size}"
+            # Remove container to simulate restart for next scenario
+            active_container.remove(force=True)
+            active_container = None
+            time.sleep(0.8)
+
+            # Host should disappear after removal (no lingering duplicates)
+            expect_server_down(nginx, hostname)
+
+        # After final scenario, ensure each host is in 'down' state (no active locations)
+        expected_hosts = {hostname for hostname, _ in scenarios}
+        for h in expected_hosts:
+            expect_server_down(nginx, h)
+
+    finally:
+        if active_container is not None:
+            active_container.remove(force=True)
+            time.sleep(0.5)

@@ -39,6 +39,11 @@ class Host:
             self.update_extras_content(x, extras[x])
 
     def update_extras_content(self, key: str, value: Any) -> None:
+        # For known scalar nginx directives, always replace the value
+        scalar_keys = {"client_max_body_size", "client_body_timeout", "client_body_buffer_size"}
+        if key in scalar_keys:
+            self.extras[key] = value
+            return
         if key in self.extras:
             data = self.extras[key]
             if type(data) in (dict, set):
