@@ -29,11 +29,13 @@ server{
         server_name {{ server.hostname }};
 
         include {{ config.rendered_error_conf_path }};{% if server.secured  %}
-        listen {{ server.port }} ssl {{ server.extras.default_server }} ;
+        listen {{ server.port }} ssl {{ server.extras.default_server }};{% if config.enable_ipv6 %}
+        listen [::]:{{ server.port }} ssl {{ server.extras.default_server }};{% endif %}
         http2 on;
         ssl_certificate {{ config.ssl_certs_dir }}/{{ server.ssl_file }}.crt;
         ssl_certificate_key {{ config.ssl_key_dir }}/{{ server.ssl_file }}.key;{% else %}
-        listen {{ server.port }} {{ server.extras.default_server }};{% endif %}
+        listen {{ server.port }} {{ server.extras.default_server }};
+        {% if config.enable_ipv6 %}listen [::]:{{ server.port }} {{ server.extras.default_server }};{% endif %}{% endif %}
       {% if server.is_redirect %}
         return 301 {{  "https" if server.secured else "http" }}://{{ server.full_redirect.hostname }}$request_uri;{% elif server.is_down %}
         return 503;{% else %} {% if server.extras.security %}
@@ -68,7 +70,8 @@ server{
 }{% else %}
 server {
         include {{ config.rendered_error_conf_path }};
-        listen 80 {{ server.extras.default_server }};
+        listen 80 {{ server.extras.default_server }};{% if config.enable_ipv6 %}
+        listen [::]:80 {{ server.extras.default_server }};{% endif %}
         server_name {{ server.hostname }};
         location {{ config.wellknown_path }} { {% if config.certapi_url %}
             proxy_pass {{ config.certapi_url }};{% else %}
@@ -83,6 +86,7 @@ server {
 {% if config.default_server %}
 server{
         listen 80 default_server;
+        {% if config.enable_ipv6 %}listen [::]:80 default_server;{% endif %}
         server_name _ ;
         location {{ config.wellknown_path }} { {% if config.certapi_url %}
             proxy_pass {{ config.certapi_url }};{% else %}

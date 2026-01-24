@@ -31,6 +31,7 @@ class NginxProxyAppConfig(TypedDict):
     vhosts_template_dir: str
     certapi_url: str
     wellknown_path: str
+    enable_ipv6: bool
 
 
 def _strip_end(s: str, char="/") -> str:
@@ -75,6 +76,7 @@ class NginxProxyApp:
             vhosts_template_dir=_strip_end(os.getenv("VHOSTS_TEMPLATE_DIR", "./vhosts_template").strip()),
             certapi_url=certapi_url,
             wellknown_path=wellknown_path,
+            enable_ipv6=os.getenv("ENABLE_IPV6", "false").strip().lower() == "true",
         )
 
     def _setup_nginx_conf(self):
