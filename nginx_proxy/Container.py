@@ -52,3 +52,10 @@ class UnreachableNetwork(UnconfiguredContainer):
 
 class NoHostConiguration(UnconfiguredContainer):
     pass
+
+
+class InvalidHostConfiguration(UnconfiguredContainer):
+    def __init__(self, message: str, env_var_value: str = None):
+        self.message = message
+        self.env_var_value = env_var_value
+        super().__init__(message)
