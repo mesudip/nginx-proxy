@@ -4,10 +4,11 @@ import re
 from typing import Dict
 
 from nginx import Url
-from nginx_proxy import Container, Host
+from nginx_proxy.BackendTarget import BackendTarget
+from nginx_proxy.Host import Host
 
 
-def process_redirection(container: Container, environments: map, vhost_map: Dict[str, Dict[int, Host]]):
+def process_redirection(backend: BackendTarget, environments: map, vhost_map: Dict[str, Dict[int, Host]]):
     redirect_env = [e[1] for e in environments.items() if e[0].startswith("PROXY_FULL_REDIRECT")]
     hosts = []
     for port_map in vhost_map.values():

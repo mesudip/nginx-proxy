@@ -5,7 +5,7 @@ import re
 from typing import List
 
 from nginx.NginxConf import HttpBlock, NginxConfig, ServerBlock
-from tests.helpers.docker_utils import start_backend_container
+from tests.helpers.docker_utils import start_backend, stop_backend
 
 # Regex to match the dynamically assigned IP:PORT for proxy_pass
 # Example: http://172.18.0.2:80
@@ -158,58 +158,65 @@ def test_webserver_initialization_integration(nginx_proxy_container: docker.mode
     assert root_loc.return_code == "503"
 
 
+@pytest.mark.parametrize("backend_type", ["container", "service"])
 def test_webserver_add_container_integration(
     nginx_proxy_container: docker.models.containers.Container,
     docker_client: docker.DockerClient,
     test_network: docker.models.networks.Network,
+    backend_type: str,
 ):
     """
-    Test that adding a container with VIRTUAL_HOST creates a corresponding Nginx server block.
+    Test that adding a container/service with VIRTUAL_HOST creates a corresponding Nginx server block.
     """
-    container_name = "test_backend_add"
-    virtual_host = "add.example.com"
+    virtual_host = backend_type + ".add.example.com"
     env = {"VIRTUAL_HOST": virtual_host}
-    backend: docker.models.containers.Container = None
+    backend = None
     try:
-        backend = start_backend_container(docker_client, test_network, env)
+        backend = start_backend(docker_client, test_network, env, backend_type=backend_type)
 
-        server = expect_server_up_integration(nginx_proxy_container[0], virtual_host, timeout=15)  # Increased timeout
+        server = expect_server_up_integration(nginx_proxy_container[0], virtual_host, timeout=15)
 
     finally:
         if backend:
-            backend.remove(force=True)
+            stop_backend(backend)
 
 
+@pytest.mark.parametrize("backend_type", ["container", "service"])
 def test_webserver_remove_container_integration(
     nginx_proxy_container: docker.models.containers.Container,
     docker_client: docker.DockerClient,
     test_network: docker.models.networks.Network,
+    backend_type: str,
 ):
     """
-    Test that removing a container with VIRTUAL_HOST removes its Nginx server block
+    Test that removing a container/service with VIRTUAL_HOST removes its Nginx server block
     or converts it to a 503 error page.
     """
-    container_name = "test_backend_remove"
-    virtual_host = "remove.example.com"
+    virtual_host = backend_type + "." + "remove.example.com"
     env = {"VIRTUAL_HOST": virtual_host}
 
-    backend = start_backend_container(docker_client, test_network, env)
-    expect_server_up_integration(nginx_proxy_container[0], virtual_host, timeout=15)  # Increased timeout
+    backend = start_backend(docker_client, test_network, env, backend_type=backend_type)
+    expect_server_up_integration(nginx_proxy_container[0], virtual_host, timeout=15)
 
-    backend.remove(force=True)
-    expect_server_down_integration(nginx_proxy_container[0], virtual_host, timeout=15)  # Increased timeout
+    stop_backend(backend)
+
+    expect_server_down_integration(nginx_proxy_container[0], virtual_host, timeout=15)
 
 
+@pytest.mark.parametrize("backend_type", ["container", "service"])
 def test_webserver_add_network_integration(
     nginx_proxy_container: docker.models.containers.Container,
     docker_client: docker.DockerClient,
     test_network: docker.models.networks.Network,
+    backend_type: str,
 ):
     """
-    Test that connecting a container to the proxy's network adds its Nginx server block.
+    Test that connecting a container/service to the proxy's network adds its Nginx server block.
     """
-    container_name = "test_backend_add_net"
-    virtual_host = "addnet.example.com"
+    if backend_type == "service":
+        pytest.skip("Dynamic network attachment for services requires mock update logic")
+
+    virtual_host = backend_type + "." + "addnet.example.com"
     env = {"VIRTUAL_HOST": virtual_host}
 
     # Create container on a different network first
@@ -217,14 +224,14 @@ def test_webserver_add_network_integration(
     other_network = docker_client.networks.create(other_network_name, driver="bridge")
     backend = None
     try:
-        backend = start_backend_container(docker_client, other_network, env)
+        backend = start_backend(docker_client, other_network, env, backend_type=backend_type)
 
-        expect_server_not_present_integration(nginx_proxy_container[0], virtual_host, timeout=15)  # Increased timeout
+        expect_server_not_present_integration(nginx_proxy_container[0], virtual_host, timeout=15)
 
         # Connect the container to the test_network (frontend network for the proxy)
         test_network.connect(backend)
 
-        expect_server_up_integration(nginx_proxy_container[0], virtual_host, timeout=15)  # Increased timeout
+        expect_server_up_integration(nginx_proxy_container[0], virtual_host, timeout=15)
     finally:
         if backend:
             backend.remove(force=True)
@@ -232,77 +239,105 @@ def test_webserver_add_network_integration(
             other_network.remove()
 
 
+@pytest.mark.parametrize("backend_type", ["container", "service"])
 def test_webserver_remove_network_integration(
     nginx_proxy_container: docker.models.containers.Container,
     docker_client: docker.DockerClient,
     test_network: docker.models.networks.Network,
+    backend_type: str,
 ):
     """
-    Test that disconnecting a container from the proxy's network removes its Nginx server block
-    or converts it to a 503 error page.
+    Test that disconnecting a container from the proxy's network removes its Nginx server block.
+    Same limitation as add_network for services.
     """
-    container_name = "test_backend_remove_net"
-    virtual_host = "removenet.example.com"
+    if backend_type == "service":
+        pytest.skip("Dynamic network detachment for services requires mock update logic")
+
+    virtual_host = backend_type + "." + "removenet.example.com"
     env = {"VIRTUAL_HOST": virtual_host}
 
-    backend = start_backend_container(docker_client, test_network, env)
-    expect_server_up_integration(nginx_proxy_container[0], virtual_host, timeout=15)  # Increased timeout
+    backend = start_backend(docker_client, test_network, env, backend_type=backend_type)
+    expect_server_up_integration(nginx_proxy_container[0], virtual_host, timeout=15)
 
     # Disconnect the container from the test_network
     test_network.disconnect(backend)
 
-    expect_server_down_integration(nginx_proxy_container[0], virtual_host, timeout=15)  # Increased timeout
+    expect_server_down_integration(nginx_proxy_container[0], virtual_host, timeout=15)
 
-    backend.remove(force=True)  # Clean up
+    stop_backend(backend)  # Clean up
 
 
+@pytest.mark.parametrize("backend_type", ["container", "service"])
 def test_webserver_recreate_same_name_container_with_different_host_integration(
     nginx_proxy_container: docker.models.containers.Container,
     docker_client: docker.DockerClient,
     test_network: docker.models.networks.Network,
+    backend_type: str,
 ):
     """
-    Test that recreating a container with the same name but a different VIRTUAL_HOST
+    Test that recreating a container/service with the same name but a different VIRTUAL_HOST
     correctly updates the Nginx configuration.
     """
-    container_name = "test_backend_recreate"
-    old_virtual_host = "old.example.com"
-    new_virtual_host = "new.example.com"
+    old_virtual_host = backend_type + "." + "old.example.com"
+    new_virtual_host = backend_type + "." + "new.example.com"
 
     # Create with old env
-    backend_old = start_backend_container(docker_client, test_network, {"VIRTUAL_HOST": old_virtual_host})
-    expect_server_up_integration(nginx_proxy_container[0], old_virtual_host, timeout=15)  # Increased timeout
+    backend_old = start_backend(
+        docker_client, test_network, {"VIRTUAL_HOST": old_virtual_host}, backend_type=backend_type
+    )
+    expect_server_up_integration(nginx_proxy_container[0], old_virtual_host, timeout=15)
 
-    # Remove the old container
-    backend_old.remove(force=True)
-    expect_server_down_integration(nginx_proxy_container[0], old_virtual_host, timeout=15)  # Increased timeout
+    # Remove the old backend
+    stop_backend(backend_old)
+
+    expect_server_down_integration(nginx_proxy_container[0], old_virtual_host, timeout=15)
 
     # Create a new one with the same name but new env
-    backend_new = start_backend_container(docker_client, test_network, {"VIRTUAL_HOST": new_virtual_host})
+    # Note: start_backend_container uses unique names by default with timestamp to avoid conflict
+    # But this test intention is "same name".
+    # start_backend_container interface doesn't easily allow forcing name unless we modify it or passing it in kwargs?
+    # It hardcodes name=f"test-backend-{time.time_ns()}".
+    # The original test relied on `docker_client.containers.run` being called inside `start_backend_container`?
+    # Wait, original `start_backend_container` had unique name generation.
+    # The original test `test_webserver_recreate_same_name_container_with_different_host_integration`
+    # called `start_backend_container` TWICE.
+    # `start_backend_container` generates a unique name each time based on time.
+    # So actually the original test was testing recreating a NEW container (different ID, different Name likely due to ns precision or at least different ID).
+    # The Description says "recreating a container with same name".
+    # If the helper generates unique names, then it's NOT the same name.
+    # BUT, the test worked? Maybe Nginx Proxy doesn't care about the name for VIRTUAL_HOST, just the host.
+    # So "Same Name" part of the test description might be misleading or I misread the helper.
+    # Helper: name=f"test-backend-{time.time_ns()}"
+    # Yes, unique names.
+    # So effectively it's: Stop old backend (Host A), Start new backend (Host B).
+    # Verify Host A down, Host B up.
+
+    backend_new = start_backend(
+        docker_client, test_network, {"VIRTUAL_HOST": new_virtual_host}, backend_type=backend_type
+    )
     try:
-        expect_server_up_integration(nginx_proxy_container[0], new_virtual_host, timeout=15)  # Increased timeout
-        expect_server_down_integration(
-            nginx_proxy_container[0], old_virtual_host, timeout=15
-        )  # Ensure old is still down
+        expect_server_up_integration(nginx_proxy_container[0], new_virtual_host, timeout=15)
+        expect_server_down_integration(nginx_proxy_container[0], old_virtual_host, timeout=15)
     finally:
         if backend_new:
-            backend_new.remove(force=True)
+            stop_backend(backend_new)
 
 
+@pytest.mark.parametrize("backend_type", ["container", "service"])
 def test_webserver_add_container_with_ssl_integration(
     nginx_proxy_container: docker.models.containers.Container,
     docker_client: docker.DockerClient,
     test_network: docker.models.networks.Network,
+    backend_type: str,
 ):
     """
-    Test that adding a container with an HTTPS VIRTUAL_HOST creates both HTTP redirect
+    Test that adding a container/service with an HTTPS VIRTUAL_HOST creates both HTTP redirect
     and HTTPS server blocks with self-signed certificates.
     """
-    container_name = "test_backend_ssl"
-    virtual_host = "ssl-test.example.com"
+    virtual_host = backend_type + "." + "ssl-test.example.com"
     env = {"VIRTUAL_HOST": f"https://{virtual_host}"}
 
-    backend = start_backend_container(docker_client, test_network, env)
+    backend = start_backend(docker_client, test_network, env, backend_type=backend_type)
     try:
         # Wait for the server to be up (either HTTP redirect or HTTPS)
         # We expect two server blocks for this host
@@ -327,99 +362,96 @@ def test_webserver_add_container_with_ssl_integration(
         assert https_server._get_directive_value("ssl_certificate_key").endswith(f"/{virtual_host}.selfsigned.key")
     finally:
         if backend:
-            backend.remove(force=True)
+            stop_backend(backend)
 
 
+@pytest.mark.parametrize("backend_type", ["container", "service"])
 def test_webserver_add_two_containers_with_same_virtual_host_integration(
     nginx_proxy_container: docker.models.containers.Container,
     docker_client: docker.DockerClient,
     test_network: docker.models.networks.Network,
+    backend_type: str,
 ):
     """
-    Test that adding two containers with the same VIRTUAL_HOST creates an upstream block
+    Test that adding two backends with the same VIRTUAL_HOST creates an upstream block
     and the server block uses it.
     """
-    virtual_host = "loadbalance1.example.com"
+    virtual_host = backend_type + "." + "loadbalance1.example.com"
     env = {"VIRTUAL_HOST": virtual_host}
 
-    backend1 = start_backend_container(docker_client, test_network, env)
-    backend2 = start_backend_container(docker_client, test_network, env)
+    backend1 = start_backend(docker_client, test_network, env, backend_type=backend_type)
+    backend2 = start_backend(docker_client, test_network, env, backend_type=backend_type)
     try:
-        time.sleep(10)  # Give ample time for Nginx to reload with upstream config
+        time.sleep(10)
 
-        server = expect_server_up_integration(
-            nginx_proxy_container[0], virtual_host, timeout=15
-        )  # Already waited, so quick check
+        server = expect_server_up_integration(nginx_proxy_container[0], virtual_host, timeout=15)
 
         config_str = get_nginx_config_from_container(nginx_proxy_container[0])
         config = HttpBlock.parse(config_str)
 
-        # Verify upstream block is created
         upstream = next((u for u in config.upstreams if virtual_host in u.parameters), None)
         assert upstream is not None, f"Upstream block for {virtual_host} not found. Config:\n{config_str}"
         assert (
             len(upstream.get_directives("server")) == 2
         ), f"Expected 2 servers in upstream, found {len(upstream.get_directives('server'))}. Config:\n{config_str}"
 
-        # Verify server block uses upstream
         assert f"http://{virtual_host}" in server.locations[0].proxy_pass
     finally:
-        if backend1:
-            backend1.remove(force=True)
-        if backend2:
-            backend2.remove(force=True)
+        for b in [backend1, backend2]:
+            if b:
+                stop_backend(b)
+        # Wait for cleanup to propagate to avoid polluting next tests
+        expect_server_down_integration(nginx_proxy_container[0], virtual_host, timeout=15)
 
 
+@pytest.mark.parametrize("backend_type", ["container", "service"])
 def test_when_container_shuts_down__then_ip_removed_from_upstream(
     nginx_proxy_container: docker.models.containers.Container,
     docker_client: docker.DockerClient,
     test_network: docker.models.networks.Network,
+    backend_type: str,
 ):
     """
-    Test that adding two containers with the same VIRTUAL_HOST creates an upstream block
-    and the server block uses it.
+    Test that scaling down backends updates upstreams.
     """
-    virtual_host = "loadbalance2.example.com"
+    virtual_host = backend_type + "." + "loadbalance2.example.com"
     env = {"VIRTUAL_HOST": virtual_host}
 
-    backend1 = start_backend_container(docker_client, test_network, env)
-    backend2 = start_backend_container(docker_client, test_network, env)
-    backend3 = start_backend_container(docker_client, test_network, env)
+    backend1 = start_backend(docker_client, test_network, env, backend_type=backend_type)
+    backend2 = start_backend(docker_client, test_network, env, backend_type=backend_type)
+    backend3 = start_backend(docker_client, test_network, env, backend_type=backend_type)
     try:
-        time.sleep(10)  # Give ample time for Nginx to reload with upstream config
+        time.sleep(10)
 
-        server = expect_server_up_integration(
-            nginx_proxy_container[0], virtual_host, timeout=15
-        )  # Already waited, so quick check
+        server = expect_server_up_integration(nginx_proxy_container[0], virtual_host, timeout=15)
 
         config_str = get_nginx_config_from_container(nginx_proxy_container[0])
         config = HttpBlock.parse(config_str)
 
-        # Verify upstream block is created
         upstream = next((u for u in config.upstreams if virtual_host in u.parameters), None)
         assert upstream is not None, f"Upstream block for {virtual_host} not found. Config:\n{config_str}"
         assert (
             len(upstream.get_directives("server")) == 3
         ), f"Expected 3 servers in upstream, found {len(upstream.get_directives('server'))}. Config:\n{config_str}"
 
-        # Verify server block uses upstream
         assert f"http://{virtual_host}" in server.locations[0].proxy_pass
 
-        # Stop one backend
-        backend1.stop()
+        # Stop/Remove one backend
+        stop_backend(backend1)
+
         time.sleep(10)
 
         config_str = get_nginx_config_from_container(nginx_proxy_container[0])
         config = HttpBlock.parse(config_str)
 
-        # Verify upstream block is created
         upstream = next((u for u in config.upstreams if virtual_host in u.parameters), None)
         assert upstream is not None, f"Upstream block for {virtual_host} not found. Config:\n{config_str}"
         assert (
             len(upstream.get_directives("server")) == 2
         ), f"Expected 2 servers in upstream, found {len(upstream.get_directives('server'))}. Config:\n{config_str}"
 
-        backend2.stop()
+        stop_backend(backend2)
+
         time.sleep(10)
         config_str = get_nginx_config_from_container(nginx_proxy_container[0])
         config = HttpBlock.parse(config_str)
@@ -427,14 +459,14 @@ def test_when_container_shuts_down__then_ip_removed_from_upstream(
         assert (
             upstream is None or len(upstream.get_directives("server")) == 1
         ), f"Expected 1 server in upstream after one shutdown, found {len(upstream.get_directives('server'))}. Config:\n{config_str}"
-        expect_server_up_integration(
-            nginx_proxy_container[0], virtual_host, timeout=15
-        )  # Already waited, so quick check
+        expect_server_up_integration(nginx_proxy_container[0], virtual_host, timeout=15)
 
     finally:
-        if backend1:
-            backend1.remove(force=True)
-        if backend2:
-            backend2.remove(force=True)
-        if backend3:
-            backend3.remove(force=True)
+        for b in [backend1, backend2, backend3]:
+            if b:
+                try:
+                    stop_backend(b)
+                except:
+                    pass
+        # Wait for cleanup
+        expect_server_down_integration(nginx_proxy_container[0], virtual_host, timeout=15)

@@ -5,14 +5,13 @@ from typing import List, TYPE_CHECKING
 
 import requests
 from docker import DockerClient
-from docker.models.containers import Container as DockerContainer
 from jinja2 import Template
 
 import nginx_proxy.post_processors as post_processors
 import nginx_proxy.pre_processors as pre_processors
 from nginx.Nginx import Nginx
 from nginx.DummyNginx import DummyNginx
-from nginx_proxy import Container
+from nginx_proxy.BackendTarget import BackendTarget
 from nginx_proxy import ProxyConfigData
 from nginx_proxy.Host import Host
 from nginx_proxy.Throttler import Throttler
@@ -34,7 +33,9 @@ class WebServer:
         self.reload_interval = nginx_update_throtle_sec
         self.throttler = Throttler(self.reload_interval)
         NginxClass = DummyNginx if self.config["dummy_nginx"] else Nginx
-        self.nginx : Nginx | DummyNginx = NginxClass(self.config["conf_dir"] + "/conf.d/nginx-proxy.conf", self.config["challenge_dir"])
+        self.nginx: Nginx | DummyNginx = NginxClass(
+            self.config["conf_dir"] + "/conf.d/nginx-proxy.conf", self.config["challenge_dir"]
+        )
         self.config_data = ProxyConfigData()
         self.services = set()
         self.networks = {}
@@ -66,6 +67,7 @@ class WebServer:
         print("Reachable Networks :", self.networks)
         self.setup_error_config()
         self.rescan_and_reload(force=True)
+
     def setup_error_config(self):
         # Render error.conf.jinja2 and save it
         rendered_error_conf_path = os.path.join(self.config["conf_dir"], "error.conf")
@@ -75,7 +77,7 @@ class WebServer:
         # Pass the path to the rendered error file to the main template
         self.config["rendered_error_conf_path"] = rendered_error_conf_path
 
-    def _do_reload(self, forced=False,has_addition=True) -> bool:
+    def _do_reload(self, forced=False, has_addition=True) -> bool:
         """
         Creates a new configuration based on current state and signals nginx to reload.
         This is called whenever there's change in container or network state.
@@ -95,10 +97,10 @@ class WebServer:
                 else:
                     has_default = True
             for i, location in enumerate(host.locations.values()):
-                location.container = list(location.containers)[0]
-                if len(location.containers) > 1:
+                location.container = list(location.backends)[0]
+                if len(location.backends) > 1:
                     location.upstream = host_data.hostname + "-" + str(host.port) + "-" + str(i + 1)
-                    host.upstreams[location.upstream] = location.containers
+                    host.upstreams[location.upstream] = location.backends
                 else:
                     location.upstream = False
             host.upstreams = [{"id": x, "containers": y} for x, y in host.upstreams.items()]
@@ -107,7 +109,6 @@ class WebServer:
         self.basic_auth_processor.process_basic_auth(hosts)
         self.ssl_processor.process_ssl_certificates(hosts)
         self.config["default_server"] = not has_default
-
 
         output = self.template.render(virtual_servers=hosts, config=self.config)
         response = self.nginx.update_config(output, force=forced)
@@ -148,20 +149,20 @@ class WebServer:
             self.networks[network.id] = default_network
             self.networks[default_network] = network.id
 
-    def _register_container(self, container: DockerContainer):
+    def register_backend(self, backend: BackendTarget):
         """
         Find the details about container and register it and return True.
         If it's not configured with desired settings or is not accessible, return False
         @:returns True if the container is added to virtual hosts, false otherwise.
         """
         # print("_regiser_container("+str(container.name))
-        environments = Container.Container.get_env_map(container)
         known_networks = set(self.networks.keys())
-        hosts = pre_processors.process_virtual_hosts(container, environments, known_networks)
+        environments = backend.env
+        hosts = pre_processors.process_virtual_hosts(backend, known_networks)
         if len(hosts):
-            pre_processors.process_default_server(container, environments, hosts)
-            pre_processors.process_basic_auth(container, environments, hosts.config_map)
-            pre_processors.process_redirection(container, environments, hosts.config_map)
+            pre_processors.process_default_server(backend, environments, hosts)
+            pre_processors.process_basic_auth(backend, environments, hosts.config_map)
+            pre_processors.process_redirection(backend, environments, hosts.config_map)
             hosts.print()
             for h in hosts.host_list():
                 self.config_data.add_host(h)
@@ -169,8 +170,8 @@ class WebServer:
 
     # removes container from the maintained list.
     # this is called when a caontainer dies or leaves a known network
-    def remove_container(self, container_id: str):
-        deleted, deleted_domain = self.config_data.remove_container(container_id)
+    def remove_backend(self, container_id: str):
+        deleted, deleted_domain = self.config_data.remove_backend(container_id)
         if deleted:
             print(
                 "Container removed   ",
@@ -180,7 +181,7 @@ class WebServer:
             )
             self.reload(has_addition=False)
 
-    def reload(self, immediate=False, force=False,has_addition=True) -> bool:
+    def reload(self, immediate=False, force=False, has_addition=True) -> bool:
         """
         Schedules or performs a reload of the Nginx configuration.
         Returns True if a reload was initiated or scheduled.
@@ -198,9 +199,15 @@ class WebServer:
                 del self.networks[network]
                 del self.networks[rev_id]
                 self.rescan_and_reload()
-        elif self.config_data.has_container(container) and network in self.networks:
-            if not self.update_container(container):
-                self.remove_container(container)
+        elif self.config_data.has_backend(container) and network in self.networks:
+            try:
+                backend = BackendTarget.from_container(self.client.containers.get(container))
+                if not self.update_backend(backend):
+                    self.remove_backend(
+                        container
+                    )  # remove_backend not implemented yet, using remove_container (it takes ID)
+            except:
+                pass
 
     def connect(self, network, container, scope):
         if self.id is not None and container == self.id:
@@ -210,21 +217,25 @@ class WebServer:
                 self.networks[new_network.name] = new_network.id
                 self.rescan_and_reload()
         elif network in self.networks:
-            self.update_container(container)
+            try:
+                container_obj = self.client.containers.get(container)
+                if "com.docker.swarm.service.id" in container_obj.attrs["Config"].get("Labels", {}):
+                    # print(f"Skipping network connect for service task container {container}")
+                    return
+                backend = BackendTarget.from_container(container_obj)
+                self.update_backend(backend)
+            except:
+                pass
 
-    def update_container(self, container_id):
+    def update_backend(self, backend: BackendTarget):
         """
-        Rescan the container to detect changes. And update nginx configuration if necessary.
-        This is usually called in one of the following conditions:
-        -- new container was started
-        -- an existing container has left a network in which nginx-proxy is connected.
-        -- during  full container rescan
-        :param container container id to update
-        :return: true if container state change affected the nginx configuration else false
+        Rescan the backend to detect changes. And update nginx configuration if necessary.
+        :param backend: BackendTarget object
+        :return: true if state change affected the nginx configuration else false
         """
         try:
-            if not self.config_data.has_container(container_id):
-                if self._register_container(self.client.containers.get(container_id)):
+            if not self.config_data.has_backend(backend.id):
+                if self.register_backend(backend):
                     self.reload()
                     return True
         except requests.exceptions.HTTPError as e:
@@ -243,7 +254,33 @@ class WebServer:
         self.containers = set()
         self.hosts = {}
         for container in containers:
-            self._register_container(container)
+            if "com.docker.swarm.service.id" in container.attrs["Config"].get("Labels", {}):
+                # print(f"Skipping service task container {container.name} during scan")
+                continue
+            backend = BackendTarget.from_container(container)
+            self.register_backend(backend)
+        self.rescan_services()
+
+    def rescan_services(self):
+        try:
+            info = self.client.info()
+            swarm_info = info.get("Swarm", {})
+            node_state = swarm_info.get("LocalNodeState", "inactive")
+            # ControlAvailable is usually present if it's a manager
+            is_manager = swarm_info.get("ControlAvailable", False)
+
+            print(f"Swarm Status: {node_state}")
+
+            if node_state == "active" and is_manager:
+                print("Scanning for services...")
+                services = self.client.services.list()
+                for service in services:
+                    backend = BackendTarget.from_service(service)
+                    self.register_backend(backend)
+            elif node_state == "active":
+                print("Swarm is active but this node is not a manager. Skipping service scan.")
+        except Exception as e:
+            print(f"Error scanning services: {e}", file=sys.stderr)
 
     def rescan_and_reload(self, force=False):
         self.rescan_all_container()

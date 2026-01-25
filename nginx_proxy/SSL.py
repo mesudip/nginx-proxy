@@ -27,7 +27,7 @@ class SSL:
         self.ssl_path = ssl_path
         self.nginx = nginx
         ## import only for typing
-        self.server:'Webserver' = server
+        self.server: "Webserver" = server
         self.blacklist = Blacklist()
         self.update_threshold_secs = update_threshold_seconds
         self.cert_min_renew_threshold_secs = max(self.update_threshold_secs, 10 * 24 * 3600)

@@ -42,11 +42,17 @@ def docker_client():
 
 @pytest.fixture(scope="session")
 def test_network(docker_client: docker.DockerClient):
-    network_name = "test-frontend"
+    network_name = "nginx-proxy-test-frontend"
+    server_details = docker_client.info()
+    is_swarm = server_details.get("Swarm", {}).get("LocalNodeState") == "active"
+
+    driver = "overlay" if is_swarm else "bridge"
+    attachable = is_swarm  # overlay needs attachable for standalone containers
+
     try:
         network = docker_client.networks.get(network_name)
     except docker.errors.NotFound:
-        network = docker_client.networks.create(network_name, driver="bridge")
+        network = docker_client.networks.create(network_name, driver=driver, attachable=attachable)
     yield network
     print(f"Waiting a moment before removing network {network_name}...")
     time.sleep(2)  # Give Docker time to clean up endpoints

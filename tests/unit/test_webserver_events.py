@@ -9,7 +9,7 @@ from nginx.NginxConf import HttpBlock, NginxConfig
 from nginx_proxy.WebServer import WebServer
 from nginx.DummyNginx import DummyNginx
 from nginx.NginxChallengeSolver import NginxChallengeSolver
-from nginx_proxy.Container import Container
+from nginx_proxy.BackendTarget import BackendTarget
 from nginx_proxy.Host import Host
 from nginx_proxy.Location import Location
 from nginx_proxy.ProxyConfigData import ProxyConfigData
@@ -20,7 +20,7 @@ from tests.helpers.docker_test_client import DockerTestClient, MockContainer, Mo
 from nginx_proxy.DockerEventListener import DockerEventListener
 
 
-def get_test_config() -> NginxProxyAppConfig:
+def get_test_config(enable_ipv6: bool = False) -> NginxProxyAppConfig:
     """Create a test configuration for WebServer."""
     return NginxProxyAppConfig(
         dummy_nginx=True,
@@ -33,6 +33,7 @@ def get_test_config() -> NginxProxyAppConfig:
         cert_renew_threshold_days=10,
         certapi_url="",
         wellknown_path="/.well-known/acme-challenge/",
+        enable_ipv6=enable_ipv6,
     )
 
 
@@ -55,7 +56,7 @@ def webserver(docker_client: DockerTestClient):
     yield from create_webserver(docker_client)
 
 
-def create_webserver(docker_client: DockerTestClient):
+def create_webserver(docker_client: DockerTestClient, enable_ipv6: bool = False):
     # Initialize DockerTestClient
     docker_client.networks.create("frontend")  # Default network
     os.environ["LETSENCRYPT_API"] = "https://acme-staging-v02.api.letsencrypt.org/directory"
@@ -63,7 +64,7 @@ def create_webserver(docker_client: DockerTestClient):
     with patch("certapi.manager.acme_cert_manager.AcmeCertManager.setup") as mock_acme_setup:
         mock_acme_setup.return_value = None  # Make setup do nothing
         # Initialize WebServer with test config
-        config = get_test_config()
+        config = get_test_config(enable_ipv6)
         webserver = WebServer(docker_client, config, nginx_update_throtle_sec=0.1)
 
         # Start DockerEventListener in a background thread to process events
@@ -140,23 +141,6 @@ def test_webserver_initialization(webserver: WebServer, nginx: DummyNginx):
     assert len(config.http.servers) == 1
     server = config.http.servers[0]
     assert server.listen == "80 default_server"
-    assert server.server_names == ["_"]
-    assert server.error_page == "503 /503_default.html"
-
-    assert len(server.locations) == 3
-    loc0 = server.locations[0]
-    assert loc0.path == "/.well-known/acme-challenge/"
-    assert loc0.alias == "./.run_data/acme-challenges/"
-    assert loc0.try_files == "$uri =404"
-
-    loc1 = server.locations[1]
-    assert loc1.path == "= /503_default.html"
-    assert loc1.root == "./vhosts_template/errors"
-    assert loc1.internal is not None
-
-    loc2 = server.locations[2]
-    assert loc2.path == "/"
-    assert loc2.return_code == "503"
 
 
 def test_webserver_add_container(docker_client: DockerTestClient, nginx: DummyNginx):

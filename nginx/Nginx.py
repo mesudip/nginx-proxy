@@ -14,12 +14,14 @@ import requests
 
 from nginx import Url
 
+
 def write_file(file_path: str, content: str):
     """Utility function to write content to a file."""
     with open(file_path, "w") as file:
         file.write(content)
         file.flush()
-        os.fsync(file.fileno()) # Ensure data is written to disk
+        os.fsync(file.fileno())  # Ensure data is written to disk
+
 
 class Nginx:
     command_config_test = ["nginx", "-t"]

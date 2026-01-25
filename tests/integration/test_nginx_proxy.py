@@ -5,7 +5,7 @@ import pytest
 import requests
 import websocket
 import time
-from ..helpers import start_backend_container  # Import helper
+from ..helpers import start_backend  # Import helper
 
 
 @pytest.mark.parametrize(
@@ -24,7 +24,7 @@ def test_http_routing(nginx_request, docker_client, test_network, virtual_host, 
     env = {"VIRTUAL_HOST": "http://" + virtual_host}
     backend: docker.models.containers.Container = None
     try:
-        backend = start_backend_container(docker_client, test_network, env)
+        backend = start_backend(docker_client, test_network, env)
 
         # The nginx_request fixture will handle the Host header automatically
         # We need to construct the full URL that the NginxRequest class will parse for the host.
@@ -61,7 +61,7 @@ def test_websocket_routing(nginx_request, docker_client, test_network, virtual_h
     backend = None
     ws = None
     try:
-        backend = start_backend_container(docker_client, test_network, env)
+        backend = start_backend(docker_client, test_network, env)
 
         # The nginx_request fixture will handle the Host header automatically
         # We need to construct the full URL that the NginxRequest class will parse for the host.

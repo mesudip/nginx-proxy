@@ -6,6 +6,7 @@ import traceback
 
 import docker
 
+from nginx_proxy.BackendTarget import BackendTarget
 from nginx_proxy.WebServer import WebServer
 
 
@@ -45,16 +46,34 @@ class DockerEventListener:
         print("Docker event listener loop stopped.")
 
     def _process_service_event(self, action, event):
-        if action == "create":
-            print("service created")
+        service_id = event.get("Actor", {}).get("ID") or event.get("id")
+        if action in ("create", "update"):
+            try:
+                service = self.client.services.get(service_id)
+                backend = BackendTarget.from_service(service)
+                self.web_server.update_backend(backend)
+            except Exception as e:
+                print(f"Error processing service event {action} for {service_id}: {e}", file=sys.stderr)
+        elif action == "remove":
+            self.web_server.remove_backend(service_id)
 
     def _process_container_event(self, action, event):
         container_id = event.get("Actor", {}).get("ID") or event.get("id")
+        attributes = event.get("Actor", {}).get("Attributes", {})
+        if "com.docker.swarm.service.id" in attributes:
+            # print(f"Skipping event {action} for service task container {container_id}")
+            return
+
         if action == "start":
             # print("container started", event["id"])
-            self.web_server.update_container(container_id)
+            try:
+                container = self.client.containers.get(container_id)
+                backend = BackendTarget.from_container(container)
+                self.web_server.update_backend(backend)
+            except Exception as e:
+                print(f"Error processing container event {action} for {container_id}: {e}", file=sys.stderr)
         elif action == "stop" or action == "die" or action == "destroy":
-            self.web_server.remove_container(container_id)
+            self.web_server.remove_backend(container_id)
 
     def _process_network_event(self, action, event):
         if action == "create":
