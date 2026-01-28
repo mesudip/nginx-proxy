@@ -149,8 +149,31 @@ class SSL:
     def register_certificate(self, req_domain) -> List[IssuedCert]:
         domain = [req_domain] if type(req_domain) is str else req_domain
 
-        ## this will automatically use the configured backend
-        result = self.cert_backend.issue_certificate(domain, key_type="ecdsa")
+        result = None
+        if self.use_certapi_server:
+            exception = None
+
+            def worker():
+                nonlocal result, exception
+                try:
+                    result = self.cert_backend.issue_certificate(domain, key_type="ecdsa")
+                except Exception as e:
+                    exception = e
+
+            thread = threading.Thread(target=worker)
+            thread.start()
+            print("[Cert API Client] Requesting certificates :", ", ".join(domain))
+            start_time = time.time()
+            while thread.is_alive():
+                thread.join(timeout=30)
+                if thread.is_alive():
+                    print(
+                        f"[Cert API Client] Waiting for response since {int(time.time() - start_time)} seconds"
+                    )
+            if exception:
+                raise exception
+        else:
+            result = self.cert_backend.issue_certificate(domain, key_type="ecdsa")
         if len(result.issued):
             print(
                 "[ New Certificates      ] : ", ", ".join(flatten_2d_array(sorted([x.domains for x in result.issued])))

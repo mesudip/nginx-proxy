@@ -62,16 +62,7 @@ class BackendTarget:
         env = {x.split("=", 1)[0]: x.split("=", 1)[1] for x in env_list if "=" in x}
 
         labels = spec.get("Labels", {})
-        # Merge with ContainerSpec labels? Usually Service labels are what we care about for traefik/nginx-proxy
-
         name = service.attrs.get("Spec", {}).get("Name")
-
-        # Networks
-        # task_template['Networks'] is list of dicts: [{'Target': 'network-id', ...}]
-        # We need to resolve IPs?
-        # Services in Swarm (VIP) have VirtualIPs in service.attrs['Endpoint']['VirtualIPs']
-        # [{'NetworkID': '...', 'Addr': '10.0.0.x/y'}]
-
         endpoint = service.attrs.get("Endpoint", {})
         virtual_ips = endpoint.get("VirtualIPs", [])
 
@@ -121,12 +112,9 @@ class BackendTarget:
 
     @staticmethod
     def get_container_env_map(container: DockerContainer):
-        # first we get the list of tuples each containing data in form (key, value)
         container_env = container.attrs["Config"]["Env"]
-
         env_list = [x.split("=", 1) for x in container_env] if container_env else []
-        # convert the environment list into map
-        return {x[0]: x[1].strip() for x in env_list if len(x) == 2}
+        return {x[0]: x[1] for x in env_list if len(x) == 2}
 
 
 class UnconfiguredBackend(Exception):
