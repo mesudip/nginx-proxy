@@ -180,7 +180,7 @@ class SSL:
             )
         if len(result.existing):
             print(
-                "[ Existing Certificates ] : ",
+                "[ Reuse Existing        ] : ",
                 ", ".join(flatten_2d_array(sorted([x.domains for x in result.existing]))),
             )
         return result.issued + result.existing
