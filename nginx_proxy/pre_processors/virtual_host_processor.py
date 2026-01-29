@@ -113,10 +113,6 @@ def host_generator(backend: BackendTarget, known_networks: set = {}):
         backend.id, name=backend.name, env=backend.env, labels=backend.labels, backend_type=backend.type
     )
 
-    # This logic matches networks
-    # We need to iterate over backend's networks.
-    # If backend was created via factory, we need to ensure we populate this data.
-
     found_ip = None
 
     if hasattr(backend, "network_settings") and backend.network_settings:
@@ -134,6 +130,8 @@ def host_generator(backend: BackendTarget, known_networks: set = {}):
 
     for host_config in static_hosts:
         host, location, container_data, extras = _parse_host_entry(host_config)
+        if location and not location.endswith("/") and container_data.path and container_data.path.endswith("/"):
+            location = location + "/"
         container_data.id = backend.id
         container_data.name = backend.name
         host.secured = "https" in host.scheme or "wss" in host.scheme or host.port == 443
@@ -153,6 +151,9 @@ def host_generator(backend: BackendTarget, known_networks: set = {}):
 
     for host_config in virtual_hosts:
         host, location, container_data, extras = _parse_host_entry(host_config)
+        # Protect double / in urls.
+        if location and not location.endswith("/") and container_data.path and container_data.path.endswith("/"):
+            location = location + "/"
         container_data.address = found_ip
         container_data.id = backend.id
         container_data.name = backend.name

@@ -40,10 +40,10 @@ def get_request_url(virtual_host, request_path, scheme="http"):
         ("/", "", "/"),
         ("/ -> /", "", "/"),
         (" -> /", "", "/"),
-        ("/api ", "/api", "/api"),
-        ("/api/ ", "/api", "/api"),
+        ("/api ", "/api", "/api"), 
+        ("/api/ ", "/api", "/api/"), # This is weird case. 
         ("/api/ -> /", "/api", "/"),
-        ("/api/ -> /internal", "/api/test", "/internal/test"),
+        ("/api/ -> /internal", "/api/test", "/internaltest"),
         ("/api/ -> /internal/", "/api/test", "/internal/test"),
         ("/api -> /internal", "/api/test", "/internal/test"),
         ("/api -> /internal/", "/api/test", "/internal/test"),

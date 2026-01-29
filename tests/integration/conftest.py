@@ -5,7 +5,8 @@ import requests
 import websocket
 import os
 import re
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
+import socket
 from dotenv import load_dotenv
 
 from tests.helpers.docker_test_client import DockerTestClient
@@ -184,58 +185,72 @@ class NginxRequest(requests.Session):
         self.base_url_http = base_url_http
         self.base_url_https = base_url_https
 
-    def _get_host_header(self, url: str) -> str:
-        parsed_url = urlparse(url)
-        return parsed_url.hostname
-
     def request(self, method, url, **kwargs):
-        host_header = self._get_host_header(url)
         headers = kwargs.pop("headers", {})
-        headers["Host"] = host_header
+        allow_redirects = kwargs.pop("allow_redirects", True)
+        max_redirects = kwargs.pop("max_redirects", 10)
+        if not allow_redirects:
+            max_redirects = 0
 
-        # Use the base_url for the actual request, but keep the original URL's path, query, and fragment
-        parsed_original_url = urlparse(url)
+        current_url = url
+        method = method.upper()
+        redirects = 0
 
-        # Determine which base URL to use based on the original URL's scheme
-        base_url = self.base_url_https if parsed_original_url.scheme == "https" else self.base_url_http
+        while True:
+            parsed = urlparse(current_url)
+            scheme = parsed.scheme
+            base = self.base_url_https if scheme == "https" else self.base_url_http
+            headers["Host"] = parsed.netloc  # Includes port if present
 
-        # Reconstruct the full path with query and fragment
-        path_with_query = parsed_original_url.path
-        if parsed_original_url.query:
-            path_with_query += "?" + parsed_original_url.query
-        if parsed_original_url.fragment:
-            path_with_query += "#" + parsed_original_url.fragment
+            full_path = parsed.path or "/"
+            if parsed.query:
+                full_path += "?" + parsed.query
+            if parsed.fragment:
+                full_path += "#" + parsed.fragment
+            target = urljoin(base, full_path)
 
-        target_url = base_url + path_with_query
+            if "verify" not in kwargs and scheme == "https":
+                kwargs["verify"] = False
 
-        # Disable SSL verification for HTTPS requests if not explicitly set
-        if "verify" not in kwargs and parsed_original_url.scheme == "https":
-            kwargs["verify"] = False
+            # Make a copy of headers to avoid mutating the original
+            request_headers = dict(headers)
 
-        return super().request(method, target_url, headers=headers, **kwargs)
+            resp = super().request(method, target, headers=request_headers, allow_redirects=False, **kwargs)
+
+            if not (300 <= resp.status_code < 400) or "Location" not in resp.headers:
+                return resp
+
+            redirects += 1
+            if redirects > max_redirects:
+                return resp
+
+            location = resp.headers["Location"]
+            current_url = urljoin(current_url, location)
+
+            if resp.status_code == 303 and method not in ("GET", "HEAD"):
+                method = "GET"
+                kwargs.pop("data", None)
+                kwargs.pop("json", None)
 
     def websocket_connect(self, url: str, **kwargs):
-        # Parse the connection target from base_url_http (Nginx container)
-        parsed_base = urlparse(self.base_url_http)
-        target_host = parsed_base.hostname
-        target_port = parsed_base.port or 80
+        parsed_url = urlparse(url)
+        if parsed_url.scheme not in ("ws", "wss"):
+            raise ValueError("URL scheme must be 'ws' or 'wss'")
 
-        # Create a direct socket connection to the Nginx container
-        import socket
+        base = self.base_url_https if parsed_url.scheme == "wss" else self.base_url_http
+        parsed_base = urlparse(base)
+        target_host = parsed_base.hostname
+        target_port = parsed_base.port or (443 if parsed_url.scheme == "wss" else 80)
 
         sock = socket.create_connection((target_host, target_port))
 
-        # Create WebSocket instance and connect using the injected socket
         ws = websocket.WebSocket()
-
-        # websocket-client support for 'socket' vs 'sock' argument varies by version
         try:
             ws.connect(url, socket=sock, **kwargs)
         except TypeError:
             ws.connect(url, sock=sock, **kwargs)
 
         return ws
-
 
 @pytest.fixture
 def nginx_request(nginx_proxy_container, docker_host_ip):
