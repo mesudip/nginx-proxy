@@ -34,6 +34,8 @@ def get_test_config(enable_ipv6: bool = False) -> NginxProxyAppConfig:
         certapi_url="",
         wellknown_path="/.well-known/acme-challenge/",
         enable_ipv6=enable_ipv6,
+        docker_swarm="ignore",
+        swarm_docker_host=None,
     )
 
 
@@ -170,14 +172,12 @@ def test_webserver_remove_container(docker_client: DockerTestClient, nginx: Dumm
     container = docker_client.containers.run("nginx:alpine", name=container_name, environment=env, network="frontend")
     time.sleep(0.2)
 
-    # Verify addition
     expect_server_up(nginx, hostname)
 
     # Remove container
     container.remove(force=True)
-    time.sleep(1)  # Increased sleep duration
-
-    # Verify removal
+    time.sleep(1)
+    
     expect_server_down(nginx, hostname)
 
 

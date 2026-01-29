@@ -156,18 +156,17 @@ def host_generator(backend: BackendTarget, known_networks: set = {}):
         container_data.address = found_ip
         container_data.id = backend.id
         container_data.name = backend.name
-        if override_port:
-            container_data.port = override_port
-        elif container_data.port is None:
-            # Check exposed/mapped ports?
-            # In original code: container.attrs["NetworkSettings"]["Ports"]
-            # We need port info in backend object too.
-            if hasattr(backend, "ports") and backend.ports and len(backend.ports) == 1:
+
+        if container_data.port is None:
+            if override_port:
+                container_data.port = override_port
+            elif hasattr(backend, "ports") and backend.ports and len(backend.ports) == 1:
                 # backend.ports expected to be dict or list of ports
                 # original: keys of dict
                 container_data.port = int(list(backend.ports.keys())[0].split("/")[0])
             else:
                 container_data.port = 80
+
         if override_ssl:
             if "ws" in host.scheme:
                 host.scheme = {"wss", "https"}

@@ -34,15 +34,24 @@ def docker_host_ip():
 @pytest.fixture(scope="session")
 def docker_client():
     client: docker.DockerClient = docker.from_env()
-    # client : docker.DockerClient = DockerTestClient()
+
+    # Check if Swarm is active, if not try to init
+    try:
+        info = client.info()
+        if info.get("Swarm", {}).get("LocalNodeState") != "active":
+            print("Swarm not active. Initializing...")
+            client.swarm.init(advertise_addr="127.0.0.1")
+            print("Swarm initialized.")
+    except Exception as e:
+        print(f"Warning: Failed to ensure Swarm state: {e}")
 
     yield client
     client.close()
 
 
 @pytest.fixture(scope="session")
-def test_network(docker_client: docker.DockerClient):
-    network_name = "nginx-proxy-test-frontend"
+def test_network(docker_client: docker.DockerClient,swarm_mode):
+    network_name = "nginx-proxy-test-" + swarm_mode
     server_details = docker_client.info()
     is_swarm = server_details.get("Swarm", {}).get("LocalNodeState") == "active"
 
@@ -71,10 +80,15 @@ def test_network(docker_client: docker.DockerClient):
         print(f"Error removing network {network_name}: {e}")
 
 
+@pytest.fixture(scope="session", params=["ignore", "exclude", "enable", "strict"], ids=["swarm_ignore", "swarm_exclude", "swarm_enable", "swarm_strict"])
+def swarm_mode(request):
+    return request.param
+
+
 @pytest.fixture(scope="session")
-def nginx_proxy_container(docker_client: docker.DockerClient, test_network, docker_host_ip):
+def nginx_proxy_container(docker_client: docker.DockerClient, test_network, docker_host_ip, swarm_mode):
     image_name = "mesudip/nginx-proxy:test"
-    container_name = "nginx-proxy-test-container"
+    container_name = "nginx-proxy-test-container-swarm_"+swarm_mode
 
     # Ensure previous container is stopped and removed
     try:
@@ -116,13 +130,14 @@ def nginx_proxy_container(docker_client: docker.DockerClient, test_network, dock
                 "DHPARAM_SIZE": "256",
                 "VHOSTS_TEMPLATE_DIR": "/app/vhosts_template",
                 "CHALLENGE_DIR": "/etc/nginx/acme-challenges",
+                "DOCKER_SWARM": swarm_mode,
             },
             restart_policy={"Name": "no"},
         )
 
         # Get the dynamically assigned ports
-        time.sleep(2)  # Give Docker a moment to update port mappings
-        container.reload()  # Reload container info to get updated port mappings
+        time.sleep(1)
+        container.reload()
         port_80 = container.ports["80/tcp"][0]["HostPort"]
         port_443 = container.ports["443/tcp"][0]["HostPort"]
 

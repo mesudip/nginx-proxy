@@ -73,6 +73,11 @@ class ProxyConfigData:
     def __len__(self):
         return self._len
 
+    def clear(self):
+        self.config_map = {}
+        self.backends = set()
+        self._len = 0
+
     def print(self):
 
         for host in self.host_list():
@@ -115,12 +120,6 @@ class ProxyConfigData:
 
                     if len(location.extras):
                         self.printextra("      ", location.extras)
-
-        # self.address: str = address
-        # self.port: int = port
-        # self.path: Union[str, None] = path
-        # self.scheme: str = scheme
-        # self.networks =
 
     @staticmethod
     def printextra(gap, extra):

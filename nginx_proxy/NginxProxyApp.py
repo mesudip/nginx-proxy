@@ -32,6 +32,8 @@ class NginxProxyAppConfig(TypedDict):
     certapi_url: str
     wellknown_path: str
     enable_ipv6: bool
+    docker_swarm: str
+    swarm_docker_host: str | None
 
 
 def _strip_end(s: str, char="/") -> str:
@@ -44,7 +46,10 @@ class NginxProxyApp:
         self.docker_event_listener: DockerEventListener | None = None
         self.config: NginxProxyAppConfig = self._loadconfig()
         self._setup_nginx_conf()
-        self.docker_client = self._init_docker_client()
+
+        self.docker_client = None
+        self.swarm_client = None
+        self._init_docker_client()
 
     def _loadconfig(self) -> NginxProxyAppConfig:
         """
@@ -77,6 +82,8 @@ class NginxProxyApp:
             certapi_url=certapi_url,
             wellknown_path=wellknown_path,
             enable_ipv6=os.getenv("ENABLE_IPV6", "false").strip().lower() == "true",
+            docker_swarm=os.getenv("DOCKER_SWARM", "ignore").strip().lower(),
+            swarm_docker_host=os.getenv("SWARM_DOCKER_HOST", "").strip() or None,
         )
 
     def _setup_nginx_conf(self):
@@ -94,20 +101,61 @@ class NginxProxyApp:
 
     def _init_docker_client(self) -> DockerClient:
         try:
-            client = docker.from_env()
-            client.version()
-            return client
+            self.docker_client = docker.from_env()
+            self.docker_client.version()
         except Exception as e:
-            print(
-                "There was error connecting with the docker server \nHave you correctly mounted /var/run/docker.sock?\n"
-                + str(e.args),
-                file=sys.stderr,
-            )
-            sys.exit(1)
+            if self.config["swarm_docker_host"]:
+                print(
+                    f"[INFO] Local docker client failed, but SWARM_DOCKER_HOST is set. "
+                    f"Switching to DOCKER_SWARM=strict. Error: {e}"
+                )
+                self.config["docker_swarm"] = "strict"
+            else:
+                print(
+                    "There was error connecting with the docker server \nHave you correctly mounted /var/run/docker.sock?\n"
+                    + str(e.args),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
+        if self.config["swarm_docker_host"]:
+            try:
+                self.swarm_client = docker.DockerClient(base_url=self.config["swarm_docker_host"])
+                self.swarm_client.version()
+                print(f"[INFO] Connected to remote Swarm manager at {self.config['swarm_docker_host']}")
+            except Exception as e:
+                print(
+                    f"[ERROR] Error connecting to Swarm host {self.config['swarm_docker_host']}: {e}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+        else:
+            self.swarm_client = self.docker_client
+
+        # Validate Swarm mode if enabled
+        swarm_mode = self.config["docker_swarm"]
+        if swarm_mode in ("enable", "strict"):
+            try:
+                info = self.swarm_client.info()
+                swarm_info = info.get("Swarm", {})
+                if swarm_info.get("LocalNodeState") != "active":
+                    print(f"[ERROR] DOCKER_SWARM={swarm_mode} but node is not in Swarm mode.", file=sys.stderr)
+                    sys.exit(1)
+
+                # If using local client, check if it's a manager
+                if not self.config["swarm_docker_host"] and not swarm_info.get("ControlAvailable", False):
+                    print(
+                        f"[WARN] DOCKER_SWARM={swarm_mode} and using local docker socket, "
+                        f"but this node is not a Swarm manager. Service discovery will not work.",
+                        file=sys.stderr,
+                    )
+            except Exception as e:
+                print(f"[ERROR] DOCKER_SWARM={swarm_mode} but failed to get Swarm info: {e}", file=sys.stderr)
+                sys.exit(1)
 
     def start(self):
-        self.server = WebServer(self.docker_client, self.config)
-        self.docker_event_listener = DockerEventListener(self.server, self.docker_client)
+        self.server = WebServer(self.docker_client, self.config, swarm_client=self.swarm_client)
+        self.docker_event_listener = DockerEventListener(self.server, self.docker_client, swarm_client=self.swarm_client)
 
     def stop(self):
         print("Stopping NginxProxyApp...")

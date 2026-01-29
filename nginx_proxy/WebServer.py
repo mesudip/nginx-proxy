@@ -1,6 +1,7 @@
 import copy
 import os
 import sys
+import threading
 from typing import List, TYPE_CHECKING
 
 import requests
@@ -26,10 +27,17 @@ class WebServer:
     Events are sent to this class by DockerEventListener or other injectors.
     """
 
-    def __init__(self, docker_client: DockerClient, config: "NginxProxyAppConfig", nginx_update_throtle_sec=5):
+    def __init__(
+        self,
+        docker_client: DockerClient,
+        config: "NginxProxyAppConfig",
+        nginx_update_throtle_sec=5,
+        swarm_client: DockerClient = None,
+    ):
         self.config = config
         self.shouldExit = False
         self.client = docker_client
+        self.swarm_client = swarm_client if swarm_client is not None else docker_client
         self.reload_interval = nginx_update_throtle_sec
         self.throttler = Throttler(self.reload_interval)
         NginxClass = DummyNginx if self.config["dummy_nginx"] else Nginx
@@ -37,6 +45,7 @@ class WebServer:
             self.config["conf_dir"] + "/conf.d/nginx-proxy.conf", self.config["challenge_dir"]
         )
         self.config_data = ProxyConfigData()
+        self._lock = threading.Lock()
         self.services = set()
         self.networks = {}
         vhosts_template_path = os.path.join(self.config["vhosts_template_dir"], "default.conf.jinja2")
@@ -121,6 +130,8 @@ class WebServer:
         know the networks accessible from this container and find all other accessible containers.
         """
         try:
+            if self.client is None:
+                raise Exception("No local docker client available")
             hostname = os.getenv("HOSTNAME")
             if hostname is None:
                 print("[ERROR] HOSTNAME environment variable is not set")
@@ -199,15 +210,19 @@ class WebServer:
                 del self.networks[network]
                 del self.networks[rev_id]
                 self.rescan_and_reload()
-        elif self.config_data.has_backend(container) and network in self.networks:
-            try:
-                backend = BackendTarget.from_container(self.client.containers.get(container))
-                if not self.update_backend(backend):
-                    self.remove_backend(
-                        container
-                    )  # remove_backend not implemented yet, using remove_container (it takes ID)
-            except:
-                pass
+        elif network in self.networks:
+            swarm_mode = self.config.get("docker_swarm", "ignore")
+            if swarm_mode == "strict":
+                return
+            if self.config_data.has_backend(container):
+                try:
+                    backend = BackendTarget.from_container(self.client.containers.get(container))
+                    if not self.update_backend(backend):
+                        self.remove_backend(
+                            container
+                        )  # remove_backend not implemented yet, using remove_container (it takes ID)
+                except:
+                    pass
 
     def connect(self, network, container, scope):
         if self.id is not None and container == self.id:
@@ -217,9 +232,12 @@ class WebServer:
                 self.networks[new_network.name] = new_network.id
                 self.rescan_and_reload()
         elif network in self.networks:
+            swarm_mode = self.config.get("docker_swarm", "ignore")
+            if swarm_mode == "strict":
+                return
             try:
                 container_obj = self.client.containers.get(container)
-                if "com.docker.swarm.service.id" in container_obj.attrs["Config"].get("Labels", {}):
+                if swarm_mode != "ignore" and "com.docker.swarm.service.id" in container_obj.attrs["Config"].get("Labels", {}):
                     # print(f"Skipping network connect for service task container {container}")
                     return
                 backend = BackendTarget.from_container(container_obj)
@@ -244,43 +262,54 @@ class WebServer:
 
     def rescan_all_container(self):
         """
-        Rescan all the containers to detect changes. And update nginx configuration if necessary.
-        This is called in one of the following conditions:
-        -- in the beginnig of execution of this program
-        -- nginx-proxy container itself joins or leaves some network.
-        :return:
+        Rescan all the containers and services to detect changes. 
+        Previously this only did containers, but now it's a full rescan for consistency.
         """
-        containers = self.client.containers.list()
-        self.containers = set()
-        self.hosts = {}
-        for container in containers:
-            if "com.docker.swarm.service.id" in container.attrs["Config"].get("Labels", {}):
-                # print(f"Skipping service task container {container.name} during scan")
-                continue
-            backend = BackendTarget.from_container(container)
-            self.register_backend(backend)
-        self.rescan_services()
+        swarm_mode = self.config.get("docker_swarm", "ignore")
+        with self._lock:
+            # Clear previous state to ensure we don't leak dead containers/services
+            self.config_data.clear()
+            
+            # 1. Register local containers (unless in strict swarm mode)
+            if swarm_mode != "strict" and self.client is not None:
+                try:
+                    containers = self.client.containers.list()
+                    for container in containers:
+                        if swarm_mode != "ignore" and "com.docker.swarm.service.id" in container.attrs["Config"].get("Labels", {}):
+                            continue
+                        backend = BackendTarget.from_container(container)
+                        self.register_backend(backend)
+                except Exception as e:
+                    print(f"Error scanning containers: {e}", file=sys.stderr)
+
+            # 2. Register swarm services (if enable or strict)
+            if swarm_mode in ("enable", "strict"):
+                try:
+                    info = self.swarm_client.info()
+                    swarm_info = info.get("Swarm", {})
+                    node_state = swarm_info.get("LocalNodeState", "inactive")
+                    # ControlAvailable is usually present if it's a manager
+                    is_manager = swarm_info.get("ControlAvailable", False)
+
+                    if node_state == "active" and is_manager:
+                        services = self.swarm_client.services.list()
+                        for service in services:
+                            backend = BackendTarget.from_service(service)
+                            self.register_backend(backend)
+                    elif node_state == "active":
+                        # If node is active but not manager, we can't list services on this client.
+                        # However, if we have a remote swarm_client, it might be a manager.
+                        # But self.swarm_client.info() would have returned is_manager=True if it were.
+                        pass
+                except Exception as e:
+                    print(f"Error scanning services: {e}", file=sys.stderr)
 
     def rescan_services(self):
-        try:
-            info = self.client.info()
-            swarm_info = info.get("Swarm", {})
-            node_state = swarm_info.get("LocalNodeState", "inactive")
-            # ControlAvailable is usually present if it's a manager
-            is_manager = swarm_info.get("ControlAvailable", False)
-
-            print(f"Swarm Status: {node_state}")
-
-            if node_state == "active" and is_manager:
-                print("Scanning for services...")
-                services = self.client.services.list()
-                for service in services:
-                    backend = BackendTarget.from_service(service)
-                    self.register_backend(backend)
-            elif node_state == "active":
-                print("Swarm is active but this node is not a manager. Skipping service scan.")
-        except Exception as e:
-            print(f"Error scanning services: {e}", file=sys.stderr)
+        """
+        Included for compatibility with DockerEventListener. Calls rescan_all_container
+        to perform a unified full rescan.
+        """
+        self.rescan_all_container()
 
     def rescan_and_reload(self, force=False):
         self.rescan_all_container()
