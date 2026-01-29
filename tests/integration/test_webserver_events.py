@@ -218,10 +218,11 @@ def test_webserver_add_container_with_ssl_integration(
     and HTTPS server blocks with self-signed certificates.
     """
     virtual_host = backend_type + "." + "ssl-test.example.com"
-    env = {"VIRTUAL_HOST": f"https://{virtual_host}"}
+    env = {"VIRTUAL_HOST": f"https://{virtual_host}","VIRTUAL_PORT":"8080"}
 
     backend = start_backend(docker_client, test_network, env, backend_type=backend_type)
     try:
+        time.sleep(5)  # Sleep extra for ssl cert generation
         config_str = get_nginx_config_from_container(nginx_proxy_container[0])
         config = HttpBlock.parse(config_str)
 
