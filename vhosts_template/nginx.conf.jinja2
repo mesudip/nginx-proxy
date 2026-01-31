@@ -28,6 +28,12 @@ http {
 
     gzip  on;
 
+    {% if certapi %}
+    upstream certapi_upstream {
+        server {{ certapi.host }}:{{ certapi.port }};
+    }
+    {% endif %}
+
     # If we receive X-Forwarded-Proto, pass it through; otherwise, pass along the
     # scheme used to connect to this server
     map $http_x_forwarded_proto $proxy_x_forwarded_proto {

@@ -7,6 +7,7 @@ import threading  # Re-adding threading for start_background
 import traceback
 import time
 from typing import TypedDict
+from urllib.parse import urlparse
 
 import docker
 from docker import DockerClient
@@ -14,6 +15,13 @@ from docker import DockerClient
 from nginx_proxy.WebServer import WebServer
 from nginx_proxy.DockerEventListener import DockerEventListener
 from nginx_proxy.NginxConfig import render_nginx_conf
+
+
+class CertApiConfig(TypedDict):
+    url: str
+    host: str | None
+    scheme: str
+    port: int
 
 
 class NginxProxyAppConfig(TypedDict):
@@ -29,7 +37,7 @@ class NginxProxyAppConfig(TypedDict):
     challenge_dir: str
     default_server: bool
     vhosts_template_dir: str
-    certapi_url: str
+    certapi: CertApiConfig | None
     wellknown_path: str
     enable_ipv6: bool
     docker_swarm: str
@@ -56,6 +64,21 @@ class NginxProxyApp:
         Load application configuration from environment variables.
         """
         certapi_url = os.getenv("CERTAPI_URL", "").strip()
+        certapi = None
+
+        if certapi_url:
+            parsed = urlparse(certapi_url)
+            port = parsed.port
+            if port is None:
+                port = 443 if parsed.scheme == "https" else 80
+            
+            certapi = {
+                "url": certapi_url,
+                "host": parsed.hostname,
+                "scheme": parsed.scheme,
+                "port": port
+            }
+
         wellknown_path = os.getenv("WELLKNOWN_PATH", "/.well-known/acme-challenge/").strip()
         # Ensure wellknown_path starts with / and ends with /
         if not wellknown_path.startswith("/"):
@@ -79,7 +102,7 @@ class NginxProxyApp:
             + "/",  # the nginx challenge dir must end with a /
             default_server=os.getenv("DEFAULT_HOST", "true").strip().lower() == "true",
             vhosts_template_dir=_strip_end(os.getenv("VHOSTS_TEMPLATE_DIR", "./vhosts_template").strip()),
-            certapi_url=certapi_url,
+            certapi=certapi,
             wellknown_path=wellknown_path,
             enable_ipv6=os.getenv("ENABLE_IPV6", "false").strip().lower() == "true",
             docker_swarm=os.getenv("DOCKER_SWARM", "ignore").strip().lower(),
@@ -95,7 +118,7 @@ class NginxProxyApp:
         output_path = os.path.join(self.config["conf_dir"], "nginx.conf")
 
         if os.path.exists(template_path):
-            render_nginx_conf(template_path, output_path)
+            render_nginx_conf(template_path, output_path, extra_config=self.config)
         else:
             print(f"[INFO] nginx.conf template not found at {template_path}, using existing nginx.conf")
 
