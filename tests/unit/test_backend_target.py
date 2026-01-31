@@ -128,6 +128,41 @@ class TestVirtualHostProcessorWithBackendTarget:
         assert hosts[0].hostname == "int.test"
 
 
+    def test_duplicate_injected_directives_are_deduplicated(self):
+        known_networks = {"shared-net-id"}
+
+        backends = [
+            BackendTarget(
+                id="dup-one",
+                name="dup-one",
+                env={"VIRTUAL_HOST": "dup.example.com; client_max_body_size 200M;"},
+                network_settings={"shared": {"NetworkID": "shared-net-id", "IPAddress": "10.0.0.11"}},
+            ),
+            BackendTarget(
+                id="dup-two",
+                name="dup-two",
+                env={"VIRTUAL_HOST": "dup.example.com; client_max_body_size 200M;proxy_read_timeout 100;"},
+                network_settings={"shared": {"NetworkID": "shared-net-id", "IPAddress": "10.0.0.12"}},
+            ),
+            BackendTarget(
+                id="dup-three",
+                name="dup-three",
+                env={"VIRTUAL_HOST": "dup.example.com; client_max_body_size 400M"},
+                network_settings={"shared": {"NetworkID": "shared-net-id", "IPAddress": "10.0.0.12"}},
+            ),
+        ]
+
+        aggregated = ProxyConfigData()
+        for backend in backends:
+            config = process_virtual_hosts(backend, known_networks)
+            for host in config.host_list():
+                aggregated.add_host(host)
+
+        host = aggregated.getHost("dup.example.com")
+        injections = host.locations["/"].extras.get("injected", [])
+        assert injections.count("client_max_body_size 200M") == 1
+
+
     def test_process_virtual_hosts_no_virtual_host(self):
         bt = BackendTarget(
             id="no-host-id",
