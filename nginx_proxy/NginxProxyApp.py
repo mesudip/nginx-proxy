@@ -99,7 +99,7 @@ class NginxProxyApp:
         else:
             print(f"[INFO] nginx.conf template not found at {template_path}, using existing nginx.conf")
 
-    def _init_docker_client(self) -> DockerClient:
+    def _init_docker_client(self) -> None:
         try:
             self.docker_client = docker.from_env()
             self.docker_client.version()

@@ -21,7 +21,7 @@ class Location:
                 data = self.extras[x]
                 if type(data) in (dict, set):
                     self.extras[x].update(extras[x])
-                elif type(data) == list:
+                elif isinstance(data, list):
                     self.extras[x].extend(extras[x])
                 else:
                     self.extras[x] = extras[x]
@@ -49,4 +49,4 @@ class Location:
         return False
 
     def __repr__(self):
-        return str({"name": self.name, "conatiners": self.backends, "websocket": self.websocket})
+        return str({"name": self.name, "backends": self.backends, "websocket": self.websocket})

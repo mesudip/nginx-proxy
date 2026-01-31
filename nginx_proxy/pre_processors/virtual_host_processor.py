@@ -1,5 +1,5 @@
 from nginx_proxy import Host, ProxyConfigData
-from nginx_proxy.BackendTarget import BackendTarget, NoHostConiguration, UnreachableNetwork
+from nginx_proxy.BackendTarget import BackendTarget, NoHostConfiguration, UnreachableNetwork
 from nginx_proxy.utils import split_url
 
 
@@ -35,7 +35,7 @@ def process_virtual_hosts(backend: BackendTarget, known_networks: set) -> ProxyC
             sep="\t",
         )
         return hosts
-    except NoHostConiguration:
+    except NoHostConfiguration:
         print(
             "No VIRTUAL_HOST       ",
             f"{backend.type:>9}".title() + " Id: " + backend.id[:12],
@@ -79,7 +79,7 @@ def _parse_host_entry(entry_string: str):
         None,
         scheme=list(internal["scheme"])[0] if len(internal["scheme"]) else "http",
         address=internal["host"] if internal["host"] else None,
-        port=internal["port"] if internal["port"] else None,
+        port=int(internal["port"]) if internal["port"] else None,
         path=internal["location"] if internal["location"] else "",
     )
     h = Host(
@@ -103,7 +103,7 @@ def host_generator(backend: BackendTarget, known_networks: set = {}):
     virtual_hosts = [x[1] for x in env_map.items() if x[0].startswith("VIRTUAL_HOST")]
     static_hosts = [x[1] for x in env_map.items() if x[0].startswith("STATIC_VIRTUAL_HOST")]
     if len(virtual_hosts) == 0 and len(static_hosts) == 0:
-        raise NoHostConiguration()
+        raise NoHostConfiguration()
 
     known_networks = set(known_networks)
     unknown = True

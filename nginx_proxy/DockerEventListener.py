@@ -100,6 +100,8 @@ class DockerEventListener:
                 service = self.swarm_client.services.get(service_id)
                 backend = BackendTarget.from_service(service)
                 self.web_server.update_backend(backend)
+            except docker.errors.NotFound:
+                print(f"WARN: Service {service_id} not found ...", file=sys.stderr)
             except Exception as e:
                 print(f"Error processing service event {action} for {service_id}: {e}", file=sys.stderr)
         elif action == "remove":

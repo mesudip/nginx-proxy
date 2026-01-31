@@ -66,6 +66,7 @@ class WebServer:
         )
         self.basic_auth_processor = post_processors.BasicAuthProcessor(self.config["conf_dir"] + "/basic_auth")
         self.redirect_processor = post_processors.RedirectProcessor()
+        self.sticky_session_processor = post_processors.StickySessionProcessor()
 
         # Render default config for Nginx setup
         default_nginx_config = self.template.render(config=self.config)
@@ -98,7 +99,6 @@ class WebServer:
         has_default = False
         for host_data in self.config_data.host_list():
             host = copy.deepcopy(host_data)
-            host.upstreams = {}
             host.is_down = host_data.isempty()
             if "default_server" in host.extras:
                 if has_default:
@@ -107,19 +107,18 @@ class WebServer:
                     has_default = True
             for i, location in enumerate(host.locations.values()):
                 location.container = list(location.backends)[0]
-                if len(location.backends) > 1:
-                    location.upstream = host_data.hostname + "-" + str(host.port) + "-" + str(i + 1)
-                    host.upstreams[location.upstream] = location.backends
-                else:
-                    location.upstream = False
-            host.upstreams = [{"id": x, "containers": y} for x, y in host.upstreams.items()]
             hosts.append(host)
 
+        upstreams = self.sticky_session_processor.process(hosts)
         self.basic_auth_processor.process_basic_auth(hosts)
         self.ssl_processor.process_ssl_certificates(hosts)
         self.config["default_server"] = not has_default
 
-        output = self.template.render(virtual_servers=hosts, config=self.config)
+        output = self.template.render(
+            virtual_servers=hosts,
+            upstreams=upstreams,
+            config=self.config,
+        )
         response = self.nginx.update_config(output, force=forced)
         return response
 
@@ -221,8 +220,8 @@ class WebServer:
                         self.remove_backend(
                             container
                         )  # remove_backend not implemented yet, using remove_container (it takes ID)
-                except:
-                    pass
+                except Exception as e:
+                    print(f"Error processing disconnect for container {container}: {e}", file=sys.stderr)
 
     def connect(self, network, container, scope):
         if self.id is not None and container == self.id:
@@ -242,8 +241,8 @@ class WebServer:
                     return
                 backend = BackendTarget.from_container(container_obj)
                 self.update_backend(backend)
-            except:
-                pass
+            except Exception as e:
+                print(f"Error processing connect for container {container}: {e}", file=sys.stderr)
 
     def update_backend(self, backend: BackendTarget):
         """

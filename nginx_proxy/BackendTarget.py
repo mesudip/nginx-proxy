@@ -101,9 +101,9 @@ class BackendTarget:
         return hash(self.id)
 
     def __eq__(self, other) -> bool:
-        if type(other) is BackendTarget:
+        if isinstance(other, BackendTarget):
             return self.id == other.id
-        if type(other) is str:
+        if isinstance(other, str):
             return self.id == other
         return False
 
@@ -128,6 +128,6 @@ class UnreachableNetwork(UnconfiguredBackend):
         self.network_names = network_names
 
 
-class NoHostConiguration(UnconfiguredBackend):
+class NoHostConfiguration(UnconfiguredBackend):
     def __init__(self, backend_type="container"):
         super().__init__(backend_type)
