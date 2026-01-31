@@ -6,10 +6,10 @@ from nginx_proxy import ProxyConfigData
 from nginx_proxy.Host import Host
 
 htaccess_folder = "/etc/nginx/generated/htaccess"
-from docker.models.containers import Container
+from nginx_proxy.BackendTarget import BackendTarget
 
 
-def process_default_server(container: Container, environments: Dict[str, str], vhosts: ProxyConfigData):
+def process_default_server(backend: BackendTarget, environments: Dict[str, str], vhosts: ProxyConfigData):
     if "PROXY_DEFAULT_SERVER" in environments:
         server: str = environments["PROXY_DEFAULT_SERVER"]
         url = Url.parse(server, default_port=80)
@@ -23,7 +23,7 @@ def process_default_server(container: Container, environments: Dict[str, str], v
                 for host in vhosts.host_list():
                     pass
             else:
-                print("DEFAULT_SERVER configured for ", container.name, "but has multiple hosts")
+                print("DEFAULT_SERVER configured for ", backend.name, "but has multiple hosts")
                 return
 
         host.update_extras_content("default_server", "default_server")

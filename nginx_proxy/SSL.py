@@ -5,6 +5,7 @@ import os
 import shutil
 import sys
 import time
+import requests
 from os.path import join
 from typing import List, Dict, Union, Set
 
@@ -27,7 +28,7 @@ class SSL:
         self.ssl_path = ssl_path
         self.nginx = nginx
         ## import only for typing
-        self.server:'Webserver' = server
+        self.server: "Webserver" = server
         self.blacklist = Blacklist()
         self.update_threshold_secs = update_threshold_seconds
         self.cert_min_renew_threshold_secs = max(self.update_threshold_secs, 10 * 24 * 3600)
@@ -40,6 +41,7 @@ class SSL:
         self.certificate_expiry_thread: threading.Thread = threading.Thread(
             target=self.ssl_renew_thread_worker, name="SSL-Refresh-Thread"
         )
+        self.config = server.config if server is not None else {}
 
         x = os.environ.get("LETSENCRYPT_API")
         if x is not None:
@@ -51,8 +53,15 @@ class SSL:
             self.api_url = "https://acme-v02.api.letsencrypt.org/directory"
 
         # Check if CertManagerClient should be used
-        certapi_url = os.environ.get("CERTAPI_URL", "").strip()
-        self.use_certapi_server = bool(certapi_url)
+        certapi_url = ""
+        self.use_certapi_server = False
+        if self.config.get("certapi"):
+            self.use_certapi_server = True
+            certapi_url = self.config["certapi"]["url"]
+        elif os.environ.get("CERTAPI_URL"):
+             certapi_url = os.environ.get("CERTAPI_URL").strip()
+             self.use_certapi_server = True
+
         self.key_store = FileSystemKeyStore(ssl_path, keys_dir_name="private")
 
         if self.use_certapi_server:
@@ -85,9 +94,30 @@ class SSL:
         self.self_signer = SelfCertIssuer(
             acme_account_key, "NP", "Bagmati", "Buddhanagar", "nginx-proxy", "local.nginx-proxy.com"
         )
+        
+        self.certapi_url = certapi_url
+        self._certapi_waited = False
 
         if start_ssl_thread:
             self.certificate_expiry_thread.start()
+
+    def _wait_for_certapi(self):
+        if self._certapi_waited:
+            return
+
+        self._certapi_waited = True
+        print(f"[SSL] CertAPI enabled, waiting for {self.certapi_url} to be live...")
+        for i in range(6):
+            try:
+                r = requests.get(self.certapi_url.rstrip("/") + "/docs", timeout=5)
+                print(f"[SSL] CertAPI is live (status {r.status_code})")
+                return
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except Exception as e:
+                print(f"[SSL] CertAPI not live yet (attempt {i+1}/6): {e}")
+                if i < 5:
+                    time.sleep(10)
 
     def ssl_renew_thread_worker(self):
         while True:
@@ -149,15 +179,41 @@ class SSL:
     def register_certificate(self, req_domain) -> List[IssuedCert]:
         domain = [req_domain] if type(req_domain) is str else req_domain
 
-        ## this will automatically use the configured backend
-        result = self.cert_backend.issue_certificate(domain, key_type="ecdsa")
+        result = None
+        if self.use_certapi_server:
+            self._wait_for_certapi()
+            exception = None
+
+            def worker():
+                nonlocal result, exception
+                try:
+                    result = self.cert_backend.issue_certificate(domain, key_type="ecdsa")
+                except (KeyboardInterrupt, SystemExit):
+                    raise
+                except Exception as e:
+                    exception = e
+
+            thread = threading.Thread(target=worker)
+            thread.start()
+            print("[Cert API Client] Requesting certificates :", ", ".join(domain))
+            start_time = time.time()
+            while thread.is_alive():
+                thread.join(timeout=30)
+                if thread.is_alive():
+                    print(
+                        f"[Cert API Client] Waiting for response since {int(time.time() - start_time)} seconds"
+                    )
+            if exception:
+                raise exception
+        else:
+            result = self.cert_backend.issue_certificate(domain, key_type="ecdsa")
         if len(result.issued):
             print(
                 "[ New Certificates      ] : ", ", ".join(flatten_2d_array(sorted([x.domains for x in result.issued])))
             )
         if len(result.existing):
             print(
-                "[ Existing Certificates ] : ",
+                "[ Reuse Existing        ] : ",
                 ", ".join(flatten_2d_array(sorted([x.domains for x in result.existing]))),
             )
         return result.issued + result.existing

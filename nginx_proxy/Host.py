@@ -1,7 +1,7 @@
 from typing import Set, Dict, Union, Any
 
 from nginx import Url
-from nginx_proxy import Container
+from nginx_proxy.BackendTarget import BackendTarget
 from nginx_proxy.Location import Location
 
 
@@ -55,7 +55,7 @@ class Host:
         else:
             self.extras[key] = value
 
-    def add_container(self, location: str, container: Container, websocket=False, http=True) -> None:
+    def add_container(self, location: str, container: BackendTarget, websocket=False, http=True) -> None:
         if location not in self.locations:
             self.locations[location] = Location(location, is_websocket_backend=websocket, is_http_backend=http)
         elif websocket:
@@ -66,7 +66,7 @@ class Host:
 
     def update_with_host(self, host: "Host") -> None:
         for location in host.locations.values():
-            for container in location.containers:
+            for container in location.backends:
                 self.add_container(location.name, container, location.websocket, location.http)
                 self.container_set.add(container.id)
             self.locations[location.name].update_extras(location.extras)

@@ -49,19 +49,22 @@ def get_nginx_config():
     return config
 
 
-def render_nginx_conf(template_path: str, output_path: str) -> bool:
+def render_nginx_conf(template_path: str, output_path: str, extra_config: dict = None) -> bool:
     """
     Render nginx.conf from a Jinja2 template using environment variables.
 
     Args:
         template_path: Path to nginx.conf.jinja2 template
         output_path: Path to write the rendered nginx.conf
+        extra_config: Additional configuration variables for the template
 
     Returns:
         bool: True if successful, False otherwise
     """
     try:
         config = get_nginx_config()
+        if extra_config:
+            config.update(extra_config)
 
         with open(template_path, "r") as f:
             template = Template(f.read())
@@ -79,6 +82,8 @@ def render_nginx_conf(template_path: str, output_path: str) -> bool:
     except FileNotFoundError:
         print(f"[ERROR] nginx.conf template not found: {template_path}")
         return False
+    except (KeyboardInterrupt, SystemExit):
+        raise
     except Exception as e:
         print(f"[ERROR] Failed to render nginx.conf: {e}")
         return False

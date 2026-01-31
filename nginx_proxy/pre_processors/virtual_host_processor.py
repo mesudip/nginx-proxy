@@ -1,27 +1,24 @@
-from docker.models.containers import Container as DockerContainer
-
 from nginx_proxy import Host, ProxyConfigData
-from nginx_proxy.Container import Container, NoHostConiguration, UnreachableNetwork
+from nginx_proxy.BackendTarget import BackendTarget, NoHostConfiguration, UnreachableNetwork
 from nginx_proxy.utils import split_url
 
 
-def process_virtual_hosts(container: DockerContainer, environments: map, known_networks: set) -> ProxyConfigData:
+def process_virtual_hosts(backend: BackendTarget, known_networks: set) -> ProxyConfigData:
     """
 
-    :param container:
-    :param environments: parsed container environment
+    :param backend:
     :param known_networks: networks known to the nginx-proxy container
     :return:
     """
     hosts = ProxyConfigData()
     try:
-        for host, location, proxied_container, extras in host_generator(container, known_networks=known_networks):
+        for host, location, proxied_backend, extras in host_generator(backend, known_networks=known_networks):
             websocket = "ws" in host.scheme or "wss" in host.scheme
             secured = "https" in host.scheme or "wss" in host.scheme
             http = "http" in host.scheme or "https" in host.scheme
             # it might return string if there's a error in processing
             if type(host) is not str:
-                host.add_container(location, proxied_container, websocket=websocket, http=http)
+                host.add_container(location, proxied_backend, websocket=websocket, http=http)
                 if len(extras):
                     injections = []
                     for k, v in extras.items():
@@ -33,23 +30,23 @@ def process_virtual_hosts(container: DockerContainer, environments: map, known_n
                 hosts.add_host(host)
         print(
             "Valid configuration   ",
-            "Id:" + container.id[:12],
-            "    " + container.attrs["Name"].replace("/", ""),
+            f"{backend.type:>9}".title() + " Id: " + backend.id[:12],
+            backend.name,
             sep="\t",
         )
         return hosts
-    except NoHostConiguration:
+    except NoHostConfiguration:
         print(
             "No VIRTUAL_HOST       ",
-            "Id:" + container.id[:12],
-            "    " + container.attrs["Name"].replace("/", ""),
+            f"{backend.type:>9}".title() + " Id: " + backend.id[:12],
+            backend.name,
             sep="\t",
         )
     except UnreachableNetwork as e:
         print(
             "Unreachable Network   ",
-            "Id:" + container.id[:12],
-            "    " + container.attrs["Name"].replace("/", ""),
+            f"{backend.type:>9}".title() + " Id: " + backend.id[:12],
+            backend.name,
             "networks: " + ", ".join(list(e.network_names)),
             sep="\t",
         )
@@ -78,11 +75,11 @@ def _parse_host_entry(entry_string: str):
     host_list = entry_string.strip().split("->")
     external, internal = host_list if len(host_list) == 2 else (host_list[0], "")
     external, internal = (split_url(external), split_url(internal))
-    c = Container(
+    c = BackendTarget(
         None,
         scheme=list(internal["scheme"])[0] if len(internal["scheme"]) else "http",
         address=internal["host"] if internal["host"] else None,
-        port=internal["port"] if internal["port"] else None,
+        port=int(internal["port"]) if internal["port"] else None,
         path=internal["location"] if internal["location"] else "",
     )
     h = Host(
@@ -94,44 +91,49 @@ def _parse_host_entry(entry_string: str):
     return (h, external["location"] if external["location"] else "/", c, extras)
 
 
-def host_generator(container: DockerContainer, service_id: str = None, known_networks: set = {}):
+def host_generator(backend: BackendTarget, known_networks: set = {}):
     """
-    :param container:
-    :param service_id:
+    :param backend:
     :param known_networks:
     :return: (Host,str,Container,set)
     """
-    c = Container(container.id)
-    network_settings = container.attrs["NetworkSettings"]
-    env_map = Container.get_env_map(container)
+    env_map = backend.env
 
     # List all the environment variables with VIRTUAL_HOST and list them.
     virtual_hosts = [x[1] for x in env_map.items() if x[0].startswith("VIRTUAL_HOST")]
     static_hosts = [x[1] for x in env_map.items() if x[0].startswith("STATIC_VIRTUAL_HOST")]
     if len(virtual_hosts) == 0 and len(static_hosts) == 0:
-        raise NoHostConiguration()
+        raise NoHostConfiguration()
 
-    # Instead of directly processing container details, check whether or not it's accessible through known networks.
     known_networks = set(known_networks)
     unknown = True
-    for name, detail in network_settings["Networks"].items():
-        c.add_network(detail["NetworkID"])
-        if detail["NetworkID"] and detail["NetworkID"] in known_networks and unknown:
-            ip_address = detail["IPAddress"]
-            # if detail["Aliases"] is not None:  # we might use alias
-            #   alias = detail["Aliases"][len(detail["Aliases"]) - 1]
-            # network = name
-            if ip_address:
-                break
-    else:
-        raise UnreachableNetwork(c.networks)
 
-    container_name = container.attrs["Name"].replace("/", "")
+    # We need a clean object to return that represents the target
+    target_base = BackendTarget(
+        backend.id, name=backend.name, env=backend.env, labels=backend.labels, backend_type=backend.type
+    )
+
+    found_ip = None
+
+    if hasattr(backend, "network_settings") and backend.network_settings:
+        for name, detail in backend.network_settings.items():
+            target_base.add_network(detail.get("NetworkID"))
+            if detail.get("NetworkID") and detail.get("NetworkID") in known_networks and unknown:
+                found_ip = detail.get("IPAddress")
+                # if detail["Aliases"] is not None: ...
+                if found_ip:
+                    break
+
+    if found_ip is None:
+        # If checking against known networks failed or no common network
+        raise UnreachableNetwork(target_base.networks)
 
     for host_config in static_hosts:
         host, location, container_data, extras = _parse_host_entry(host_config)
-        container_data.id = container.id
-        container_data.name = container_name
+        if location and not location.endswith("/") and container_data.path and container_data.path.endswith("/"):
+            location = location + "/"
+        container_data.id = backend.id
+        container_data.name = backend.name
         host.secured = "https" in host.scheme or "wss" in host.scheme or host.port == 443
         if host.port is None:
             host.port = 443 if host.secured else 80
@@ -149,16 +151,23 @@ def host_generator(container: DockerContainer, service_id: str = None, known_net
 
     for host_config in virtual_hosts:
         host, location, container_data, extras = _parse_host_entry(host_config)
-        container_data.address = ip_address
-        container_data.id = container.id
-        container_data.name = container_name
-        if override_port:
-            container_data.port = override_port
-        elif container_data.port is None:
-            if len(network_settings["Ports"]) == 1:
-                container_data.port = int(list(network_settings["Ports"].keys())[0].split("/")[0])
+        # Protect double / in urls.
+        if location and not location.endswith("/") and container_data.path and container_data.path.endswith("/"):
+            location = location + "/"
+        container_data.address = found_ip
+        container_data.id = backend.id
+        container_data.name = backend.name
+
+        if container_data.port is None:
+            if override_port:
+                container_data.port = override_port
+            elif hasattr(backend, "ports") and backend.ports and len(backend.ports) == 1:
+                # backend.ports expected to be dict or list of ports
+                # original: keys of dict
+                container_data.port = int(list(backend.ports.keys())[0].split("/")[0])
             else:
                 container_data.port = 80
+
         if override_ssl:
             if "ws" in host.scheme:
                 host.scheme = {"wss", "https"}

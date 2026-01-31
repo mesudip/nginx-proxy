@@ -11,9 +11,11 @@ import docker
 class DockerTestClient:
     def __init__(self):
         self._containers = {}  # id -> MockContainer
+        self._services = {}  # id -> MockService
         self._networks = {}  # id -> MockNetwork
         self._images = {}  # tag -> MockImage
         self.containers = MockContainerCollection(self)
+        self.services = MockServiceCollection(self)
         self.networks = MockNetworkCollection(self)
         self.images = MockImageCollection(self)
         self._lock = threading.RLock()
@@ -475,3 +477,114 @@ class MockNetwork:
                     "timeNano": time.time_ns(),
                 }
             )
+
+
+class MockServiceCollection:
+    def __init__(self, client: "DockerTestClient"):
+        self.client = client
+
+    def get(self, service_id):
+        with self.client._lock:
+            if service_id in self.client._services:
+                return self.client._services[service_id]
+            raise docker.errors.NotFound("No such service: " + service_id)
+
+    def create(self, image, command=None, **kwargs):
+        with self.client._lock:
+            sid = self.client._generate_id()
+            name = kwargs.get("name")
+            if not name:
+                name = f"service-{len(self.client._services) + 1}"
+
+            # Extract env from ContainerSpec-like kwargs or flat kwargs?
+            # docker-py service create takes `env` as list
+            env = kwargs.get("env", [])
+            networks = kwargs.get("networks", [])
+            # networks in create are list of names or dicts
+
+            svc = MockService(sid, name, image, self.client)
+            svc.attrs = {
+                "ID": sid,
+                "Spec": {
+                    "Name": name,
+                    "Labels": kwargs.get("labels", {}),
+                    "TaskTemplate": {"ContainerSpec": {"Image": image, "Env": env}},
+                },
+                "Endpoint": {"VirtualIPs": [], "Ports": []},  # Add ports if needed
+            }
+
+            # Handle networks
+            # In real swarm, service gets VIPs for each network
+            for net_name in networks:
+                # resolving net name to ID might be needed if strings passed
+                try:
+                    net = self.client.networks.get(net_name)  # mock get lookup
+                except:
+                    # if passed as object or dict
+                    if hasattr(net_name, "id"):
+                        net = net_name
+                    elif isinstance(net_name, dict):
+                        net = self.client.networks.get(net_name.get("Target"))
+                    else:
+                        continue
+
+                ip = str(net._next_ip)
+                net._next_ip += 1
+                svc.attrs["Endpoint"]["VirtualIPs"].append({"NetworkID": net.id, "Addr": f"{ip}/16"})
+
+            self.client._services[sid] = svc
+
+            # Emit create event
+            self.client._emit_event(
+                {
+                    "Type": "service",
+                    "Action": "create",
+                    "Actor": {"ID": sid, "Attributes": {"name": name}},
+                    "scope": "swarm",
+                    "time": int(time.time()),
+                    "timeNano": time.time_ns(),
+                }
+            )
+
+            return svc
+
+
+class MockService:
+    def __init__(self, id, name, image, client):
+        self.id = id
+        self.name = name
+        self.image = image
+        self.client = client
+        self.attrs = {}
+
+    def remove(self):
+        with self.client._lock:
+            if self.id in self.client._services:
+                del self.client._services[self.id]
+                self.client._emit_event(
+                    {
+                        "Type": "service",
+                        "Action": "remove",
+                        "Actor": {"ID": self.id, "Attributes": {"name": self.name}},
+                        "scope": "swarm",
+                        "time": int(time.time()),
+                        "timeNano": time.time_ns(),
+                    }
+                )
+
+    def update(self, **kwargs):
+        with self.client._lock:
+            # Emit update event
+            self.client._emit_event(
+                {
+                    "Type": "service",
+                    "Action": "update",
+                    "Actor": {"ID": self.id, "Attributes": {"name": self.name}},
+                    "scope": "swarm",
+                    "time": int(time.time()),
+                    "timeNano": time.time_ns(),
+                }
+            )
+
+    def reload(self):
+        pass

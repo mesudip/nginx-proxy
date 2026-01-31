@@ -5,10 +5,10 @@ from nginx import Url
 from nginx_proxy.Host import Host
 
 htaccess_folder = "/etc/nginx/generated/htaccess"
-from docker.models.containers import Container
+from nginx_proxy.BackendTarget import BackendTarget
 
 
-def process_basic_auth(container: Container, environments: map, vhost_map: Dict[str, Dict[int, Host]]):
+def process_basic_auth(backend: BackendTarget, environments: map, vhost_map: Dict[str, Dict[int, Host]]):
     def get_auth_map(credentials: str) -> Dict[str, str]:
         auth_map = {}
         for credential in credentials.split(","):
@@ -72,5 +72,5 @@ def process_basic_auth(container: Container, environments: map, vhost_map: Dict[
                     "Unknown hostname : "
                     + basic_auth_host.hostname
                     + "+ in PROXY_BASIC_AUTH in container: "
-                    + container.name
+                    + backend.name
                 )

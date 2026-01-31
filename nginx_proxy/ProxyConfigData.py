@@ -1,6 +1,6 @@
 from typing import Dict, Set, Generator, Tuple, Union
 
-from nginx_proxy.Container import Container
+from nginx_proxy.BackendTarget import BackendTarget
 from nginx_proxy.Host import Host
 from nginx_proxy.Location import Location
 
@@ -14,7 +14,7 @@ class ProxyConfigData:
     def __init__(self):
         # map the hostname -> port -> hostCofiguration
         self.config_map: Dict[str, Dict[int, Host]] = {}
-        self.containers: Set[str] = set()
+        self.backends: Set[str] = set()
         self._len = 0
 
     def getHost(self, hostname: str, port: int = 80) -> Union[None, Host]:
@@ -31,9 +31,9 @@ class ProxyConfigData:
                 existing_host.secured = host.secured or existing_host.secured
                 existing_host.update_extras(host.extras)
                 for location in host.locations.values():
-                    for container in location.containers:
+                    for container in location.backends:
                         existing_host.add_container(location.name, container, location.websocket, location.http)
-                        self.containers.add(container.id)
+                        self.backends.add(container.id)
                     existing_host.locations[location.name].update_extras(location.extras)
                 return
             else:
@@ -45,14 +45,14 @@ class ProxyConfigData:
             self.config_map[host.hostname] = {host.port: host}
 
         for location in host.locations.values():
-            for container in location.containers:
-                self.containers.add(container.id)
+            for container in location.backends:
+                self.backends.add(container.id)
 
-    def remove_container(self, container_id: str) -> Tuple[Union[Container, None], Set[Tuple[str, int]]]:
+    def remove_backend(self, container_id: str) -> Tuple[Union[BackendTarget, None], Set[Tuple[str, int]]]:
         removed_domains = set()
         result = False
-        if container_id in self.containers:
-            self.containers.remove(container_id)
+        if container_id in self.backends:
+            self.backends.remove(container_id)
             for host in self.host_list():
                 removed = host.remove_container(container_id)
                 if removed:
@@ -62,8 +62,8 @@ class ProxyConfigData:
                         removed_domains.add((host.hostname, host.port))
         return result, removed_domains
 
-    def has_container(self, container_id):
-        return container_id in self.containers
+    def has_backend(self, container_id):
+        return container_id in self.backends
 
     def host_list(self) -> Generator[Host, None, None]:
         for port_map in self.config_map.values():
@@ -72,6 +72,11 @@ class ProxyConfigData:
 
     def __len__(self):
         return self._len
+
+    def clear(self):
+        self.config_map = {}
+        self.backends = set()
+        self._len = 0
 
     def print(self):
 
@@ -103,7 +108,7 @@ class ProxyConfigData:
                     self.printextra("      ", host.extras)
                 for location in host.locations.values():
                     print(host_url(location.websocket) + location.name)
-                    for container in location.containers:
+                    for container in location.backends:
                         print(
                             "      -> ",
                             (container.scheme)
@@ -115,12 +120,6 @@ class ProxyConfigData:
 
                     if len(location.extras):
                         self.printextra("      ", location.extras)
-
-        # self.address: str = address
-        # self.port: int = port
-        # self.path: Union[str, None] = path
-        # self.scheme: str = scheme
-        # self.networks =
 
     @staticmethod
     def printextra(gap, extra):
