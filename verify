@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-
 import sys
-
+import os
+import requests
 from nginx import Nginx
 
 
@@ -11,18 +11,66 @@ def print_usage():
     print()
     print("       verify  <hostname1>  [ hostname2 hostname3 ...]")
     print()
+    print("Note: If CERTAPI_URL is set, this tool checks connectivity to the CertAPI server.")
+    print("      Only when CertAPI is NOT used, local challenge directory verification is performed.")
     exit(1)
+
+
+def check_certapi(url):
+    print(f"Checking CertAPI connectivity: {url}")
+    try:
+        # Check /docs endpoint as used in SSL.py
+        target = url.rstrip("/") + "/docs"
+        response = requests.get(target, timeout=5)
+        if response.status_code == 200:
+            print("CertAPI is reachable and operational.")
+            return True
+        else:
+            print(f"Warning: CertAPI responded with status {response.status_code} at {target}")
+            return False
+    except Exception as e:
+        print(f"Error connecting to CertAPI: {e}")
+        return False
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print_usage()
+    
     arg_set = set(sys.argv[1:])
-    kwargs = {}
-    if 'h' in arg_set or "-h" in arg_set or "--help" in arg_set or "-help" in arg_set or "help" in arg_set:
+    if any(x in arg_set for x in ['-h', '--help', 'help']):
         print_usage()
+
+    # Environment configuration
+    def _strip_end(s: str, char="/") -> str:
+        return s[:-1] if s.endswith(char) else s
+
+    certapi_url = os.getenv("CERTAPI_URL", "").strip()
+    
+    if certapi_url:
+        # CertAPI Mode
+        if not check_certapi(certapi_url):
+            sys.exit(1)
+        print("CertAPI is configured. Local domain verification via challenge directory is skipped.")
     else:
-        nginx = Nginx.Nginx("/etc/nginx/conf.d/dummy.conf")
+        # Local Mode
+        conf_dir = _strip_end(os.getenv("NGINX_CONF_DIR", "/etc/nginx").strip())
+        challenge_dir = _strip_end(os.getenv("CHALLENGE_DIR", "/etc/nginx/challenges").strip()) + "/"
+        
+        # Ensure challenge_dir exists or Nginx.verify_domain might fail creating files
+        if not os.path.exists(challenge_dir):
+             try:
+                os.makedirs(challenge_dir, exist_ok=True)
+             except OSError:
+                pass
+
+        config_path = os.path.join(conf_dir, "conf.d/dummy.conf")
+        nginx = Nginx.Nginx(config_path, challenge_dir=challenge_dir)
+        
         domains = [x for x in sys.argv[1:] if not x.startswith("-")]
+        if not domains:
+            print("No domains provided.")
+            print_usage()
+            
         result = nginx.verify_domain(domains)
         print("Owned Domains:" + str(result))
