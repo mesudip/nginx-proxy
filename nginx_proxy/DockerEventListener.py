@@ -102,6 +102,8 @@ class DockerEventListener:
                 self.web_server.update_backend(backend)
             except docker.errors.NotFound:
                 print(f"WARN: Service {service_id} not found ...", file=sys.stderr)
+            except (KeyboardInterrupt, SystemExit):
+                raise
             except Exception as e:
                 print(f"Error processing service event {action} for {service_id}: {e}", file=sys.stderr)
         elif action == "remove":
@@ -122,6 +124,8 @@ class DockerEventListener:
                 container = self.client.containers.get(container_id)
                 backend = BackendTarget.from_container(container)
                 self.web_server.update_backend(backend)
+            except (KeyboardInterrupt, SystemExit):
+                raise
             except Exception as e:
                 print(f"Error processing container event {action} for {container_id}: {e}", file=sys.stderr)
         elif action == "stop" or action == "die" or action == "destroy":

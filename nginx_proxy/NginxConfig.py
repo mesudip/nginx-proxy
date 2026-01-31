@@ -79,6 +79,8 @@ def render_nginx_conf(template_path: str, output_path: str) -> bool:
     except FileNotFoundError:
         print(f"[ERROR] nginx.conf template not found: {template_path}")
         return False
+    except (KeyboardInterrupt, SystemExit):
+        raise
     except Exception as e:
         print(f"[ERROR] Failed to render nginx.conf: {e}")
         return False

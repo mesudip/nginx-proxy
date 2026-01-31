@@ -88,6 +88,8 @@ class SslCertificateProcessor:
                                     registered.add(host.hostname)
                                     new_certs.extend(registered_ssl)
                                     continue
+                            except (KeyboardInterrupt, SystemExit):
+                                raise
                             except Exception as e:
                                 print(f"Self signing certificate {host.hostname}: {e}")
                                 traceback.print_exception(e)
@@ -109,6 +111,8 @@ class SslCertificateProcessor:
                     new_registrations = self.ssl.register_certificate_or_selfsign(missing_certs)
                     registered.update(domain for x in new_registrations for domain in x.domains)
                     new_certs.extend(new_registrations)
+                except (KeyboardInterrupt, SystemExit):
+                    raise
                 except Exception as e:
                     print(f"Error processing certificates for {missing_certs}: {e}")
                     traceback.print_exception(e)
@@ -120,6 +124,8 @@ class SslCertificateProcessor:
             if len(new_certs) > 0:
                 self.ssl.update_expiry_cache(new_certs)
 
+        except (KeyboardInterrupt, SystemExit):
+            raise
         except Exception as e:
             print("Unexpected error processing ssl certificates.")
             traceback.print_exception(e)

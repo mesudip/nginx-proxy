@@ -220,6 +220,8 @@ class WebServer:
                         self.remove_backend(
                             container
                         )  # remove_backend not implemented yet, using remove_container (it takes ID)
+                except (KeyboardInterrupt, SystemExit):
+                    raise
                 except Exception as e:
                     print(f"Error processing disconnect for container {container}: {e}", file=sys.stderr)
 
@@ -241,6 +243,8 @@ class WebServer:
                     return
                 backend = BackendTarget.from_container(container_obj)
                 self.update_backend(backend)
+            except (KeyboardInterrupt, SystemExit):
+                raise
             except Exception as e:
                 print(f"Error processing connect for container {container}: {e}", file=sys.stderr)
 
@@ -278,6 +282,8 @@ class WebServer:
                             continue
                         backend = BackendTarget.from_container(container)
                         self.register_backend(backend)
+                except (KeyboardInterrupt, SystemExit):
+                    raise
                 except Exception as e:
                     print(f"Error scanning containers: {e}", file=sys.stderr)
 
@@ -300,6 +306,8 @@ class WebServer:
                         # However, if we have a remote swarm_client, it might be a manager.
                         # But self.swarm_client.info() would have returned is_manager=True if it were.
                         pass
+                except (KeyboardInterrupt, SystemExit):
+                    raise
                 except Exception as e:
                     print(f"Error scanning services: {e}", file=sys.stderr)
 

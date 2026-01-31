@@ -43,6 +43,8 @@ def docker_client():
             print("Swarm not active. Initializing...")
             client.swarm.init(advertise_addr="127.0.0.1")
             print("Swarm initialized.")
+    except (SystemExit, KeyboardInterrupt):
+        raise
     except Exception as e:
         print(f"Warning: Failed to ensure Swarm state: {e}")
 
@@ -100,6 +102,8 @@ def nginx_proxy_container(docker_client: docker.DockerClient, test_network, dock
         print(f"Removed existing container '{container_name}'.")
     except docker.errors.NotFound:
         print(f"No existing container '{container_name}' found. Proceeding.")
+    except (SystemExit, KeyboardInterrupt):
+        raise
     except Exception as e:
         print(f"Error cleaning up existing container: {e}")
         # Do not raise, try to proceed with build/run

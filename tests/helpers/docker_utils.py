@@ -74,5 +74,7 @@ def stop_backend(
             containers = backend.client.containers.list(all=True, filters={"label": f"com.docker.swarm.service.name={backend.name}"})
             for container in containers:
                 container.remove(force=True)
+        except (KeyboardInterrupt, SystemExit):
+            raise
         except Exception:
             pass

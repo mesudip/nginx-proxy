@@ -157,6 +157,8 @@ class SSL:
                 nonlocal result, exception
                 try:
                     result = self.cert_backend.issue_certificate(domain, key_type="ecdsa")
+                except (KeyboardInterrupt, SystemExit):
+                    raise
                 except Exception as e:
                     exception = e
 

@@ -17,10 +17,9 @@ class StickySessionProcessor:
                         location.upstream = global_upstreams[backend_key]["id"]
                     else:
                         upstream_id = (
-                            "upstream_"
-                            + hashlib.sha1(str(backend_key).encode("utf-8")).hexdigest()[
-                                :12
-                            ]
+                            host.hostname.strip()
+                            + "_"
+                            + hashlib.sha1(str(backend_key).encode("utf-8")).hexdigest()[:12]
                         )
                         sticky_value = None
                         for b in location.backends:

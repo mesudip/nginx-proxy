@@ -103,6 +103,8 @@ class NginxProxyApp:
         try:
             self.docker_client = docker.from_env()
             self.docker_client.version()
+        except (KeyboardInterrupt, SystemExit):
+            raise
         except Exception as e:
             if self.config["swarm_docker_host"]:
                 print(
@@ -123,6 +125,8 @@ class NginxProxyApp:
                 self.swarm_client = docker.DockerClient(base_url=self.config["swarm_docker_host"])
                 self.swarm_client.version()
                 print(f"[INFO] Connected to remote Swarm manager at {self.config['swarm_docker_host']}")
+            except (KeyboardInterrupt, SystemExit):
+                raise
             except Exception as e:
                 print(
                     f"[ERROR] Error connecting to Swarm host {self.config['swarm_docker_host']}: {e}",
@@ -149,6 +153,8 @@ class NginxProxyApp:
                         f"but this node is not a Swarm manager. Service discovery will not work.",
                         file=sys.stderr,
                     )
+            except (KeyboardInterrupt, SystemExit):
+                raise
             except Exception as e:
                 print(f"[ERROR] DOCKER_SWARM={swarm_mode} but failed to get Swarm info: {e}", file=sys.stderr)
                 sys.exit(1)

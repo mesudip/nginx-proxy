@@ -19,11 +19,14 @@ add_header Strict-Transport-Security "max-age=31536000" always;
 access_log /var/log/nginx/access.log;
 client_max_body_size {{ config.client_max_body_size }};
 
-
-{% for server in virtual_servers%}{% for upstream in server.upstreams %}
-    upstream {{ upstream.id }} { {% for container in upstream.containers %}
+{% for upstream in upstreams %}
+    upstream {{ upstream.id }} { {% if upstream.sticky %}
+        {{ upstream.sticky }};{% endif %} {% for container in upstream.containers %}
         server  {{ container.address }}:{{ container.port }};   # container: {{container.id[:12]}}{% endfor %}
-    }{% endfor %}
+    }
+{% endfor %}
+
+{% for server in virtual_servers%}
 {% if not server.is_redirect %}
 server{
         server_name {{ server.hostname }};

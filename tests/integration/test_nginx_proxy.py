@@ -70,17 +70,25 @@ def test_http_routing_discovery(
 
         # Retrying for async discovery
         response = None
-        for i in range(15):
+        ex=None
+        for x in range(15):
             try:
-                response = nginx_request.get(url, timeout=1)
+                ex=None
+                response = nginx_request.get(url, timeout=2)
                 if should_be_reachable and response.status_code == 200:
                     break
                 if not should_be_reachable and response.status_code == 503:
                     break
+            except SystemExit or KeyboardInterrupt:
+                raise
             except Exception as e:
-                print(e)
-                pass
+                ex=e
+                print(x,e)
+
             time.sleep(1)
+        
+        assert ex is None
+        assert response is not None
 
         if should_be_reachable:
             assert response.status_code == 200
