@@ -2,6 +2,7 @@ import difflib
 import os
 import pathlib
 import random
+import re
 import string
 import subprocess
 import sys
@@ -100,6 +101,99 @@ class Nginx:
             self.last_working_config = config_str
             return True
 
+    def _parse_error_line(self, error_msg):
+        if not error_msg:
+            return None
+        # Try to find the specific error line for the config file we are managing
+        config_filename = os.path.basename(self.config_file_path)
+        escaped_filename = re.escape(config_filename)
+        
+        # Search for: filename:line_number
+        match = re.search(f"{escaped_filename}:(\\d+)", error_msg)
+        if match:
+            return int(match.group(1))
+            
+        # Fallback: Search for any line number pattern usually at end of line in Nginx errors
+        lines = error_msg.splitlines()
+        for line in lines:
+            if "emerg" in line or "error" in line:
+                 match = re.search(r':(\d+)(?:\s|$)', line)
+                 if match:
+                     return int(match.group(1))
+        return None
+
+    def _print_error_context(self, config_str, line_no):
+        lines = config_str.splitlines()
+        total_lines = len(lines)
+        if line_no > total_lines or line_no < 1:
+            print(f"Error reported at line {line_no}, but config only has {total_lines} lines.", file=sys.stderr)
+            return False
+
+        print(f"Error Location in Config (Line {line_no}):", file=sys.stderr)
+        
+        start_idx = max(0, line_no - 6) 
+        end_idx = min(total_lines, line_no + 5)
+        
+        for i in range(start_idx, end_idx):
+            current_line = i + 1
+            marker = ">>" if current_line == line_no else "  "
+            content = lines[i]
+            print(f"{marker} {current_line:4}: {content}", file=sys.stderr)
+        return True
+
+    def _print_diff_with_line_numbers(self, old_config, new_config):
+        diff_iter = difflib.unified_diff(
+            old_config.splitlines(),
+            new_config.splitlines(),
+            fromfile="Old Config",
+            tofile="New Config",
+            lineterm="",
+        )
+
+        header_regex = re.compile(r"@@\s-([0-9]+)(?:,[0-9]+)?\s\+([0-9]+)(?:,[0-9]+)?\s@@")
+        old_line_no = None
+        new_line_no = None
+
+        for line in diff_iter:
+            if line.startswith("---") or line.startswith("+++"):
+                print(line, file=sys.stderr)
+                continue
+
+            if line.startswith("@@"):
+                print(line, file=sys.stderr)
+                match = header_regex.match(line)
+                if match:
+                    old_line_no = int(match.group(1))
+                    new_line_no = int(match.group(2))
+                continue
+
+            if line.startswith("-"):
+                line_number = old_line_no if old_line_no is not None else "?"
+                print(f"- [old {line_number}] {line[1:]}", file=sys.stderr)
+                if old_line_no is not None:
+                    old_line_no += 1
+                continue
+
+            if line.startswith("+"):
+                line_number = new_line_no if new_line_no is not None else "?"
+                print(f"+ [new {line_number}] {line[1:]}", file=sys.stderr)
+                if new_line_no is not None:
+                    new_line_no += 1
+                continue
+
+            if line.startswith(" "):
+                old_label = old_line_no if old_line_no is not None else "?"
+                new_label = new_line_no if new_line_no is not None else "?"
+                print(f"  [old {old_label} | new {new_label}] {line[1:]}", file=sys.stderr)
+                if old_line_no is not None:
+                    old_line_no += 1
+                if new_line_no is not None:
+                    new_line_no += 1
+                continue
+
+            # Fallback for special diff lines such as "\\ No newline at end of file"
+            print(line, file=sys.stderr)
+
     def update_config(self, config_str, force=False) -> bool:
         """
         Change the nginx configuration.
@@ -116,17 +210,15 @@ class Nginx:
         result, data = self.reload(return_error=True)
 
         if not result:
-            diff = str.join(
-                "\n",
-                difflib.unified_diff(
-                    self.last_working_config.splitlines(),
-                    config_str.splitlines(),
-                    fromfile="Old Config",
-                    tofile="New Config",
-                    lineterm="\n",
-                ),
-            )
-            print(diff, file=sys.stderr)
+            printed_context = False
+            error_line = self._parse_error_line(data)
+
+            if error_line is not None:
+                printed_context = self._print_error_context(config_str, error_line)
+
+            if not printed_context:
+                self._print_diff_with_line_numbers(self.last_working_config, config_str)
+
             if data is not None:
                 print(data, file=sys.stderr)
             print("ERROR: New change made nginx to fail. Thus it's rolled back", file=sys.stderr)
