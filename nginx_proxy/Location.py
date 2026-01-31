@@ -22,7 +22,12 @@ class Location:
                 if type(data) in (dict, set):
                     self.extras[x].update(extras[x])
                 elif isinstance(data, list):
-                    self.extras[x].extend(extras[x])
+                    new_values = extras[x] if isinstance(extras[x], list) else [extras[x]]
+                    existing = set(data)
+                    for value in new_values:
+                        if value not in existing:
+                            data.append(value)
+                            existing.add(value)
                 else:
                     self.extras[x] = extras[x]
             else:

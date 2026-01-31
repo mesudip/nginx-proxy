@@ -26,7 +26,10 @@ def process_virtual_hosts(backend: BackendTarget, known_networks: set) -> ProxyC
                             injections.append(k)
                         else:
                             injections.append(f"{k} {v}")
-                    host.locations[location].update_extras({"injected": injections})
+                    if injections:
+                        # Preserve insertion order while avoiding duplicates from repeated hosts
+                        deduped = list(dict.fromkeys(injections))
+                        host.locations[location].update_extras({"injected": deduped})
                 hosts.add_host(host)
         print(
             "Valid configuration   ",

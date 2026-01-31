@@ -1,3 +1,4 @@
+import time
 import pytest
 from unittest.mock import MagicMock
 from nginx_proxy.BackendTarget import BackendTarget
@@ -157,7 +158,7 @@ class TestVirtualHostProcessorWithBackendTarget:
             config = process_virtual_hosts(backend, known_networks)
             for host in config.host_list():
                 aggregated.add_host(host)
-
+        time.sleep(1)  # Allow any async processing (if any) to complete
         host = aggregated.getHost("dup.example.com")
         injections = host.locations["/"].extras.get("injected", [])
         assert injections.count("client_max_body_size 200M") == 1
