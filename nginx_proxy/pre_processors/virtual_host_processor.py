@@ -130,6 +130,13 @@ def host_generator(backend: BackendTarget, known_networks: set = {}):
 
     for host_config in static_hosts:
         host, location, container_data, extras = _parse_host_entry(host_config)
+
+        if container_data.address is None:
+            print(
+                f"ERROR: Invalid STATIC_VIRTUAL_HOST value: {host_config}. Missing or invalid destination. Expected format: 'host -> destination'"
+            )
+            continue
+
         if location and not location.endswith("/") and container_data.path and container_data.path.endswith("/"):
             location = location + "/"
         container_data.id = backend.id
