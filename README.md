@@ -17,7 +17,7 @@ No more writing configuration files. `nginx-proxy` watches for container changes
 - **Swarm Ready:** Compatible with Docker Swarm services.
 
 ## Philosophy
-`nginx-proxy` is built on the belief that infrastructure should be invisible. Once deployed you should never have to know that this service is running.
+`nginx-proxy` is built on the belief that infrastructure should be invisible. Each service keeps its configuration.  
 
 ## Quick Start
 ### 1. Start nginx-proxy
@@ -105,8 +105,8 @@ To expose a container, set the `VIRTUAL_HOST*` environment variable. The contain
 | `example.com -> :8080` | Proxies to port 8080. |
 | `https://example.com` | HTTPS proxy to container exposed http port |
 | `https://example.com/api` | Only /api path is passed on to container. /api prefix is not removed |
-| `https://example.com/api -> /v1` | Re-maps path `/api` to `/v1` on contianer exposed port|
-| `https://example.com/api -> :8080/v1` | Re-maps path `/api` to `/v1` on contianer port 8080|
+| `https://example.com/api -> /v1` | Re-maps path `/api` to `/v1` on container exposed port|
+| `https://example.com/api -> :8080/v1` | Re-maps path `/api` to `/v1` on container port 8080|
 | `https://example.com/api -> https://_:8080/v1` | Re-maps path `/api` to `/v1` on port 8080. Https is used to connect to container|
 
 **Note:** Directives separated by `;` are injected into the Nginx `location` block.
@@ -119,7 +119,7 @@ WebSocket support requires explicit configuration if the protocol is not detecte
 - **Auto-Upgrade:** `VIRTUAL_HOST=https+wss://example.com` (Supports both HTTP and WSS on te host).
 
 ### Multiple Hosts
-A single container can serve multiple domains path mappings. All that matters is that ev variable starts with `VIRTUAL_HOST` e.g. `VIRTUAL_HOST1`, `VIRTUAL_HOST2`, etc.
+A single container can serve multiple domains path mappings. All that matters is that env variable starts with `VIRTUAL_HOST` e.g. `VIRTUAL_HOST1`, `VIRTUAL_HOST2`, etc.
 
 **Example:**
 ```bash
@@ -134,13 +134,13 @@ Proxy to external hosts, (not in Docker) using `STATIC_VIRTUAL_HOST`. The contai
 
 Format: `STATIC_VIRTUAL_HOST=domain.com->http://192.168.0.1:8080`.
 
-**Note** Beaware that if domain as target, nginx will crash if DNS resolution fails.
+**Note** Be aware that if domain as target, nginx will crash if DNS resolution fails.
 
 ## Docker Swarm Support [Preview]
-Enable warm mode by setting `DOCKER_SWARM` to `enable` (local & swarm) or `strict` (swarm only).
+Enable swarm mode by setting `DOCKER_SWARM` to `enable` (local & swarm) or `strict` (swarm only).
 If current node is not manager, set `SWARM_DOCKER_HOST=tcp://manager:2375`.
 
-**Warning** : Automatic exposed port detection will not work when swrm support is enabled. You must explicitly set port on the `VIRTUAL_HOST` or set `VIRTUAL_PORT` on the container.
+**Warning** : Automatic exposed port detection will not work when swarm support is enabled. You must explicitly set port on the `VIRTUAL_HOST` or set `VIRTUAL_PORT` on the container.
 
 ## Advanced Features
 ### Redirection
