@@ -1,41 +1,92 @@
 #!/usr/bin/env python3
 import sys
-
+import os
 from nginx import Nginx
 from nginx_proxy import SSL
-import os
+from urllib.parse import urlparse
 
 
 def print_usage():
-    print("Usage: Obtain Let'sEncrypt ssl certificate for a domain or multiple domains ")
+    print("Usage: Obtain Let'sEncrypt ssl certificate for a domain or multiple domains")
     print()
-    print("       getssl [--options]  <hostname1>  [ hostname2 hostname3 ...]")
+    print("       getssl <hostname1> [hostname2 ...]")
     print()
-    print("Available options")
-    print("    --skip-dns-check    Do not perform check if dns points to this machine")
-    print("    --new               Override if certificate already exists")
-    print("    --force             Do no perform any check and call acme directly")
+    print("Note: This script respects environment variables: CERTAPI_URL, SSL_DIR, CHALLENGE_DIR, etc.")
     exit(1)
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print_usage()
+    
     arg_set = set(sys.argv[1:])
-    kwargs = {}
-    if 'h' in arg_set or "-h" in arg_set or "--help" in arg_set or "-help" in arg_set or "help" in arg_set:
+    if any(x in arg_set for x in ['-h', '--help', 'help']):
         print_usage()
-    else:
-        if "--force" in arg_set:
-            kwargs["no_self_check"] = True
-            kwargs["ignore_existing"] = True
-        if "--new" in arg_set:
-            kwargs["ignore_existing"] = True
-        if "--skip-dns-check" in arg_set:
-            kwargs["no_self_check"] = True
-        config = "/etc/nginx/conf.d/gen-ssl-direct.conf"
-        nginx = Nginx.Nginx(config)
-        ssl = SSL.SSL("/etc/ssl", nginx=nginx)
-        ssl.register_certificate([x for x in sys.argv[1:] if not x.startswith("-")], **kwargs)
-        if os.path.exists(config):
-            os.remove(config)
+
+    # Load configuration from environment variables (consistent with NginxProxyApp)
+    def _strip_end(s: str, char="/") -> str:
+        return s[:-1] if s.endswith(char) else s
+
+    ssl_dir = _strip_end(os.getenv("SSL_DIR", "/etc/ssl").strip())
+    conf_dir = _strip_end(os.getenv("NGINX_CONF_DIR", "/etc/nginx").strip())
+    challenge_dir = _strip_end(os.getenv("CHALLENGE_DIR", "/etc/nginx/challenges").strip()) + "/"
+    cert_renew_threshold_days = int(os.getenv("CERT_RENEW_THRESHOLD_DAYS", "30").strip())
+    
+    # CertAPI Configuration
+    certapi_url = os.getenv("CERTAPI_URL", "").strip()
+    mock_server_config = {}
+    
+    if certapi_url:
+        parsed = urlparse(certapi_url)
+        port = parsed.port
+        if port is None:
+            port = 443 if parsed.scheme == "https" else 80
+        
+        mock_server_config["certapi"] = {
+            "url": certapi_url,
+            "host": parsed.hostname,
+            "scheme": parsed.scheme,
+            "port": port
+        }
+
+    class MockServer:
+        def __init__(self, config):
+            self.config = config
+
+    config_path = os.path.join(conf_dir, "conf.d/gen-ssl-direct.conf")
+    # Make sure challenge dir exists for local mode
+    if not os.path.exists(challenge_dir):
+         try:
+            os.makedirs(challenge_dir, exist_ok=True)
+         except OSError:
+            pass # Might fail if readonly, but then Nginx might scream
+
+    nginx = Nginx.Nginx(config_path, challenge_dir=challenge_dir)
+    
+    # Initialize SSL
+    ssl_manager = SSL.SSL(
+        ssl_dir, 
+        nginx=nginx, 
+        update_threshold_seconds=cert_renew_threshold_days * 24 * 3600,
+        server=MockServer(mock_server_config)
+    )
+    
+    domains = [x for x in sys.argv[1:] if not x.startswith("-")]
+    if not domains:
+        print("No domains provided.")
+        print_usage()
+
+    try:
+        ssl_manager.register_certificate(domains)
+        # Attempt to reload nginx to pick up changes (if running)
+        print("Reloading nginx...")
+        if not nginx.reload():
+             print("Warning: Failed to reload nginx. Changes may not apply immediately.")
+    except Exception as e:
+        print(f"Error obtaining certificate: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+    finally:
+        if os.path.exists(config_path):
+            os.remove(config_path)

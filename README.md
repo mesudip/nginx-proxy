@@ -4,193 +4,227 @@ Nginx-Proxy
 [![codecov](https://codecov.io/github/mesudip/nginx-proxy/graph/badge.svg?token=S2GZ0ISOON)](https://codecov.io/github/mesudip/nginx-proxy)
 [![Docker Pulls](https://img.shields.io/docker/pulls/mesudip/nginx-proxy)](https://hub.docker.com/layers/mesudip/nginx-proxy/latest)
 
-Docker container for automatically creating nginx configuration based on active containers in docker host.
+Fully automated Nginx reverse proxy for Docker and Swarm.
 
-- Easy server configuration with environment variables
-- Map multiple containers to different locations on same server
-- Automatic Let's Encrypt ssl certificate registration
-- Basic Authorization
+No more writing configuration files. `nginx-proxy` watches for container changes and automatically generates reverse proxy configurations. It supports SSL via Let's Encrypt, Basic Auth, and custom Nginx directives—all configured through environment variables.
 
-## Quick Setup  
-### Setup nginx-proxy
-```
-docker pull mesudip/nginx-proxy
-docker network create frontend;    # create a network for nginx proxy 
-docker run  --network frontend \
-            --name nginx-proxy \
-            -v /var/run/docker.sock:/var/run/docker.sock:ro \
-            -v nginx_data:/etc/nginx \
-            -v nginx_logs:/var/log/nginx \
-            -p 80:80 \
-            -p 443:443 \
-            -d --restart always mesudip/nginx-proxy
-```
-### Setup your container
-The only thing that matters is that the container shares at least one common network to the nginx container and `VIRTUAL_HOST` 
-environment variable is set. 
 
-Examples:
-- **WordPress**
-```
-docker run --network frontend \
-          --name wordpress-server \
-          -e VIRTUAL_HOST="wordpress.example.com" \
-          wordpress
-```
- - **Docker Registry**  
- ```
-docker run --network frontend \
-          --name docker-registry \
-          -e VIRTUAL_HOST='https://registry.example.com/v2 -> /v2; client_max_body_size 2g' \
-          -e PROXY_BASIC_AUTH="registry.example.com -> user1:password,user2:password2,user3:password3" \
-          registry:2
-```
+### Key Features
+- **Zero-config Nginx:** Automatically discovers and routes traffic to containers and services
+- **SSL Automation:** Automatic SSL certificates via Let's Encrypt (ACME).
+- **Flexible Routing:** Host-based, path-based, and multiple domains per container.
+- **Advanced Features:** Sticky sessions, basic auth, redirects, and custom Nginx directives.
+- **Swarm Ready:** Compatible with Docker Swarm services.
 
-Details of Using nginx-proxy
-======================
- - [Configure `nginx-proxy`](#configure-nginx-proxy)
- - [Configure enrironment VIRTUAL_HOST in your containers](#configure-environment-virtual_host-in-your-containers)
-    - [WebSockets](#support-for-websocket)
-    - [Multiple hosts in same container](#multiple-virtual-hosts-on-same-container)
- - [Redirection](#redirection)
- - [Https and SSL](#ssl-support)
- - [Basic Authorization](#basic-authorization)
- - [Default Server](#default-server)
+## Philosophy
+`nginx-proxy` is built on the belief that infrastructure should be invisible. Each service keeps its configuration.  
 
-## Configure `nginx-proxy`
-Following directries can be mounted as volumes to persist configurations
-- `/etc/nginx/conf.d` nginx configuration directory. You can add your own custom configurations here
-- `/etc/nginx/ssl` directory for storing ssl certificates, ssl private key and Let's Encrypt account key.
-- `/var/log/nginx` directory nginx logs 
-- `/etc/nginx/challenges` directory for storing challenge content when registering Let's Encrypt certificate
+## Quick Start
+### 1. Start nginx-proxy
 
-Some of the default behaviour of `nginx-proxy` can be changed with environment variables.
--   `DHPARAM_SIZE`  Default - `2048` : Set size of dhparam usd for ssl certificates
--   `CLIENT_MAX_BODY_SIZE` Default - `1m` : Set default max body size for all the servers.
--   `NGINX_WORKER_PROCESSES` Default - `auto` : Set number of nginx workers.        
--   `NGINX_WORKER_CONNECTIONS` Default - `65535` : Set number of connections per worker.        
-
-## Configure environment `VIRTUAL_HOST` in your containers
-When you want a container's to be hosted on a domain set `VIRTUAL_HOST` environment variable to desired `server_name` entry.
-For virtual host to work it requires 
-- nginx-proxy container to be on the same network as that of the container.
-- port to be exposed in Docker file or while creating the container. When missing or if it has multiple exposed ports, port 80 is used by default.
-- when hosting on port other than 80, make sure that your nginx-proxy container's port is bind-mounted to host port.
-
-Some configurations possible through `VIRTUAL_HOST`
-
- `VIRTUAL_HOST` | release address | container path | container port
-:--- | :--- |:---------------| :---
-example.com |  http:<span></span>//example.com | /              | exposed port
-example.com:8080 | http:<span></span>//example.com:8080 | /              | exposed port
-example.com -> :8080 | http:<span></span>//example.com | /              | `8080`
-https://<span></span>example.com  | https:<span></span>//example.com | /              | exposed port
-example.com/<span></span>api | http://<span></span>example.com/api | /api           | exposed port
-example.com/<span></span>api/ -> / | http://<span></span>example.com/api | /           | exposed port
-example.com/<span></span>api -> :8080/api | http://<span></span>example.com/api | /api           | 8080
-https://<span></span>example.com/<span></span>api/v1:5001  -> :8080/api | https://<span></span>example.com/<span></span>api/v1:5001 | /api           | 8080
-wss://example.com/websocket | wss://example.com/websocket | /              | exposed port
- 
-With `VIRTUAL_HOST` you can inject nginx directives into location each configuration must be separed with a `;`
-. You can see the possible directives in nginx documentation.
-
-**Example :** `VIRTUAL_HOST=somesite.example.com -> :8080 ;proxy_read_timeout  900;client_max_body_size 2g;` will generate configuration as follows
-```nginx.conf
-server{
-    server_name somesite.example.com;
-    listen 80;
-    location /{
-        proxy_read_timeout 900;
-        client_max_body_size 2g;
-        proxy_pass http://127.2.3.4; // your container ip here
-    }
-}
-```
-### Support for websocket
-Exposing websocket requires the websocket endpoint to be explicitly configured via virtual host. The websocket endpoint can be `ws://` or `wss://`.
-If you want to use both websocket and non-websocket endpoints you will have to use multiple hosts
-
-`-e "VIRTUAL_HOST=wss://ws.example.com -> :8080/websocket"`
-
-If you are not sure  what paths should be exposed on websocket, you can opt for auto upgrade to websocket.
-
-`-e "VIRTUAL_HOST=https+wss://example.com"`
-
-### Multiple Virtual Hosts on same container
-To have multiple virtual hosts out of single container, you can use `VIRTUAL_HOST1`, `VIRTUAL_HOST2`, `VIRTUAL_HOST3` and so on. In fact the only thing it matters is that the environment variable starts with `VIRTUAL_HOST`.
-
-**Example:** setting up a go-ethereum node.
+**Note** When migrating to v3, old volumes should be removed. 
 ```bash
-    docker run -d  --network frontend \
-    -e "VIRTUAL_HOST1=https://ethereum.example.com -> :8545" \
-    -e "VIRTUAL_HOST2=wss://ethereum.example.com/ws -> :8546/" \
-    ethereum/client-go \
-    --rpc --rpcaddr "0.0.0.0"  --ws --wsaddr 0.0.0.0
+docker network create frontend
+
+docker run -d --restart always \
+    --name nginx-proxy \
+    --network frontend \
+    -p 80:80 \
+    -p 443:443 \
+    -v /var/run/docker.sock:/var/run/docker.sock:ro \
+    -v nginx_data:/etc/nginx \
+    -v nginx_logs:/var/log/nginx \
+    mesudip/nginx-proxy:v3
 ```
-## Redirection
- Let's say you want to serve a website on `example.uk`. You might want users visiting `www.example.uk`,`example.com`,`www.example.com`
- to redirect to  `example.uk`.  You can simply use `PROXY_FULL_REDIRECT` environment variable. 
- ```
-  -e 'VIRTUAL_HOST=https://example.uk -> :7000' \
-  -e 'PROXY_FULL_REDIRECT=example.com,www.example.com,www.example.uk->example.uk'
- ```
+
+### 2. Run a Service
+Start a container on the same network and set the `VIRTUAL_HOST` environment variable.
+
+#### Example: WordPress
+```bash
+docker run -d \
+    --name wordpress \
+    --network frontend \
+    -e VIRTUAL_HOST="blog.example.com" \
+    wordpress
+```
+
+#### Example: Private Registry (Advanced)
+```bash
+docker run -d \
+    --name registry \
+    --network frontend \
+    -e VIRTUAL_HOST="htttps://registry.example.com/v2" \
+    -e PROXY_BASIC_AUTH="registry.example.com -> user1:pass1,user2:pass2" \
+    -e "client_max_body_size=2g" \
+    registry:2
+```
+
+## Documentation
+- [Configuration](#configuration)
+- [Virtual Hosts](#virtual-hosts)
+- [SSL Support](#ssl-support)
+- [Docker Swarm](#docker-swarm-support)
+- [Advanced Features](#advanced-features)
+
+### Configuration
+
+#### Volume layouts
+- `/etc/nginx/conf.d` – rendered configs (`nginx-proxy.conf`) plus any custom files you mount.
+- `/etc/nginx/ssl` – certificate material, split into `/certs` and `/private` (override with `SSL_DIR`, `SSL_CERTS_DIR`, `SSL_KEY_DIR`).
+- `/etc/nginx/challenges` – ACME challenge payloads, configurable via `CHALLENGE_DIR` and `WELLKNOWN_PATH`.
+- `/var/log/nginx` – access/error logs.
+
+#### NginxProxy Configuration variables
+Control the default behavior of `nginx-proxy`:
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `CLIENT_MAX_BODY_SIZE` | `1m` | Default max body size for uploads. |
+| `NGINX_WORKER_PROCESSES` | `auto` | Number of Nginx worker processes. |
+| `NGINX_WORKER_CONNECTIONS` | `65535` | Max connections per worker. |
+| `CERT_RENEW_THRESHOLD_DAYS` | `30` | By default certificates are renewed when they have <=30 days remaining. |
+| `ENABLE_IPV6` | `false` | Enable IPv6 support on nginx. |
+| `DOCKER_SWARM` | `ignore` | Treats every container like local by defeault. Set  `enable` for Swarm support, `strict` for Swarm-only or`exclude` to not include swarm containers  |
+| `SWARM_DOCKER_HOST` | - | URL of the Swarm manager socket (e.g., `tcp://manager:2375`). |
+| `CERTAPI_URL` | - | External Certificate API URL. |
+| `CHALLENGE_DIR` | `/etc/nginx/challenges/` | Base directory for acme challenge store, when requesting certificates with acme. `.well-known/acme-challenge` folder lives inside this.|
+| `CLOUDFLARE_API_KEY_KEY*` | - | Cloudflare api keys to issue DNS certificates.|
+
+
+## Virtual Hosts
+To expose a container, set the `VIRTUAL_HOST*` environment variable. The container must be on the same Docker network as `nginx-proxy`.
+
+### Configuration Format
+`VIRTUAL_HOST=[<scheme>://] <domain> [<path>] [-> [:<port>] <path>] [; <nginx_directives>]`
+
+### Examples
+| VIRTUAL_HOST  | Description |
+| :--- | :--- |
+| `example.com` | Proxies to exposed container port. |
+| `example.com -> :8080` | Proxies to port 8080. |
+| `https://example.com` | HTTPS proxy to container exposed http port |
+| `https://example.com/api` | Only /api path is passed on to container. /api prefix is not removed |
+| `https://example.com/api -> /v1` | Re-maps path `/api` to `/v1` on container exposed port|
+| `https://example.com/api -> :8080/v1` | Re-maps path `/api` to `/v1` on container port 8080|
+| `https://example.com/api -> https://_:8080/v1` | Re-maps path `/api` to `/v1` on port 8080. Https is used to connect to container|
+
+**Note:** Directives separated by `;` are injected into the Nginx `location` block.
+Example: `VIRTUAL_HOST=site.com; proxy_read_timeout 900;`
+
+### WebSockets
+WebSocket support requires explicit configuration if the protocol is not detected automatically.
+
+- **Explicit:** `VIRTUAL_HOST=wss://ws.example.com -> :8080/websocket`
+- **Auto-Upgrade:** `VIRTUAL_HOST=https+wss://example.com` (Supports both HTTP and WSS on te host).
+
+### Multiple Hosts
+A single container can serve multiple domains path mappings. All that matters is that env variable starts with `VIRTUAL_HOST` e.g. `VIRTUAL_HOST1`, `VIRTUAL_HOST2`, etc.
+
+**Example:**
+```bash
+docker run -d --network frontend \
+    -e "VIRTUAL_HOST_API=https://api.example.com -> :3000" \
+    -e "VIRTUAL_HOST_ADMIN=https://admin.example.com -> :4000" \
+    my-app
+```
+
+### Static Virtual Hosts
+Proxy to external hosts, (not in Docker) using `STATIC_VIRTUAL_HOST`. The container must be running for the site to be live. 
+
+Format: `STATIC_VIRTUAL_HOST=domain.com->http://192.168.0.1:8080`.
+
+**Note** Be aware that if domain as target, nginx will crash if DNS resolution fails.
+
+## Docker Swarm Support [Preview]
+Enable swarm mode by setting `DOCKER_SWARM` to `enable` (local & swarm) or `strict` (swarm only).
+If current node is not manager, set `SWARM_DOCKER_HOST=tcp://manager:2375`.
+
+**Warning** : Automatic exposed port detection will not work when swarm support is enabled. You must explicitly set port on the `VIRTUAL_HOST` or set `VIRTUAL_PORT` on the container.
+
+## Advanced Features
+### Redirection
+Redirect traffic from one domain to another.
+```bash
+-e 'VIRTUAL_HOST=https://example.uk' \
+-e 'PROXY_FULL_REDIRECT=example.com,www.example.uk -> example.uk'
+```
+
+### Sticky Sessions
+Enable session affinity (sticky sessions) for load balancing.
+Set `NGINX_STICKY_SESSION` on the **backend container**.
+- `true` or `ip_hash` – enable `ip_hash` balancing.
+- `false` – disable stickiness (round-robin).
+- Any other string – injected verbatim (e.g., `hash $cookie_sessionid consistent`).
 
 ## SSL Support
-Issuing of SSL certificate is done using acme-nginx library for Let's Encrypt. If a precheck determines that
-the domain we are trying to issue certificate is not owned by current machine, a self-signed certificate is
-generated instead.
+`nginx-proxy` automatically requests and renews Let's Encrypt certificates.
 
-### Using SSL for exposing endpoint
-Certificate is automatically requested by the nginx-proxy container.
-It requests for a challenge and verifies the challenge to obtain the certificate.
-It is saved under directory `/etc/nginx/ssl/certs` and the private key is located inside
-directoy `/etc/nginx/ssl/private`
- 
-### Using your Own SSL certificate
-If you already have a ssl certificate that you want to use, copy it under the `/etc/nginx/ssl/certs` directory and it's key under the directory `/etc/nginx/ssl/private` file should be named `domain.crt` and `domain.key`. 
- 
-Wildcard certificates can be used. For example to use `*.example.com` wildcard, you should create files  
-`/etc/nginx/ssl/certs/*.example.com.crt` and `/etc/nginx/ssl/private/*.example.com.key` in the container's filesystem.
+### Automatic SSL
+1. Expose ports 80 and 443 on `nginx-proxy`.
+2. Map `/etc/nginx/ssl` and `/etc/nginx/challenges`.
+3. Set `VIRTUAL_HOST` to start with `https://` in your containers.
 
-**Note that `*.com` or `*` is not a valid wildcard.** Wild card must have at least 2 dots.
+### Wildcard Certificates With Cloudflare DNS
+To issue wildcard certificates (e.g., `*.example.com`) or avoid exposing port 80, you can use DNS challenges via Cloudflare.
 
-`/etc/nginx/ssl/certs/*.example.com.crt` certificate will :
-- be used for `host1.example.com`
-- be used for `www.example.com`
-- not be used for `xyz.host1.example.com`
-- not be used for `example.com`
+1. Set the `CLOUDFLARE_API_KEY*` environment variables on `nginx-proxy`. `nginx-proxy` supports multiple api-keys and will discover available domains.
+2. Set `VIRTUAL_HOST` to a wildcard domain (e.g., `*.example.com`) or just use it for regular domains to use DNS validation.
 
- ***DHPARAM_SIZE :***
- Default size of DH key used for https connection is `2048`bits. The key size can be changed by changing `DHPARAM_SIZE` environment variable
- 
-### Manually obtaining certificate.
-You can manually obtain Let's encrypt certificate using the nginx-proxy container.
-Note that you must set ip in  DNS entry to point the correct server.
- 
-To issue a certificate for a domain you can simply use this command.
--  `docker exec nginx-proxy getssl www.example.com`
+**Example:**
+```bash
+docker run -d \
+    -e CLOUDFLARE_API_KEY_KEY1="your-cloudflare-api-token" \
+    ...
+    mesudip/nginx-proxy
+```
 
-    Obtained certificate is saved on `/etc/nginx/ssl/certs/www.example.com` and private is saved on `/etc/nginx/ssl/private/www.example.com`
+### Custom Certificates
+Mount your own certificates:
+- Directory: `/etc/nginx/ssl/certs`
+- Naming: `example.com.crt` and `example.com.key`
 
-To issue certificates for multiple domain you can simply add more parameters to the above command
- 
- - `docker exec nginx-proxy getssl www.example.com example.com ww.example.com`
- 
-    All the domains are registered on the same certificate and the filename is set from the first parameter
-    passed to the command. so `/etc/nginx/ssl/certs/www.example.com`  and `/etc/nginx/ssl/private/www.example.com` are generated
+Wildcard support: `*.example.com.crt` will match `sub.example.com`.
 
-Use  `docker exec nginx-proxy getssl --help`   for getting help with the command
+### Manual Certificate Management
+Use the `getssl` command inside the container:
+```bash
+docker exec nginx-proxy getssl example.com
+```
 
 ## Basic Authorization
-Basic Auth can be enabled on the container with environment variable `PROXY_BASIC_AUTH`.
-- `PROXY_BASIC_AUTH=user1:password1,user2:password2,user3:password3` adds basic auth feature to your configured `VIRTUAL_HOST` server root.
-- `PROXY_BASIC_AUTH=example.com/api/v1/admin -> admin1:password1,admin2:password2` adds basic auth only to the location starting from `api/v1/admin`
+Protect your services with HTTP Basic Auth.
+Set `PROXY_BASIC_AUTH` environment variable.
 
-**Note:** Basic authorization will be ignored if the container's host doesn't use `https`
+- **Per-Host:** `example.com -> user:password`
+- **Per-Path:** `example.com/admin -> user:password`
+
+**Note:** Passwords should not be base64 encoded; the proxy handles hashing.
 
 ## Default Server
-When request comes for a server name that is not registered in `nginx-proxy`, It responds with 503 by default.
-If you want the requested to be passed to a container instead, when setting up the container you can add `PROXY_DEFAULT_SERVER=true` environment along with `VIRTUAL_HOST`.
+Requests with an unknown `Host` header return **503 Service Unavailable**.
+Control this with the `DEFAULT_HOST` variable on the `nginx-proxy` container:
+- `true` (default): Returns 503.
+- `false`: Passes default requests to the first configured server.
 
-This much is sufficient for http connections, but for https connections, you might want to setup
-[wildcard certificates](#using-your-own-ssl-certificate) so that your users dont get invalid ssl certificate errors.
+To route unknown traffic to a specific container:
+```bash
+-e "VIRTUAL_HOST=fallback.example.com" \
+-e "PROXY_DEFAULT_SERVER=true"
+```
+
+## Manual Certificate Commands
+```
+docker exec nginx-proxy verify www.example.com ## check if request routes back to this server.
+
+docker exec nginx-proxy getssl www.example.com example.com www2.example.com # issue certificate
+
+```
+
+## 🚀 Roadmap
+We are constantly improving `nginx-proxy` to make it the most robust and versatile zero-config reverse proxy solution. Here’s what’s coming next:
+
+- **High Availability & Multi-Node Swarm Deployment:** Comprehensive guides and templates for deploying `nginx-proxy` in a multi-node Swarm environment for maximum uptime.
+- **100% Test Coverage:** Ensuring rock-solid stability and reliability for every release.
+- **Remote Swarm Cluster Support:** Monitor and route traffic for Swarm clusters running on remote nodes seamlessly.
+- **Pangolin Support:** Integration with Pangolin as an alternative reverse-proxy engine.
