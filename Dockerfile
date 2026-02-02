@@ -24,6 +24,7 @@ ENV LETSENCRYPT_API=${LETSENCRYPT_API} \
     NGINX_WORKER_PROCESSES=auto \
     NGINX_WORKER_CONNECTIONS=65535 \
     SSL_DIR=/etc/nginx/ssl \
-    DEFAULT_HOST=true
+    DEFAULT_HOST=true \
+    VHOSTS_TEMPLATE_DIR=/app/vhosts_template
 WORKDIR /app
 COPY . /app/
