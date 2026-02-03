@@ -29,6 +29,26 @@ jobs:
           username: mesudip
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Generate Docker tags
+        id: tags
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          TAG_NAME="${{ github.ref_name }}"
+          echo "Processing tag: $TAG_NAME"
+          # Base tags: explicit tag + latest
+          TAG_LIST="mesudip/nginx-proxy:${TAG_NAME},mesudip/nginx-proxy:latest"
+
+          # Extract major version (e.g. v3.0.1 -> v3, 2.0 -> 2)
+          if [[ "$TAG_NAME" =~ ^(v?[0-9]+) ]]; then
+            MAJOR_TAG="${BASH_REMATCH[1]}"
+            if [ "$MAJOR_TAG" != "$TAG_NAME" ]; then
+              TAG_LIST="${TAG_LIST},mesudip/nginx-proxy:${MAJOR_TAG}"
+            fi
+          fi
+
+          echo "Generated tags: $TAG_LIST"
+          echo "tags_list=$TAG_LIST" >> $GITHUB_OUTPUT
+
       - name: Build and push for tags
         if: startsWith(github.ref, 'refs/tags/')
         uses: docker/build-push-action@v5
@@ -37,9 +57,7 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            mesudip/nginx-proxy:${{ github.ref_name }}
-            mesudip/nginx-proxy:latest
+          tags: ${{ steps.tags.outputs.tags_list }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
