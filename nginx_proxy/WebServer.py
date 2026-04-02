@@ -100,6 +100,8 @@ class WebServer:
             if http_host is None:
                 redirect_host = Host(host.hostname, 80)
                 redirect_host.full_redirect = redirect_target
+                # Added after redirect post-processing, so mark it explicitly for template rendering.
+                redirect_host.is_redirect = True
                 redirect_hosts.append(redirect_host)
                 http_hosts[(host.hostname, 80)] = redirect_host
                 continue

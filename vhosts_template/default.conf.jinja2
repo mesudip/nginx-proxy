@@ -84,7 +84,7 @@ server {
             alias {{ config.challenge_dir }};
             try_files $uri =404;{% endif %}
         }
-        location /{ {% if server.is_redirect %}
+        location / { {% if server.is_redirect %}
                 return 308 https://{{ server.full_redirect.hostname }}{% if server.full_redirect.port and server.full_redirect.port != 443 %}:{{ server.full_redirect.port }}{% endif %}$request_uri;{% else %}
                 return 308 https://$host$request_uri;{% endif %}
         }

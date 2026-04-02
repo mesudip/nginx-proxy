@@ -281,14 +281,16 @@ def test_webserver_add_container_with_ssl(docker_client: DockerTestClient, nginx
 
     http_redirect_server = next((s for s in servers if s.listen == "80"), None)
     assert http_redirect_server is not None
-    assert http_redirect_server.return_code == "308 https://ssl.example.com$request_uri"
+    http_redirect_location = next((l for l in http_redirect_server.locations if l.path == "/"), None)
+    assert http_redirect_location is not None
+    assert http_redirect_location.return_code == "308 https://ssl.example.com$request_uri"
 
 
 def test_webserver_ssl_does_not_override_explicit_http_location(docker_client: DockerTestClient, nginx: DummyNginx):
     container_name = "ssl_http_container"
     hostname = "ssl-http.example.com"
     env = {
-        "VIRTUAL_HOST": f"https://{hostname}",
+        "VIRTUAL_HOST": f"https://{hostname} -> :8080",
         "VIRTUAL_HOST_HTTP": f"http://{hostname}/healthz -> :8080/healthz",
         "VIRTUAL_PORT": "8080",
     }

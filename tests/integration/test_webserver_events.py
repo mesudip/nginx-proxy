@@ -242,7 +242,9 @@ def test_webserver_add_container_with_ssl_integration(
         assert "ssl" in https_server.listen
         assert https_server._get_directive_value("ssl_certificate").endswith(f"/{virtual_host}.selfsigned.crt")
         assert https_server._get_directive_value("ssl_certificate_key").endswith(f"/{virtual_host}.selfsigned.key")
-        assert http_redirect_server.return_code == f"308 https://{virtual_host}$request_uri"
+        redirect_loc = next((loc for loc in http_redirect_server.locations if loc.path == "/"), None)
+        assert redirect_loc is not None
+        assert redirect_loc.return_code == f"308 https://{virtual_host}$request_uri"
     finally:
         if backend:
             stop_backend(backend)
