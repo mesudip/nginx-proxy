@@ -102,6 +102,48 @@ def test_http_routing_discovery(
             print(f"Stopping and removing backend {backend_type}...")
             stop_backend(backend)
 
+
+@pytest.mark.parametrize("backend_type", ["container", "service"])
+def test_http_to_https_redirect_preserves_query_string(nginx_request, docker_client, test_network, swarm_mode, backend_type, request):
+    """
+    Test that HTTP->HTTPS redirect keeps the original request URI including query string.
+    """
+    if not is_reachable(swarm_mode, backend_type):
+        pytest.skip("Backend discovery not available for this swarm mode/backend type combination.")
+
+    hostname = f"{backend_type}.{swarm_mode}.redirect-query.example.com"
+    env = {"VIRTUAL_HOST": f"https://{hostname} -> :8080", "VIRTUAL_PORT": "8080"}
+    backend = None
+
+    try:
+        backend = start_backend(docker_client, test_network, env, backend_type=backend_type, pytest_request=request, sleep=False)
+
+        request_uri = "/v2/_catalog?n=50&last=abc"
+        url = f"http://{hostname}{request_uri}"
+
+        response = None
+        ex = None
+        for _ in range(15):
+            try:
+                ex = None
+                response = nginx_request.get(url, timeout=2, allow_redirects=False)
+                if response.status_code == 308:
+                    break
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except Exception as e:
+                ex = e
+            time.sleep(1)
+
+        assert ex is None
+        assert response is not None
+        assert response.status_code == 308
+        assert response.headers.get("Location") == f"https://{hostname}{request_uri}"
+    finally:
+        if backend:
+            stop_backend(backend)
+
+
 @pytest.mark.parametrize("backend_type", ["container", "service"])
 @pytest.mark.parametrize(
     "virtual_host_base, request_path",

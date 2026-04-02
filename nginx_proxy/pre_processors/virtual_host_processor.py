@@ -3,6 +3,21 @@ from nginx_proxy.BackendTarget import BackendTarget, NoHostConfiguration, Unreac
 from nginx_proxy.utils import split_url
 
 
+def _normalize_address(address):
+    if not isinstance(address, str):
+        return None
+    address = address.strip()
+    return address if address else None
+
+
+def _default_external_port(schemes):
+    if not schemes:
+        return 80
+    has_secure_scheme = "https" in schemes or "wss" in schemes
+    has_insecure_scheme = "http" in schemes or "ws" in schemes
+    return 443 if has_secure_scheme and not has_insecure_scheme else 80
+
+
 def process_virtual_hosts(backend: BackendTarget, known_networks: set) -> ProxyConfigData:
     """
 
@@ -88,7 +103,7 @@ def _parse_host_entry(entry_string: str):
     h = Host(
         external["host"] if external["host"] else None,
         # having https port on 80 will be detected later and used for redirection.
-        int(external["port"]) if external["port"] else 80,
+        int(external["port"]) if external["port"] else _default_external_port(external["scheme"]),
         scheme=external["scheme"] if external["scheme"] else {"http"},
     )
     return (h, external["location"] if external["location"] else "/", c, extras)
@@ -122,12 +137,12 @@ def host_generator(backend: BackendTarget, known_networks: set = {}):
         for name, detail in backend.network_settings.items():
             target_base.add_network(detail.get("NetworkID"))
             if detail.get("NetworkID") and detail.get("NetworkID") in known_networks and unknown:
-                found_ip = detail.get("IPAddress")
+                found_ip = _normalize_address(detail.get("IPAddress"))
                 # if detail["Aliases"] is not None: ...
                 if found_ip:
                     break
 
-    if found_ip is None:
+    if not found_ip:
         # If checking against known networks failed or no common network
         raise UnreachableNetwork(target_base.networks)
 
@@ -186,5 +201,7 @@ def host_generator(backend: BackendTarget, known_networks: set = {}):
                 host.scheme = {
                     "https",
                 }
+            if host.port == 80:
+                host.port = 443
         host.secured = "https" in host.scheme or host.port == 443
         yield (host, location, container_data, extras)

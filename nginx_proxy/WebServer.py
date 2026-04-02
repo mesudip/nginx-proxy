@@ -12,6 +12,7 @@ import nginx_proxy.post_processors as post_processors
 import nginx_proxy.pre_processors as pre_processors
 from nginx.Nginx import Nginx
 from nginx.DummyNginx import DummyNginx
+from nginx import Url
 from nginx_proxy.BackendTarget import BackendTarget
 from nginx_proxy import ProxyConfigData
 from nginx_proxy.Host import Host
@@ -87,6 +88,27 @@ class WebServer:
         # Pass the path to the rendered error file to the main template
         self.config["rendered_error_conf_path"] = rendered_error_conf_path
 
+    def _ensure_https_redirects(self, hosts: List[Host]) -> List[Host]:
+        redirect_hosts: List[Host] = []
+        http_hosts = {(host.hostname, int(host.port)): host for host in hosts if int(host.port) == 80}
+
+        for host in hosts:
+            if not host.secured or int(host.port) == 80:
+                continue
+            redirect_target = Url({"https"}, host.hostname, int(host.port), "/")
+            http_host = http_hosts.get((host.hostname, 80))
+            if http_host is None:
+                redirect_host = Host(host.hostname, 80)
+                redirect_host.full_redirect = redirect_target
+                redirect_hosts.append(redirect_host)
+                http_hosts[(host.hostname, 80)] = redirect_host
+                continue
+
+            if "/" not in http_host.locations:
+                http_host.update_extras_content("default_redirect_target", redirect_target)
+
+        return hosts + redirect_hosts
+
     def _do_reload(self, forced=False, has_addition=True) -> bool:
         """
         Creates a new configuration based on current state and signals nginx to reload.
@@ -112,6 +134,7 @@ class WebServer:
         upstreams = self.sticky_session_processor.process(hosts)
         self.basic_auth_processor.process_basic_auth(hosts)
         self.ssl_processor.process_ssl_certificates(hosts)
+        hosts = self._ensure_https_redirects(hosts)
         self.config["default_server"] = not has_default
 
         output = self.template.render(

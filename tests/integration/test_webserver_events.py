@@ -229,17 +229,20 @@ def test_webserver_add_container_with_ssl_integration(
         servers_for_host: List[ServerBlock] = [s for s in config.servers if virtual_host in s.server_names]
 
         assert (
-            len(servers_for_host) == 1
-        ), f"Expected 1 server blocks for {virtual_host}, found {len(servers_for_host)}. Config:\n{config_str}"
+            len(servers_for_host) == 2
+        ), f"Expected 2 server blocks for {virtual_host}, found {len(servers_for_host)}. Config:\n{config_str}"
 
         https_server = next((s for s in servers_for_host if "443" in s.listen), None)
+        http_redirect_server = next((s for s in servers_for_host if s.listen == "80"), None)
 
         assert https_server is not None, "HTTPS server block not found."
+        assert http_redirect_server is not None, "HTTP redirect server block not found."
 
         # Verify HTTPS server is correctly configured
         assert "ssl" in https_server.listen
         assert https_server._get_directive_value("ssl_certificate").endswith(f"/{virtual_host}.selfsigned.crt")
         assert https_server._get_directive_value("ssl_certificate_key").endswith(f"/{virtual_host}.selfsigned.key")
+        assert http_redirect_server.return_code == f"308 https://{virtual_host}$request_uri"
     finally:
         if backend:
             stop_backend(backend)

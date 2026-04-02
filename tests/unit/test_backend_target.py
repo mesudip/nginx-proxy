@@ -188,6 +188,37 @@ class TestVirtualHostProcessorWithBackendTarget:
         config_data = process_virtual_hosts(bt, known_networks)
         assert len(list(config_data.host_list())) == 0
 
+    def test_process_virtual_hosts_ignores_blank_ip_on_reachable_network(self):
+        bt = BackendTarget(
+            id="blank-ip-id",
+            name="blank-ip-test",
+            env={"VIRTUAL_HOST": "blank-ip.test"},
+            network_settings={"my-net": {"NetworkID": "my-net-id", "IPAddress": ""}},
+        )
+        known_networks = {"my-net-id"}
+
+        config_data = process_virtual_hosts(bt, known_networks)
+        assert len(list(config_data.host_list())) == 0
+
+    def test_process_virtual_hosts_uses_next_network_when_first_ip_blank(self):
+        bt = BackendTarget(
+            id="fallback-ip-id",
+            name="fallback-ip-test",
+            env={"VIRTUAL_HOST": "fallback-ip.test"},
+            network_settings={
+                "first": {"NetworkID": "my-net-id", "IPAddress": "   "},
+                "second": {"NetworkID": "my-net-id", "IPAddress": "10.0.0.12"},
+            },
+        )
+        known_networks = {"my-net-id"}
+
+        config_data = process_virtual_hosts(bt, known_networks)
+        hosts = list(config_data.host_list())
+        assert len(hosts) == 1
+        location = hosts[0].locations["/"]
+        backend = location.backends[0]
+        assert backend.address == "10.0.0.12"
+
     def test_parse_host_entry_simple(self):
         h, loc, c, extras = _parse_host_entry("example.com")
         assert h.hostname == "example.com"

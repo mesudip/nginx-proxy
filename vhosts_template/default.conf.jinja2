@@ -64,7 +64,10 @@ server{
             proxy_set_header Connection "Upgrade";
             proxy_read_timeout  1h;
             proxy_send_timeout 1h;{% endif %}
-        }{% endfor %} {% endif %}{% if server.port == 80 %}
+        }{% endfor %} {% if server.extras.default_redirect_target %}
+        location / {
+            return 301 https://{{ server.extras.default_redirect_target.hostname }}{% if server.extras.default_redirect_target.port and server.extras.default_redirect_target.port != 443 %}:{{ server.extras.default_redirect_target.port }}{% endif %}$request_uri;
+        }{% endif %} {% endif %}{% if server.port == 80 %}
         location {{ config.wellknown_path }} { {% if config.certapi %}
             proxy_pass {{ config.certapi.scheme }}://certapi_upstream;{% else %}
             alias {{ config.challenge_dir }};
@@ -82,8 +85,8 @@ server {
             try_files $uri =404;{% endif %}
         }
         location /{ {% if server.is_redirect %}
-                return 301 https://{{ server.full_redirect.hostname }}$request_uri;{% else %}
-                return 301 https://$host$request_uri;{% endif %}
+                return 308 https://{{ server.full_redirect.hostname }}{% if server.full_redirect.port and server.full_redirect.port != 443 %}:{{ server.full_redirect.port }}{% endif %}$request_uri;{% else %}
+                return 308 https://$host$request_uri;{% endif %}
         }
 }{% endif %}{% endfor %}
 {% if config.default_server %}

@@ -266,7 +266,7 @@ def test_webserver_add_container_with_ssl(docker_client: DockerTestClient, nginx
     # Verify that two server blocks are created for SSL
     config = HttpBlock.parse(nginx.current_config)
     servers = [s for s in config.servers if hostname in s.server_names]
-    assert len(servers) == 1
+    assert len(servers) == 2
 
     # Verify HTTPS server is correctly configured
     https_server = next((s for s in servers if "443" in s.listen), None)
@@ -278,6 +278,73 @@ def test_webserver_add_container_with_ssl(docker_client: DockerTestClient, nginx
     location = next(l for l in https_server.locations if l.path == "/")
     container_ip = container.attrs["NetworkSettings"]["Networks"]["frontend"]["IPAddress"]
     assert f"http://{container_ip}:80" in location.proxy_pass
+
+    http_redirect_server = next((s for s in servers if s.listen == "80"), None)
+    assert http_redirect_server is not None
+    assert http_redirect_server.return_code == "308 https://ssl.example.com$request_uri"
+
+
+def test_webserver_ssl_does_not_override_explicit_http_location(docker_client: DockerTestClient, nginx: DummyNginx):
+    container_name = "ssl_http_container"
+    hostname = "ssl-http.example.com"
+    env = {
+        "VIRTUAL_HOST": f"https://{hostname}",
+        "VIRTUAL_HOST_HTTP": f"http://{hostname}/healthz -> :8080/healthz",
+        "VIRTUAL_PORT": "8080",
+    }
+
+    container = docker_client.containers.run("nginx:alpine", name=container_name, environment=env, network="frontend")
+    time.sleep(0.2)
+
+    config = HttpBlock.parse(nginx.current_config)
+    servers = [s for s in config.servers if hostname in s.server_names]
+    assert len(servers) == 2
+
+    https_server = next((s for s in servers if "443" in s.listen), None)
+    http_server = next((s for s in servers if s.listen == "80"), None)
+
+    assert https_server is not None
+    assert http_server is not None
+    assert http_server.return_code is None
+
+    http_location = next((l for l in http_server.locations if l.path == "/healthz"), None)
+    http_redirect_location = next((l for l in http_server.locations if l.path == "/"), None)
+    assert http_location is not None
+    assert http_redirect_location is not None
+    assert http_location.proxy_pass is not None
+    assert http_redirect_location.return_code == f"301 https://{hostname}$request_uri"
+
+    https_location = next((l for l in https_server.locations if l.path == "/"), None)
+    container_ip = container.attrs["NetworkSettings"]["Networks"]["frontend"]["IPAddress"]
+    assert https_location is not None
+    assert f"http://{container_ip}:8080" in http_location.proxy_pass
+    assert f"http://{container_ip}:8080" in https_location.proxy_pass
+
+
+def test_webserver_ssl_respects_explicit_http_root(docker_client: DockerTestClient, nginx: DummyNginx):
+    container_name = "ssl_http_root_container"
+    hostname = "ssl-http-root.example.com"
+    env = {
+        "VIRTUAL_HOST": f"https://{hostname}",
+        "VIRTUAL_HOST_HTTP": f"http://{hostname} -> :8080",
+        "VIRTUAL_PORT": "8080",
+    }
+
+    container = docker_client.containers.run("nginx:alpine", name=container_name, environment=env, network="frontend")
+    time.sleep(0.2)
+
+    config = HttpBlock.parse(nginx.current_config)
+    servers = [s for s in config.servers if hostname in s.server_names]
+    assert len(servers) == 2
+
+    http_server = next((s for s in servers if s.listen == "80"), None)
+    assert http_server is not None
+    assert http_server.return_code is None
+
+    http_root = next((l for l in http_server.locations if l.path == "/"), None)
+    container_ip = container.attrs["NetworkSettings"]["Networks"]["frontend"]["IPAddress"]
+    assert http_root is not None
+    assert f"http://{container_ip}:8080" in http_root.proxy_pass
 
 
 def test_webserver_add_two_containers_with_same_virtual_host(docker_client: DockerTestClient, nginx: DummyNginx):
