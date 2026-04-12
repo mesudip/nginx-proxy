@@ -218,6 +218,16 @@ class SSL:
             )
         return result.issued + result.existing
 
+    def is_certificate_fresh(self, domain: str, threshold_seconds: float | None = None) -> bool:
+        result = self.key_store.find_key_and_cert_by_domain(domain)
+        if result is None:
+            return False
+
+        cert = result[2][0]
+        expiry = cert.not_valid_after_utc
+        threshold = self.update_threshold_secs if threshold_seconds is None else threshold_seconds
+        return (expiry - datetime.now(timezone.utc)).total_seconds() > threshold
+
     def update_expiry_cache(self, certs: List[IssuedCert]):
         with self.lock:
             for cert in certs:

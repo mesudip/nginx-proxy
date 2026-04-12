@@ -35,6 +35,18 @@ class SslCertificateProcessor:
             host.ssl_redirect = True
             host.port = 443
 
+    def _wildcard_is_preferred(self, host: Host, wildcard: str, registered: Set[str], warn: bool = False) -> bool:
+        wildcard_known = (wildcard in registered) or (wildcard in self.ssl.cache)
+        if not wildcard_known:
+            return False
+
+        if self.ssl.is_certificate_fresh(wildcard):
+            return True
+
+        if warn:
+            print(f"[SSL] Wildcard {wildcard} is stale; skipping {host.hostname}")
+        return False
+
     def _assign_existing_cert(self, host: Host, registered: Set[str]) -> bool:
         """
         Checks for existing certificate in cache or as wildcard and assigns it.
@@ -48,7 +60,7 @@ class SslCertificateProcessor:
         # Reuse the wildcard certificate if available and registered
         wildcard = self.wildcard_domain_name(host.hostname)
         if wildcard is not None:
-            if (wildcard in registered) or (wildcard in self.ssl.cache):
+            if self._wildcard_is_preferred(host, wildcard, registered, warn=True):
                 host.ssl_file = wildcard
                 return True
         return False
@@ -63,7 +75,7 @@ class SslCertificateProcessor:
 
         else:
             wildcard_domain = self.wildcard_domain_name(host.hostname)
-            if wildcard_domain and ((wildcard_domain in registered) or (wildcard_domain in self.ssl.cache)):
+            if wildcard_domain and self._wildcard_is_preferred(host, wildcard_domain, registered):
                 host.ssl_file = wildcard_domain
             else:
                 host.ssl_file = host.hostname + ".selfsigned"

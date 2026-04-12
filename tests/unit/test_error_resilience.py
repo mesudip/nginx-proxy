@@ -8,7 +8,8 @@ and unexpected runtime errors.
 
 import pytest
 import time
-from unittest.mock import patch
+from datetime import datetime, timedelta, timezone
+from unittest.mock import Mock, patch
 from requests.exceptions import ConnectionError, Timeout, SSLError
 from certapi import CertApiException
 from certapi.http.types import IssuedCert, CertificateResponse
@@ -346,3 +347,65 @@ def test_wildcard_cert_error_handling(webserver_for_error_tests):
 
         # Should fallback to self-signed
         assert hosts[0].ssl_file == "*.wildcard-test.example.com.selfsigned"
+
+
+def test_fresh_wildcard_cert_remains_preferred(webserver_for_error_tests):
+    webserver = webserver_for_error_tests
+    wildcard_cert = Mock(domains=["*.example.com"])
+    hosts = [
+        Host(hostname="*.example.com", port=443, scheme={"https"}),
+        Host(hostname="api.example.com", port=443, scheme={"https"}),
+    ]
+    fresh_cert = Mock(not_valid_after_utc=datetime.now(timezone.utc) + timedelta(days=30))
+
+    def find_cert(domain):
+        if domain == "*.example.com":
+            return ("*.example.com", Mock(), [fresh_cert])
+        return None
+
+    with patch.object(webserver.ssl_processor.ssl, "register_certificate", return_value=[wildcard_cert]) as mock_register, \
+        patch.object(webserver.ssl_processor.ssl, "register_certificate_or_selfsign") as mock_register_or_selfsign, \
+        patch.object(webserver.ssl_processor.ssl.key_store, "find_key_and_cert_by_domain", side_effect=find_cert), \
+        patch("builtins.print") as mock_print, \
+        patch.object(webserver.ssl_processor.ssl, "update_expiry_cache"):
+        webserver.ssl_processor.process_ssl_certificates(hosts)
+
+    assert hosts[0].ssl_file == "*.example.com"
+    assert hosts[1].ssl_file == "*.example.com"
+    mock_register.assert_called_once_with("*.example.com")
+    mock_register_or_selfsign.assert_not_called()
+    assert not any("Wildcard *.example.com is stale; skipping api.example.com" in str(call) for call in mock_print.call_args_list)
+
+
+def test_wildcard_near_expiry_is_not_preferred(webserver_for_error_tests):
+    webserver = webserver_for_error_tests
+    wildcard_cert = Mock(domains=["*.example.com"])
+    api_cert = Mock(domains=["api.example.com"])
+    hosts = [
+        Host(hostname="*.example.com", port=443, scheme={"https"}),
+        Host(hostname="api.example.com", port=443, scheme={"https"}),
+    ]
+    expiring_cert = Mock(not_valid_after_utc=datetime.now(timezone.utc) + timedelta(days=3))
+
+    def find_cert(domain):
+        if domain == "*.example.com":
+            return ("*.example.com", Mock(), [expiring_cert])
+        return None
+
+    with patch.object(webserver.ssl_processor.ssl, "register_certificate", return_value=[wildcard_cert]) as mock_register, \
+        patch.object(
+            webserver.ssl_processor.ssl, "register_certificate_or_selfsign", return_value=[api_cert]
+        ) as mock_register_or_selfsign, \
+        patch.object(webserver.ssl_processor.ssl.key_store, "find_key_and_cert_by_domain", side_effect=find_cert), \
+        patch("builtins.print") as mock_print, \
+        patch.object(webserver.ssl_processor.ssl, "update_expiry_cache"):
+        webserver.ssl_processor.process_ssl_certificates(hosts)
+
+    assert hosts[0].ssl_file == "*.example.com"
+    assert hosts[1].ssl_file == "api.example.com"
+    mock_register.assert_called_once_with("*.example.com")
+    mock_register_or_selfsign.assert_called_once_with(["api.example.com"])
+    assert any(
+        "[SSL] Wildcard *.example.com is stale; skipping api.example.com" in " ".join(str(arg) for arg in call.args)
+        for call in mock_print.call_args_list
+    )
