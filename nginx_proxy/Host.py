@@ -77,6 +77,7 @@ class Host:
         if container_id in self.container_set:
             for path, location in self.locations.items():
                 removed = location.remove(container_id) or removed
+                location.remove_backend_extras(container_id)
                 if location.isempty():
                     deletions.append(path)
             self.container_set.remove(container_id)

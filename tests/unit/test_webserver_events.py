@@ -81,9 +81,7 @@ def create_webserver(docker_client: DockerTestClient, enable_ipv6: bool = False)
         # Wait for the thread to finish
         listener_thread.join(timeout=2)
 
-        # Stop the SSL refresh thread
         webserver.cleanup()
-        webserver.ssl_processor.ssl.certificate_expiry_thread.join(timeout=2)
 
 
 pattern = re.compile(r"^http://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:80")
@@ -134,7 +132,7 @@ def expect_server_down(nginx: DummyNginx, server_name: str):
 
 
 def test_webserver_initialization(webserver: WebServer, nginx: DummyNginx):
-    assert isinstance(webserver.ssl_processor.ssl.challenge_store, NginxChallengeSolver)
+    assert isinstance(webserver.ssl_processor.challenge_store, NginxChallengeSolver)
     # Check initial default server block
     config = NginxConfig()
     full_config_str = f"http {{\n{nginx.current_config}\n}}"

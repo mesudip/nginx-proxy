@@ -1,27 +1,32 @@
 #!/usr/bin/env python3
+import argparse
 import sys
 import os
 from nginx import Nginx
-from nginx_proxy import SSL
+from nginx_proxy.certificate_backend import build_certificate_backend
 from urllib.parse import urlparse
 
 
-def print_usage():
-    print("Usage: Obtain Let'sEncrypt ssl certificate for a domain or multiple domains")
-    print()
-    print("       getssl <hostname1> [hostname2 ...]")
-    print()
-    print("Note: This script respects environment variables: CERTAPI_URL, SSL_DIR, CHALLENGE_DIR, etc.")
-    exit(1)
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Obtain Let's Encrypt SSL certificate for one or more domains.",
+        epilog="This script respects environment variables: CERTAPI_URL, SSL_DIR, CHALLENGE_DIR, etc.",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Skip certapi/nginx-proxy self-verification before requesting the certificate.",
+    )
+    parser.add_argument("domains", nargs="+", help="Domain(s) to include in the certificate.")
+    return parser.parse_args()
+
+
+def flatten_2d_array(two_d_array):
+    return [item for sublist in two_d_array for item in sublist]
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print_usage()
-    
-    arg_set = set(sys.argv[1:])
-    if any(x in arg_set for x in ['-h', '--help', 'help']):
-        print_usage()
+    args = parse_args()
 
     # Load configuration from environment variables (consistent with NginxProxyApp)
     def _strip_end(s: str, char="/") -> str:
@@ -42,16 +47,7 @@ if __name__ == "__main__":
         if port is None:
             port = 443 if parsed.scheme == "https" else 80
         
-        mock_server_config["certapi"] = {
-            "url": certapi_url,
-            "host": parsed.hostname,
-            "scheme": parsed.scheme,
-            "port": port
-        }
-
-    class MockServer:
-        def __init__(self, config):
-            self.config = config
+        mock_server_config["certapi"] = {"url": certapi_url, "host": parsed.hostname, "scheme": parsed.scheme, "port": port}
 
     config_path = os.path.join(conf_dir, "conf.d/gen-ssl-direct.conf")
     # Make sure challenge dir exists for local mode
@@ -62,22 +58,31 @@ if __name__ == "__main__":
             pass # Might fail if readonly, but then Nginx might scream
 
     nginx = Nginx.Nginx(config_path, challenge_dir=challenge_dir)
-    
-    # Initialize SSL
-    ssl_manager = SSL.SSL(
-        ssl_dir, 
-        nginx=nginx, 
-        update_threshold_seconds=cert_renew_threshold_days * 24 * 3600,
-        server=MockServer(mock_server_config)
+
+    backend_info = build_certificate_backend(
+        ssl_dir,
+        nginx,
+        config=mock_server_config,
+        renew_threshold_days=max(10, cert_renew_threshold_days),
     )
     
-    domains = [x for x in sys.argv[1:] if not x.startswith("-")]
-    if not domains:
-        print("No domains provided.")
-        print_usage()
-
     try:
-        ssl_manager.register_certificate(domains)
+        result = backend_info.backend.obtain(
+            args.domains,
+            key_type="ecdsa",
+            batch_domains=backend_info.batch_domains,
+            self_verify=not args.force,
+        )
+        if len(result.issued):
+            print(
+                "[ New Certificates      ] : ",
+                ", ".join(flatten_2d_array(sorted([x.domains for x in result.issued]))),
+            )
+        if len(result.existing):
+            print(
+                "[ Reuse Existing        ] : ",
+                ", ".join(flatten_2d_array(sorted([x.domains for x in result.existing]))),
+            )
         # Attempt to reload nginx to pick up changes (if running)
         print("Reloading nginx...")
         if not nginx.reload():

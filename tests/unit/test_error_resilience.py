@@ -9,6 +9,7 @@ and unexpected runtime errors.
 import pytest
 import time
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from requests.exceptions import ConnectionError, Timeout, SSLError
 from certapi import CertApiException
@@ -17,6 +18,7 @@ from certapi.http.types import IssuedCert, CertificateResponse
 from nginx_proxy.WebServer import WebServer
 from nginx_proxy.Host import Host
 from nginx_proxy.NginxProxyApp import NginxProxyAppConfig
+from nginx_proxy.post_processors.ssl_certificate_processor import SslCertificateProcessor
 from nginx.NginxConf import HttpBlock
 
 from tests.helpers.docker_test_client import DockerTestClient
@@ -56,8 +58,6 @@ def webserver_for_error_tests(docker_client: DockerTestClient):
 
         docker_client.close()
         webserver.cleanup()
-        if webserver.ssl_processor.ssl.certificate_expiry_thread.is_alive():
-            webserver.ssl_processor.ssl.certificate_expiry_thread.join(timeout=2)
 
 
 # ============================================================================
@@ -187,14 +187,13 @@ def test_error_resilience(webserver_for_error_tests, error, hostname):
     """Test that various errors during certificate issuance don't crash the application and fallback to self-signed"""
     webserver = webserver_for_error_tests
 
-    with patch.object(webserver.ssl_processor.ssl.cert_manager, "issue_certificate", side_effect=error):
+    with patch.object(webserver.ssl_processor.cert_manager, "obtain", side_effect=error):
         hosts = [Host(hostname=hostname, port=443, scheme={"https"})]
 
         webserver.ssl_processor.process_ssl_certificates(hosts)
 
         # Should fallback to self-signed
         assert hosts[0].ssl_file == f"{hostname}.selfsigned"
-        assert hostname in webserver.ssl_processor.self_signed
 
 
 # ============================================================================
@@ -231,7 +230,7 @@ def test_webserver_continues_after_errors(docker_client: DockerTestClient, error
         webserver = WebServer(docker_client, config, nginx_update_throtle_sec=0.1)
 
         # Simulate error
-        with patch.object(webserver.ssl_processor.ssl.cert_manager, "issue_certificate", side_effect=error):
+        with patch.object(webserver.ssl_processor.cert_manager, "obtain", side_effect=error):
             hosts = [Host(hostname=hostname, port=443, scheme={"https"})]
             webserver.ssl_processor.process_ssl_certificates(hosts)
 
@@ -252,8 +251,6 @@ def test_webserver_continues_after_errors(docker_client: DockerTestClient, error
         container.remove(force=True)
         docker_client.close()
         webserver.cleanup()
-        if webserver.ssl_processor.ssl.certificate_expiry_thread.is_alive():
-            webserver.ssl_processor.ssl.certificate_expiry_thread.join(timeout=2)
 
 
 @pytest.mark.parametrize(
@@ -279,36 +276,29 @@ def test_fallback_to_selfsigned_on_failure(webserver_for_error_tests, error, hos
     """Test that system falls back to self-signed certificates on various failures"""
     webserver = webserver_for_error_tests
 
-    with patch.object(webserver.ssl_processor.ssl.cert_manager, "issue_certificate", side_effect=error):
+    with patch.object(webserver.ssl_processor.cert_manager, "obtain", side_effect=error):
         hosts = [Host(hostname=hostname, port=443, scheme={"https"})]
 
         webserver.ssl_processor.process_ssl_certificates(hosts)
 
         # Should have self-signed certificate
         assert hosts[0].ssl_file == f"{hostname}.selfsigned"
-        assert hostname in webserver.ssl_processor.self_signed
 
 
-def test_blacklist_prevents_repeated_failures(webserver_for_error_tests):
-    """Test that blacklist mechanism prevents repeated certificate request failures"""
+def test_failed_initial_request_delegates_fallback_to_renewal_manager(webserver_for_error_tests):
+    """Initial issuance no longer owns blacklist/retry behavior in nginx-proxy."""
     webserver = webserver_for_error_tests
-    ssl = webserver.ssl_processor.ssl
+    processor = webserver.ssl_processor
 
-    # First attempt should fail and add to blacklist
-    error = CertApiException("ACME failure", step="Test")
-    with patch.object(ssl.cert_manager, "issue_certificate", side_effect=error) as mock_issue:
-        result = ssl.register_certificate_or_selfsign(["test-blacklist.example.com"])
+    hosts = [Host(hostname="test-fallback-delegated.example.com", port=443, scheme={"https"})]
+    with patch.object(processor.cert_manager, "obtain") as mock_obtain, patch.object(
+        processor.renewal_manager, "trigger_now"
+    ) as mock_trigger, patch.object(processor.renewal_manager, "set_watch_domains") as mock_set_watch_domains:
+        processor.process_ssl_certificates(hosts)
 
-        # Should have attempted once
-        assert mock_issue.call_count == 1
-
-    # Verify domain is in blacklist by checking it won't be retried immediately
-    # Second attempt within blacklist period should skip the domain
-    with patch.object(ssl.cert_manager, "issue_certificate", side_effect=error) as mock_issue:
-        result = ssl.register_certificate_or_selfsign(["test-blacklist.example.com"])
-
-        # Should not attempt again (blacklisted)
-        assert mock_issue.call_count == 0
+    mock_obtain.assert_not_called()
+    mock_set_watch_domains.assert_called_once_with(["test-fallback-delegated.example.com"])
+    mock_trigger.assert_called_once_with()
 
 
 def test_multiple_simultaneous_cert_errors(webserver_for_error_tests):
@@ -317,7 +307,7 @@ def test_multiple_simultaneous_cert_errors(webserver_for_error_tests):
 
     error = CertApiException("ACME failure", step="Test")
 
-    with patch.object(webserver.ssl_processor.ssl.cert_manager, "issue_certificate", side_effect=error):
+    with patch.object(webserver.ssl_processor.cert_manager, "obtain", side_effect=error):
         hosts = [
             Host(hostname="test-multi-1.example.com", port=443, scheme={"https"}),
             Host(hostname="test-multi-2.example.com", port=443, scheme={"https"}),
@@ -330,7 +320,6 @@ def test_multiple_simultaneous_cert_errors(webserver_for_error_tests):
         # All should have self-signed certificates
         for host in hosts:
             assert host.ssl_file.endswith(".selfsigned")
-            assert host.hostname in webserver.ssl_processor.self_signed
 
 
 def test_wildcard_cert_error_handling(webserver_for_error_tests):
@@ -339,7 +328,7 @@ def test_wildcard_cert_error_handling(webserver_for_error_tests):
 
     error = CertApiException("Wildcard cert failure", step="Test")
 
-    with patch.object(webserver.ssl_processor.ssl, "register_certificate", side_effect=error):
+    with patch.object(webserver.ssl_processor.renewal_manager, "trigger_now") as mock_trigger:
         hosts = [Host(hostname="*.wildcard-test.example.com", port=443, scheme={"https"})]
 
         # Should not crash
@@ -347,11 +336,11 @@ def test_wildcard_cert_error_handling(webserver_for_error_tests):
 
         # Should fallback to self-signed
         assert hosts[0].ssl_file == "*.wildcard-test.example.com.selfsigned"
+        mock_trigger.assert_called_once_with()
 
 
 def test_fresh_wildcard_cert_remains_preferred(webserver_for_error_tests):
     webserver = webserver_for_error_tests
-    wildcard_cert = Mock(domains=["*.example.com"])
     hosts = [
         Host(hostname="*.example.com", port=443, scheme={"https"}),
         Host(hostname="api.example.com", port=443, scheme={"https"}),
@@ -363,24 +352,18 @@ def test_fresh_wildcard_cert_remains_preferred(webserver_for_error_tests):
             return ("*.example.com", Mock(), [fresh_cert])
         return None
 
-    with patch.object(webserver.ssl_processor.ssl, "register_certificate", return_value=[wildcard_cert]) as mock_register, \
-        patch.object(webserver.ssl_processor.ssl, "register_certificate_or_selfsign") as mock_register_or_selfsign, \
-        patch.object(webserver.ssl_processor.ssl.key_store, "find_key_and_cert_by_domain", side_effect=find_cert), \
-        patch("builtins.print") as mock_print, \
-        patch.object(webserver.ssl_processor.ssl, "update_expiry_cache"):
+    with patch.object(webserver.ssl_processor.key_store, "find_key_and_cert_by_domain", side_effect=find_cert), patch.object(
+        webserver.ssl_processor.renewal_manager, "trigger_now"
+    ) as mock_trigger:
         webserver.ssl_processor.process_ssl_certificates(hosts)
 
     assert hosts[0].ssl_file == "*.example.com"
     assert hosts[1].ssl_file == "*.example.com"
-    mock_register.assert_called_once_with("*.example.com")
-    mock_register_or_selfsign.assert_not_called()
-    assert not any("Wildcard *.example.com is stale; skipping api.example.com" in str(call) for call in mock_print.call_args_list)
+    mock_trigger.assert_not_called()
 
 
 def test_wildcard_near_expiry_is_not_preferred(webserver_for_error_tests):
     webserver = webserver_for_error_tests
-    wildcard_cert = Mock(domains=["*.example.com"])
-    api_cert = Mock(domains=["api.example.com"])
     hosts = [
         Host(hostname="*.example.com", port=443, scheme={"https"}),
         Host(hostname="api.example.com", port=443, scheme={"https"}),
@@ -392,20 +375,156 @@ def test_wildcard_near_expiry_is_not_preferred(webserver_for_error_tests):
             return ("*.example.com", Mock(), [expiring_cert])
         return None
 
-    with patch.object(webserver.ssl_processor.ssl, "register_certificate", return_value=[wildcard_cert]) as mock_register, \
-        patch.object(
-            webserver.ssl_processor.ssl, "register_certificate_or_selfsign", return_value=[api_cert]
-        ) as mock_register_or_selfsign, \
-        patch.object(webserver.ssl_processor.ssl.key_store, "find_key_and_cert_by_domain", side_effect=find_cert), \
-        patch("builtins.print") as mock_print, \
-        patch.object(webserver.ssl_processor.ssl, "update_expiry_cache"):
+    with patch.object(webserver.ssl_processor.key_store, "find_key_and_cert_by_domain", side_effect=find_cert), patch.object(
+        webserver.ssl_processor.renewal_manager, "trigger_now"
+    ) as mock_trigger:
         webserver.ssl_processor.process_ssl_certificates(hosts)
 
     assert hosts[0].ssl_file == "*.example.com"
-    assert hosts[1].ssl_file == "api.example.com"
-    mock_register.assert_called_once_with("*.example.com")
-    mock_register_or_selfsign.assert_called_once_with(["api.example.com"])
-    assert any(
-        "[SSL] Wildcard *.example.com is stale; skipping api.example.com" in " ".join(str(arg) for arg in call.args)
-        for call in mock_print.call_args_list
+    assert hosts[1].ssl_file == "api.example.com.selfsigned"
+    mock_trigger.assert_called_once_with()
+
+
+def test_existing_cert_is_kept_without_nginx_proxy_retry_state(webserver_for_error_tests):
+    webserver = webserver_for_error_tests
+    processor = webserver.ssl_processor
+    hostname = "renew-existing.example.com"
+    expired_cert = Mock(not_valid_after_utc=datetime.now(timezone.utc) - timedelta(days=1))
+
+    def find_cert(domain):
+        if domain == hostname:
+            return (hostname, Mock(), [expired_cert])
+        return None
+
+    with (
+        patch.object(processor.key_store, "find_key_and_cert_by_domain", side_effect=find_cert),
+        patch.object(processor.cert_manager, "obtain", side_effect=CertApiException("ACME renewal failed", step="Test")) as mock_obtain,
+    ):
+        hosts = [Host(hostname=hostname, port=443, scheme={"https"})]
+        webserver.ssl_processor.process_ssl_certificates(hosts)
+
+    assert hosts[0].ssl_file == hostname
+    mock_obtain.assert_not_called()
+
+
+def test_initial_failure_for_existing_cert_delegates_retry_to_renewal_manager(webserver_for_error_tests):
+    webserver = webserver_for_error_tests
+    processor = webserver.ssl_processor
+    hostname = "retry-backoff.example.com"
+    existing_cert = Mock(not_valid_after_utc=datetime.now(timezone.utc) - timedelta(days=1))
+
+    def find_cert(domain):
+        if domain == hostname:
+            return (hostname, Mock(), [existing_cert])
+        return None
+
+    with (
+        patch.object(processor.key_store, "find_key_and_cert_by_domain", side_effect=find_cert),
+        patch.object(processor.cert_manager, "obtain") as mock_obtain,
+        patch.object(processor.renewal_manager, "trigger_now") as mock_trigger,
+    ):
+        processor.process_ssl_certificates([Host(hostname=hostname, port=443, scheme={"https"})])
+
+    mock_obtain.assert_not_called()
+    mock_trigger.assert_not_called()
+
+
+def test_failed_wildcard_with_existing_cert_gets_concrete_individual_cert(webserver_for_error_tests):
+    webserver = webserver_for_error_tests
+    processor = webserver.ssl_processor
+    wildcard = "*.example.com"
+    hosts = [
+        Host(hostname=wildcard, port=443, scheme={"https"}),
+        Host(hostname="api.example.com", port=443, scheme={"https"}),
+    ]
+    wildcard_cert = Mock(not_valid_after_utc=datetime.now(timezone.utc) + timedelta(days=3))
+
+    def find_cert(domain):
+        if domain == wildcard:
+            return (wildcard, Mock(), [wildcard_cert])
+        return None
+
+    with (
+        patch.object(processor.key_store, "find_key_and_cert_by_domain", side_effect=find_cert),
+        patch.object(processor.renewal_manager, "trigger_now") as mock_trigger,
+    ):
+        webserver.ssl_processor.process_ssl_certificates(hosts)
+
+    assert hosts[0].ssl_file == wildcard
+    assert hosts[1].ssl_file == "api.example.com.selfsigned"
+    mock_trigger.assert_called_once_with()
+
+
+def test_failed_wildcard_expiring_within_48h_triggers_individual_dependent_issuance(webserver_for_error_tests):
+    webserver = webserver_for_error_tests
+    processor = webserver.ssl_processor
+    wildcard = "*.example.com"
+    hosts = [
+        Host(hostname=wildcard, port=443, scheme={"https"}),
+        Host(hostname="api.example.com", port=443, scheme={"https"}),
+    ]
+    expiring_in_12h = Mock(not_valid_after_utc=datetime.now(timezone.utc) + timedelta(hours=12))
+
+    processor.update_threshold_secs = 3600
+
+    def find_cert(domain):
+        if domain == wildcard:
+            return (wildcard, Mock(), [expiring_in_12h])
+        return None
+
+    with (
+        patch.object(processor.key_store, "find_key_and_cert_by_domain", side_effect=find_cert),
+        patch.object(processor.renewal_manager, "trigger_now") as mock_trigger,
+    ):
+        processor.process_ssl_certificates(hosts)
+
+    assert hosts[0].ssl_file == wildcard
+    assert hosts[1].ssl_file == wildcard
+    mock_trigger.assert_not_called()
+
+
+def test_ssl_uses_renewal_manager_for_background_startup():
+    server = SimpleNamespace(
+        config={
+            "certapi": {
+                "url": "https://certapi.example.com",
+                "host": "certapi.example.com",
+                "scheme": "https",
+                "port": 443,
+            }
+        },
+        reload=Mock(),
     )
+    nginx = SimpleNamespace(challenge_dir="./.run_data/acme-challenges/")
+    backend = Mock()
+    backend_info = SimpleNamespace(
+        backend=backend,
+        key_store=Mock(),
+        certapi_url="https://certapi.example.com",
+        use_certapi_server=True,
+        batch_domains=True,
+        cert_manager=None,
+        certapi_client=backend,
+        challenge_store=None,
+    )
+
+    with (
+        patch(
+            "nginx_proxy.post_processors.ssl_certificate_processor.build_certificate_backend",
+            return_value=backend_info,
+        ),
+        patch("nginx_proxy.post_processors.ssl_certificate_processor.RenewalManager") as renewal_cls,
+    ):
+        renewal = Mock()
+        renewal_cls.return_value = renewal
+        processor = SslCertificateProcessor(
+            nginx,
+            server=server,
+            update_threshold_days=1,
+            ssl_dir="./.run_data",
+            start_ssl_thread=True,
+        )
+
+    renewal.start.assert_called_once_with()
+    processor.shutdown()
+    renewal.stop.assert_called_once_with()
