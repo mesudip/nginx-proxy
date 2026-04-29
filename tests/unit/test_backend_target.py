@@ -249,11 +249,16 @@ class TestVirtualHostProcessorWithBackendTarget:
         assert extras["client_max_body_size"] == "2g"
         assert extras["proxy_read_timeout"] == "120"
 
-    def test_parse_host_entry_with_spaced_equals_extra_syntax(self):
+    def test_parse_host_entry_with_whitespace_before_equals_uses_whitespace_syntax(self):
         h, loc, c, extras = _parse_host_entry("example.com; client_max_body_size = 2g; proxy_read_timeout = 120")
         assert h.hostname == "example.com"
-        assert extras["client_max_body_size"] == "2g"
-        assert extras["proxy_read_timeout"] == "120"
+        assert extras["client_max_body_size"] == "= 2g"
+        assert extras["proxy_read_timeout"] == "= 120"
+
+    def test_parse_host_entry_preserves_equals_after_whitespace_splitter(self):
+        h, loc, c, extras = _parse_host_entry("example.com; proxy_set_header Cookie=session=a=b")
+        assert h.hostname == "example.com"
+        assert extras["proxy_set_header"] == "Cookie=session=a=b"
 
     def test_remove_backend_cleans_only_its_injected_directives(self):
         known_networks = {"shared-net-id"}

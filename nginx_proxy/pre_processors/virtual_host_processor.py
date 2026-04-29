@@ -1,3 +1,5 @@
+import re
+
 from nginx_proxy import Host, ProxyConfigData
 from nginx_proxy.BackendTarget import BackendTarget, NoHostConfiguration, UnreachableNetwork
 from nginx_proxy.utils import split_url
@@ -22,18 +24,20 @@ def _parse_extra_directive(raw_directive: str):
     directive = raw_directive.strip()
     if not directive:
         return None, None
-    # Accept "key=value" and "key = value" forms and normalize to nginx form "key value".
-    if "=" in directive:
+    equal_index = directive.find("=")
+    whitespace_match = re.search(r"\s", directive)
+    if whitespace_match is not None and (equal_index == -1 or whitespace_match.start() < equal_index):
+        key, value = re.split(r"\s+", directive, 1)
+        key = key.strip()
+        value = value.strip()
+        return (key, value if value else None) if key else (None, None)
+    # Accept "key=value" shorthand when the first delimiter is "=".
+    if equal_index != -1:
         key, value = directive.split("=", 1)
         key = key.strip()
         value = value.strip()
         if key:
             return key, value if value else None
-    if " " in directive:
-        key, value = directive.split(" ", 1)
-        key = key.strip()
-        value = value.strip()
-        return (key, value if value else None) if key else (None, None)
     return directive, None
 
 

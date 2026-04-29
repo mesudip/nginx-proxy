@@ -44,7 +44,7 @@ class SslCertificateProcessor:
         if self.server is None:
             return
         domains = sorted({host.hostname for host in self.server.config_data.host_list() if host.secured})
-        self.renewal_manager.set_watch_domains(domains)
+        self.renewal_manager.update_watch_domains(domains)
 
     def is_certificate_fresh(self, domain: str, threshold_seconds: float | None = None) -> bool:
         result = self.key_store.find_key_and_cert_by_domain(domain)
@@ -58,18 +58,6 @@ class SslCertificateProcessor:
 
     def has_certificate(self, domain: str) -> bool:
         return self.key_store.find_key_and_cert_by_domain(domain) is not None
-
-    def has_self_signed_certificate(self, domain: str) -> bool:
-        return self.key_store.find_key_by_name(domain + ".selfsigned") is not None
-
-    def _ensure_self_signed_certificate(self, domain: str):
-        if self.has_certificate(domain) or self.has_self_signed_certificate(domain):
-            return
-
-        register_self_signed = getattr(self.renewal_manager, "_register_self_signed", None)
-        if register_self_signed is None:
-            return
-        register_self_signed(domain)
 
     def _prepare_host_for_ssl(self, host: Host):
         """Sets SSL redirect and port if applicable."""
@@ -108,14 +96,7 @@ class SslCertificateProcessor:
             self._prepare_host_for_ssl(host)
 
         secured_domains = sorted({host.hostname for host in secured_hosts})
-        self.renewal_manager.set_watch_domains(secured_domains)
-
-        if any(self._host_needs_certificate(host) for host in secured_hosts):
-            self.renewal_manager.trigger_now()
-
-        for host in secured_hosts:
-            if self._select_ssl_file(host).endswith(".selfsigned"):
-                self._ensure_self_signed_certificate(host.hostname)
+        self.renewal_manager.update_watch_domains(secured_domains)
 
         for host in secured_hosts:
             host.ssl_file = self._select_ssl_file(host)
