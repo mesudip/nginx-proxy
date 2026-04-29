@@ -286,7 +286,7 @@ def test_fallback_to_selfsigned_on_failure(webserver_for_error_tests, error, hos
 
 
 def test_failed_initial_request_delegates_fallback_to_renewal_manager(webserver_for_error_tests):
-    """Initial issuance no longer owns blacklist/retry behavior in nginx-proxy."""
+    """Initial issuance retry behavior is owned by certapi's renewal manager."""
     webserver = webserver_for_error_tests
     processor = webserver.ssl_processor
 

@@ -8,3 +8,4 @@ run_data/
 .env
 *.egg-info/
 .pytest_cache/
+dist/
