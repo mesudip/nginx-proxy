@@ -242,3 +242,57 @@ class TestVirtualHostProcessorWithBackendTarget:
         assert h.hostname == "example.com"
         assert extras["client_max_body_size"] == "100M"
         assert extras["proxy_read_timeout"] == "120"
+
+    def test_parse_host_entry_with_equals_extra_syntax(self):
+        h, loc, c, extras = _parse_host_entry("example.com; client_max_body_size=2g; proxy_read_timeout=120")
+        assert h.hostname == "example.com"
+        assert extras["client_max_body_size"] == "2g"
+        assert extras["proxy_read_timeout"] == "120"
+
+    def test_parse_host_entry_with_whitespace_before_equals_uses_whitespace_syntax(self):
+        h, loc, c, extras = _parse_host_entry("example.com; client_max_body_size = 2g; proxy_read_timeout = 120")
+        assert h.hostname == "example.com"
+        assert extras["client_max_body_size"] == "= 2g"
+        assert extras["proxy_read_timeout"] == "= 120"
+
+    def test_parse_host_entry_preserves_equals_after_whitespace_splitter(self):
+        h, loc, c, extras = _parse_host_entry("example.com; proxy_set_header Cookie=session=a=b")
+        assert h.hostname == "example.com"
+        assert extras["proxy_set_header"] == "Cookie=session=a=b"
+
+    def test_remove_backend_cleans_only_its_injected_directives(self):
+        known_networks = {"shared-net-id"}
+        bad_backend = BackendTarget(
+            id="bad-backend",
+            name="bad-backend",
+            env={"VIRTUAL_HOST": "dup.example.com; client_max_body_size=2g; proxy_read_timeout=10"},
+            network_settings={"shared": {"NetworkID": "shared-net-id", "IPAddress": "10.0.0.11"}},
+        )
+        good_backend = BackendTarget(
+            id="good-backend",
+            name="good-backend",
+            env={"VIRTUAL_HOST": "dup.example.com; client_max_body_size 5m; proxy_send_timeout 20"},
+            network_settings={"shared": {"NetworkID": "shared-net-id", "IPAddress": "10.0.0.12"}},
+        )
+
+        aggregated = ProxyConfigData()
+        for backend in (bad_backend, good_backend):
+            config = process_virtual_hosts(backend, known_networks)
+            for host in config.host_list():
+                aggregated.add_host(host)
+
+        host = aggregated.getHost("dup.example.com")
+        assert host is not None
+        injections_before = host.locations["/"].extras.get("injected", [])
+        assert "client_max_body_size 2g" in injections_before
+        assert "client_max_body_size 5m" in injections_before
+
+        removed, _ = aggregated.remove_backend("bad-backend")
+        assert removed
+
+        host_after = aggregated.getHost("dup.example.com")
+        injections_after = host_after.locations["/"].extras.get("injected", [])
+        assert "client_max_body_size 2g" not in injections_after
+        assert "proxy_read_timeout 10" not in injections_after
+        assert "client_max_body_size 5m" in injections_after
+        assert "proxy_send_timeout 20" in injections_after

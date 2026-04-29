@@ -61,7 +61,7 @@ class WebServer:
         self.ssl_processor = post_processors.SslCertificateProcessor(
             self.nginx,
             self,
-            start_ssl_thread=True,
+            start_ssl_thread=False,
             ssl_dir=self.config["ssl_dir"],
             update_threshold_days=self.config["cert_renew_threshold_days"],
         )
@@ -78,6 +78,7 @@ class WebServer:
         print("Reachable Networks :", self.networks)
         self.setup_error_config()
         self.rescan_and_reload(force=True)
+        self.ssl_processor.start()
 
     def setup_error_config(self):
         # Render error.conf.jinja2 and save it

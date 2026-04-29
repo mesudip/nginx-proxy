@@ -81,9 +81,7 @@ def create_webserver(docker_client: DockerTestClient, enable_ipv6: bool = False)
         # Wait for the thread to finish
         listener_thread.join(timeout=2)
 
-        # Stop the SSL refresh thread
         webserver.cleanup()
-        webserver.ssl_processor.ssl.certificate_expiry_thread.join(timeout=2)
 
 
 pattern = re.compile(r"^http://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:80")
@@ -121,6 +119,21 @@ def expect_server_not_present(nginx: DummyNginx, server_name: str):
         ), f"Server for {server_name} should not be present. All servers:\n{all_servers_str}"
 
 
+def expect_servers(nginx: DummyNginx, server_name: str, count: int, timeout: float = 2):
+    deadline = time.monotonic() + timeout
+    servers = []
+    while time.monotonic() < deadline:
+        config = HttpBlock.parse(nginx.current_config)
+        servers = [s for s in config.servers if server_name in s.server_names]
+        if len(servers) == count:
+            return servers
+        time.sleep(0.05)
+
+    config = HttpBlock.parse(nginx.current_config)
+    all_servers_str = "\n".join([str(s) for s in config.servers])
+    assert len(servers) == count, f"Expected {count} server(s) for {server_name}. All servers:\n{all_servers_str}"
+
+
 def expect_server_down(nginx: DummyNginx, server_name: str):
     server = expect_server(nginx, server_name)
     config = HttpBlock.parse(nginx.current_config)
@@ -134,7 +147,7 @@ def expect_server_down(nginx: DummyNginx, server_name: str):
 
 
 def test_webserver_initialization(webserver: WebServer, nginx: DummyNginx):
-    assert isinstance(webserver.ssl_processor.ssl.challenge_store, NginxChallengeSolver)
+    assert isinstance(webserver.ssl_processor.challenge_store, NginxChallengeSolver)
     # Check initial default server block
     config = NginxConfig()
     full_config_str = f"http {{\n{nginx.current_config}\n}}"
@@ -261,12 +274,9 @@ def test_webserver_add_container_with_ssl(docker_client: DockerTestClient, nginx
 
     # Create container with SSL env
     container = docker_client.containers.run("nginx:alpine", name=container_name, environment=env, network="frontend")
-    time.sleep(0.2)
 
     # Verify that two server blocks are created for SSL
-    config = HttpBlock.parse(nginx.current_config)
-    servers = [s for s in config.servers if hostname in s.server_names]
-    assert len(servers) == 2
+    servers = expect_servers(nginx, hostname, 2)
 
     # Verify HTTPS server is correctly configured
     https_server = next((s for s in servers if "443" in s.listen), None)
@@ -296,11 +306,8 @@ def test_webserver_ssl_does_not_override_explicit_http_location(docker_client: D
     }
 
     container = docker_client.containers.run("nginx:alpine", name=container_name, environment=env, network="frontend")
-    time.sleep(0.2)
 
-    config = HttpBlock.parse(nginx.current_config)
-    servers = [s for s in config.servers if hostname in s.server_names]
-    assert len(servers) == 2
+    servers = expect_servers(nginx, hostname, 2)
 
     https_server = next((s for s in servers if "443" in s.listen), None)
     http_server = next((s for s in servers if s.listen == "80"), None)
@@ -333,11 +340,8 @@ def test_webserver_ssl_respects_explicit_http_root(docker_client: DockerTestClie
     }
 
     container = docker_client.containers.run("nginx:alpine", name=container_name, environment=env, network="frontend")
-    time.sleep(0.2)
 
-    config = HttpBlock.parse(nginx.current_config)
-    servers = [s for s in config.servers if hostname in s.server_names]
-    assert len(servers) == 2
+    servers = expect_servers(nginx, hostname, 2)
 
     http_server = next((s for s in servers if s.listen == "80"), None)
     assert http_server is not None

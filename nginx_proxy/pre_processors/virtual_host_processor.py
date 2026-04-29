@@ -1,3 +1,5 @@
+import re
+
 from nginx_proxy import Host, ProxyConfigData
 from nginx_proxy.BackendTarget import BackendTarget, NoHostConfiguration, UnreachableNetwork
 from nginx_proxy.utils import split_url
@@ -16,6 +18,27 @@ def _default_external_port(schemes):
     has_secure_scheme = "https" in schemes or "wss" in schemes
     has_insecure_scheme = "http" in schemes or "ws" in schemes
     return 443 if has_secure_scheme and not has_insecure_scheme else 80
+
+
+def _parse_extra_directive(raw_directive: str):
+    directive = raw_directive.strip()
+    if not directive:
+        return None, None
+    equal_index = directive.find("=")
+    whitespace_match = re.search(r"\s", directive)
+    if whitespace_match is not None and (equal_index == -1 or whitespace_match.start() < equal_index):
+        key, value = re.split(r"\s+", directive, 1)
+        key = key.strip()
+        value = value.strip()
+        return (key, value if value else None) if key else (None, None)
+    # Accept "key=value" shorthand when the first delimiter is "=".
+    if equal_index != -1:
+        key, value = directive.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if key:
+            return key, value if value else None
+    return directive, None
 
 
 def process_virtual_hosts(backend: BackendTarget, known_networks: set) -> ProxyConfigData:
@@ -44,7 +67,12 @@ def process_virtual_hosts(backend: BackendTarget, known_networks: set) -> ProxyC
                     if injections:
                         # Preserve insertion order while avoiding duplicates from repeated hosts
                         deduped = list(dict.fromkeys(injections))
-                        host.locations[location].update_extras({"injected": deduped})
+                        host.locations[location].update_extras(
+                            {
+                                "injected": deduped,
+                                "injected_by_backend": {backend.id: deduped},
+                            }
+                        )
                 hosts.add_host(host)
         print(
             "Valid configuration   ",
@@ -82,14 +110,9 @@ def _parse_host_entry(entry_string: str):
     if len(configs) > 1:
         entry_string = configs[0]
         for x in configs[1].split(";"):
-            x = x.strip()
-            if x:
-                # Parse as key value, e.g. 'client_max_body_size 200M'
-                if " " in x:
-                    k, v = x.split(" ", 1)
-                    extras[k.strip()] = v.strip()
-                else:
-                    extras[x] = None
+            k, v = _parse_extra_directive(x)
+            if k:
+                extras[k] = v
     host_list = entry_string.strip().split("->")
     external, internal = host_list if len(host_list) == 2 else (host_list[0], "")
     external, internal = (split_url(external), split_url(internal))

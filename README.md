@@ -88,6 +88,7 @@ Control the default behavior of `nginx-proxy`:
 | `DOCKER_SWARM` | `ignore` | Treats every container like local by defeault. Set  `enable` for Swarm support, `strict` for Swarm-only or`exclude` to not include swarm containers  |
 | `SWARM_DOCKER_HOST` | - | URL of the Swarm manager socket (e.g., `tcp://manager:2375`). |
 | `CERTAPI_URL` | - | External Certificate API URL. |
+| `CERTAPI_BATCH_DOMAINS` | `true` | When using `CERTAPI_URL`, request safe domain batching (`batch_domains=true`) to avoid recursive domain-order errors. |
 | `CHALLENGE_DIR` | `/etc/nginx/challenges/` | Base directory for acme challenge store, when requesting certificates with acme. `.well-known/acme-challenge` folder lives inside this.|
 | `CLOUDFLARE_API_KEY_KEY*` | - | Cloudflare api keys to issue DNS certificates.|
 
