@@ -292,13 +292,12 @@ def test_failed_initial_request_delegates_fallback_to_renewal_manager(webserver_
 
     hosts = [Host(hostname="test-fallback-delegated.example.com", port=443, scheme={"https"})]
     with patch.object(processor.cert_manager, "obtain") as mock_obtain, patch.object(
-        processor.renewal_manager, "trigger_now"
-    ) as mock_trigger, patch.object(processor.renewal_manager, "set_watch_domains") as mock_set_watch_domains:
+        processor.renewal_manager, "update_watch_domains"
+    ) as mock_update_watch_domains:
         processor.process_ssl_certificates(hosts)
 
     mock_obtain.assert_not_called()
-    mock_set_watch_domains.assert_called_once_with(["test-fallback-delegated.example.com"])
-    mock_trigger.assert_called_once_with()
+    mock_update_watch_domains.assert_any_call(["test-fallback-delegated.example.com"])
 
 
 def test_multiple_simultaneous_cert_errors(webserver_for_error_tests):
@@ -328,7 +327,7 @@ def test_wildcard_cert_error_handling(webserver_for_error_tests):
 
     error = CertApiException("Wildcard cert failure", step="Test")
 
-    with patch.object(webserver.ssl_processor.renewal_manager, "trigger_now") as mock_trigger:
+    with patch.object(webserver.ssl_processor.renewal_manager, "update_watch_domains") as mock_update_watch_domains:
         hosts = [Host(hostname="*.wildcard-test.example.com", port=443, scheme={"https"})]
 
         # Should not crash
@@ -336,7 +335,7 @@ def test_wildcard_cert_error_handling(webserver_for_error_tests):
 
         # Should fallback to self-signed
         assert hosts[0].ssl_file == "*.wildcard-test.example.com.selfsigned"
-        mock_trigger.assert_called_once_with()
+        mock_update_watch_domains.assert_any_call(["*.wildcard-test.example.com"])
 
 
 def test_fresh_wildcard_cert_remains_preferred(webserver_for_error_tests):
@@ -353,13 +352,13 @@ def test_fresh_wildcard_cert_remains_preferred(webserver_for_error_tests):
         return None
 
     with patch.object(webserver.ssl_processor.key_store, "find_key_and_cert_by_domain", side_effect=find_cert), patch.object(
-        webserver.ssl_processor.renewal_manager, "trigger_now"
-    ) as mock_trigger:
+        webserver.ssl_processor.renewal_manager, "update_watch_domains"
+    ) as mock_update_watch_domains:
         webserver.ssl_processor.process_ssl_certificates(hosts)
 
     assert hosts[0].ssl_file == "*.example.com"
     assert hosts[1].ssl_file == "*.example.com"
-    mock_trigger.assert_not_called()
+    mock_update_watch_domains.assert_called_once_with(["*.example.com", "api.example.com"])
 
 
 def test_wildcard_near_expiry_is_not_preferred(webserver_for_error_tests):
@@ -376,16 +375,16 @@ def test_wildcard_near_expiry_is_not_preferred(webserver_for_error_tests):
         return None
 
     with patch.object(webserver.ssl_processor.key_store, "find_key_and_cert_by_domain", side_effect=find_cert), patch.object(
-        webserver.ssl_processor.renewal_manager, "trigger_now"
-    ) as mock_trigger:
+        webserver.ssl_processor.renewal_manager, "update_watch_domains"
+    ) as mock_update_watch_domains:
         webserver.ssl_processor.process_ssl_certificates(hosts)
 
     assert hosts[0].ssl_file == "*.example.com"
     assert hosts[1].ssl_file == "api.example.com.selfsigned"
-    mock_trigger.assert_called_once_with()
+    mock_update_watch_domains.assert_called_once_with(["*.example.com", "api.example.com"])
 
 
-def test_existing_cert_is_kept_without_nginx_proxy_retry_state(webserver_for_error_tests):
+def test_existing_cert_is_kept_while_renewal_manager_handles_retry(webserver_for_error_tests):
     webserver = webserver_for_error_tests
     processor = webserver.ssl_processor
     hostname = "renew-existing.example.com"
@@ -404,7 +403,6 @@ def test_existing_cert_is_kept_without_nginx_proxy_retry_state(webserver_for_err
         webserver.ssl_processor.process_ssl_certificates(hosts)
 
     assert hosts[0].ssl_file == hostname
-    mock_obtain.assert_not_called()
 
 
 def test_initial_failure_for_existing_cert_delegates_retry_to_renewal_manager(webserver_for_error_tests):
@@ -421,12 +419,12 @@ def test_initial_failure_for_existing_cert_delegates_retry_to_renewal_manager(we
     with (
         patch.object(processor.key_store, "find_key_and_cert_by_domain", side_effect=find_cert),
         patch.object(processor.cert_manager, "obtain") as mock_obtain,
-        patch.object(processor.renewal_manager, "trigger_now") as mock_trigger,
+        patch.object(processor.renewal_manager, "update_watch_domains") as mock_update_watch_domains,
     ):
         processor.process_ssl_certificates([Host(hostname=hostname, port=443, scheme={"https"})])
 
     mock_obtain.assert_not_called()
-    mock_trigger.assert_not_called()
+    mock_update_watch_domains.assert_called_once_with([hostname])
 
 
 def test_failed_wildcard_with_existing_cert_gets_concrete_individual_cert(webserver_for_error_tests):
@@ -446,13 +444,13 @@ def test_failed_wildcard_with_existing_cert_gets_concrete_individual_cert(webser
 
     with (
         patch.object(processor.key_store, "find_key_and_cert_by_domain", side_effect=find_cert),
-        patch.object(processor.renewal_manager, "trigger_now") as mock_trigger,
+        patch.object(processor.renewal_manager, "update_watch_domains") as mock_update_watch_domains,
     ):
         webserver.ssl_processor.process_ssl_certificates(hosts)
 
     assert hosts[0].ssl_file == wildcard
     assert hosts[1].ssl_file == "api.example.com.selfsigned"
-    mock_trigger.assert_called_once_with()
+    mock_update_watch_domains.assert_called_once_with(["*.example.com", "api.example.com"])
 
 
 def test_failed_wildcard_expiring_within_48h_triggers_individual_dependent_issuance(webserver_for_error_tests):
@@ -474,13 +472,13 @@ def test_failed_wildcard_expiring_within_48h_triggers_individual_dependent_issua
 
     with (
         patch.object(processor.key_store, "find_key_and_cert_by_domain", side_effect=find_cert),
-        patch.object(processor.renewal_manager, "trigger_now") as mock_trigger,
+        patch.object(processor.renewal_manager, "update_watch_domains") as mock_update_watch_domains,
     ):
         processor.process_ssl_certificates(hosts)
 
     assert hosts[0].ssl_file == wildcard
     assert hosts[1].ssl_file == wildcard
-    mock_trigger.assert_not_called()
+    mock_update_watch_domains.assert_called_once_with(["*.example.com", "api.example.com"])
 
 
 def test_ssl_uses_renewal_manager_for_background_startup():

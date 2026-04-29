@@ -20,7 +20,8 @@ def _make_server():
                 "scheme": "https",
                 "port": 443,
             }
-        }
+        },
+        reload=Mock(),
     )
 
 
@@ -77,6 +78,7 @@ def test_certapi_batch_domains_passed_to_renewal_manager(monkeypatch):
     assert processor.certapi_batch_domains is False
     backend.obtain.assert_not_called()
     assert processor._test_renewal_cls_call_args.kwargs["batch_domains"] is False
+    assert processor._test_renewal_cls_call_args.kwargs["renewal_callback"] == processor.sync_watch_domains
 
 
 def test_processor_does_not_obtain_directly_and_triggers_renewal_once(monkeypatch):
@@ -86,8 +88,8 @@ def test_processor_does_not_obtain_directly_and_triggers_renewal_once(monkeypatc
     hosts = [Host("api.example.com", 443, {"https"}), Host("www.example.com", 443, {"https"})]
     processor.process_ssl_certificates(hosts)
 
-    renewal.set_watch_domains.assert_called_once_with(["api.example.com", "www.example.com"])
-    renewal.trigger_now.assert_called_once_with()
+    renewal.update_watch_domains.assert_called_once_with(["api.example.com", "www.example.com"])
+    renewal.trigger_now.assert_not_called()
     backend.obtain.assert_not_called()
     assert hosts[0].ssl_file == "api.example.com.selfsigned"
     assert hosts[1].ssl_file == "www.example.com.selfsigned"
@@ -112,7 +114,8 @@ def test_sync_watch_domains_publishes_secured_hosts_to_renewal_manager(monkeypat
 
     processor.sync_watch_domains()
 
-    renewal.set_watch_domains.assert_called_once_with(["*.example.com", "secure.example.com"])
+    renewal.update_watch_domains.assert_called_once_with(["*.example.com", "secure.example.com"])
+    server.reload.assert_called_once_with(force=True)
 
 
 def test_getssl_force_passes_self_verify_false_to_remote_backend(monkeypatch, tmp_path):

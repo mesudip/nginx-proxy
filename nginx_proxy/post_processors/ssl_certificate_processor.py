@@ -32,19 +32,23 @@ class SslCertificateProcessor:
         self.challenge_store = backend_info.challenge_store
         self.renewal_manager = RenewalManager(
             self.backend,
-            sync_watch_domains=self.sync_watch_domains,
+            renewal_callback=self.sync_watch_domains,
             renew_threshold_days=max(1, int(self.update_threshold_secs // (24 * 3600))),
             batch_domains=self.certapi_batch_domains,
         )
 
         if start_ssl_thread:
-            self.renewal_manager.start()
+            self.start()
+
+    def start(self):
+        self.renewal_manager.start()
 
     def sync_watch_domains(self):
         if self.server is None:
             return
         domains = sorted({host.hostname for host in self.server.config_data.host_list() if host.secured})
         self.renewal_manager.update_watch_domains(domains)
+        self.server.reload(force=True)
 
     def is_certificate_fresh(self, domain: str, threshold_seconds: float | None = None) -> bool:
         result = self.key_store.find_key_and_cert_by_domain(domain)
