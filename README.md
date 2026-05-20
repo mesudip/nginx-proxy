@@ -91,6 +91,7 @@ Control the default behavior of `nginx-proxy`:
 | `CERTAPI_BATCH_DOMAINS` | `true` | When using `CERTAPI_URL`, request safe domain batching (`batch_domains=true`) to avoid recursive domain-order errors. |
 | `CHALLENGE_DIR` | `/etc/nginx/challenges/` | Base directory for acme challenge store, when requesting certificates with acme. `.well-known/acme-challenge` folder lives inside this.|
 | `CLOUDFLARE_API_KEY_KEY*` | - | Cloudflare api keys to issue DNS certificates.|
+| `BACKEND_START_GRACE_SECONDS` | `10` | Delay registering containers without a Docker healthcheck so crashing backends dont' result reload|
 
 
 ## Virtual Hosts

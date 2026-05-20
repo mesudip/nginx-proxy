@@ -6,6 +6,7 @@ import uuid
 import requests
 from typing import List
 
+from docker.types import Healthcheck
 from nginx.NginxConf import HttpBlock, NginxConfig, ServerBlock
 from tests.helpers.docker_utils import start_backend, stop_backend
 from tests.helpers import get_nginx_config_from_container,expect_server_down_integration, expect_server_not_present_integration, expect_server_up_integration
@@ -18,6 +19,27 @@ def swarm_mode(request):
 # Regex to match the dynamically assigned IP:PORT for proxy_pass
 # Example: http://172.18.0.2:80
 pattern = re.compile(r"^http://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:80")
+START_GRACE_SECONDS = 2
+
+
+def _http_healthcheck() -> Healthcheck:
+    return Healthcheck(
+        test='node -e "require(\'http\').get(\'http://127.0.0.1:8080\', r => process.exit(r.statusCode === 200 ? 0 : 1)).on(\'error\', () => process.exit(1))"',
+        interval=1_000_000_000,
+        timeout=1_000_000_000,
+        retries=2,
+        start_period=0,
+    )
+
+
+def _marker_healthcheck() -> Healthcheck:
+    return Healthcheck(
+        test='test -f /tmp/nginx-proxy-health-ready && node -e "require(\'http\').get(\'http://127.0.0.1:8080\', r => process.exit(r.statusCode === 200 ? 0 : 1)).on(\'error\', () => process.exit(1))"',
+        interval=1_000_000_000,
+        timeout=1_000_000_000,
+        retries=1,
+        start_period=0,
+    )
 
 
 def test_webserver_initialization_integration(nginx_proxy_container: docker.models.containers.Container):
@@ -78,6 +100,86 @@ def test_webserver_add_container_integration(
 
         server = expect_server_up_integration(nginx_proxy_container[0], virtual_host, timeout=15)
 
+    finally:
+        if backend:
+            stop_backend(backend)
+
+
+def test_container_start_grace_delays_config_update(
+    nginx_proxy_container,
+    docker_client,
+    test_network,
+):
+    virtual_host = f"container.grace-{uuid.uuid4().hex[:6]}.example.com"
+    before_config = get_nginx_config_from_container(nginx_proxy_container[0])
+    backend = None
+    try:
+        backend = start_backend(
+            docker_client,
+            test_network,
+            {"VIRTUAL_HOST": virtual_host},
+            backend_type="container",
+            sleep=False,
+        )
+
+        time.sleep(START_GRACE_SECONDS / 2)
+        within_grace_config = get_nginx_config_from_container(nginx_proxy_container[0])
+        assert within_grace_config == before_config
+
+        expect_server_up_integration(nginx_proxy_container[0], virtual_host, timeout=20)
+        after_grace_config = get_nginx_config_from_container(nginx_proxy_container[0])
+        assert after_grace_config != before_config
+    finally:
+        if backend:
+            stop_backend(backend)
+
+
+def test_healthchecked_container_waits_until_healthy_integration(
+    nginx_proxy_container,
+    docker_client,
+    test_network,
+):
+    virtual_host = f"container.health-{uuid.uuid4().hex[:6]}.example.com"
+    backend = None
+    try:
+        backend = start_backend(
+            docker_client,
+            test_network,
+            {"VIRTUAL_HOST": virtual_host, "VIRTUAL_PORT": "8080"},
+            backend_type="container",
+            sleep=False,
+            healthcheck=_marker_healthcheck(),
+        )
+
+        time.sleep(START_GRACE_SECONDS + 1)
+        expect_server_not_present_integration(nginx_proxy_container[0], virtual_host, timeout=1)
+
+        backend.exec_run("touch /tmp/nginx-proxy-health-ready")
+
+        expect_server_up_integration(nginx_proxy_container[0], virtual_host, timeout=20)
+    finally:
+        if backend:
+            stop_backend(backend)
+
+
+def test_healthchecked_service_is_discovered_integration(
+    nginx_proxy_container,
+    docker_client,
+    test_network,
+):
+    virtual_host = f"service.health-{uuid.uuid4().hex[:6]}.example.com"
+    backend = None
+    try:
+        backend = start_backend(
+            docker_client,
+            test_network,
+            {"VIRTUAL_HOST": virtual_host, "VIRTUAL_PORT": "8080"},
+            backend_type="service",
+            sleep=False,
+            healthcheck=_http_healthcheck(),
+        )
+
+        expect_server_up_integration(nginx_proxy_container[0], virtual_host, timeout=20)
     finally:
         if backend:
             stop_backend(backend)

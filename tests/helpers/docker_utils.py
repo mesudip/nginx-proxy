@@ -14,6 +14,7 @@ def start_backend(
     backend_type: str = "container",
     sleep=True,
     pytest_request=None,
+    healthcheck=None,
 ) -> docker.models.containers.Container | docker.models.services.Service:
     image_name = "mesudip/test-backend:test"
 
@@ -38,16 +39,23 @@ def start_backend(
     svc_name=f"test-service-{uuid.uuid4().hex}" if pytest_request is None else slug63(f"{pytest_request.node.name}-{uuid.uuid4().hex[:8]}")
     
     if backend_type == "service":
+        service_kwargs = {}
+        if healthcheck is not None:
+            service_kwargs["healthcheck"] = healthcheck
         backend= docker_client.services.create(
             image=image_name,
             env=env_list,
             networks=[test_network.name],
             name=svc_name,
             labels={"com.nginx-proxy.test.container": "tetruet"},  # optional common label
+            **service_kwargs,
         )
         if sleep:
             time.sleep(5)
     else:
+        container_kwargs = {}
+        if healthcheck is not None:
+            container_kwargs["healthcheck"] = healthcheck
         backend=docker_client.containers.run(
             image_name,
             detach=True,
@@ -55,6 +63,7 @@ def start_backend(
             network=test_network.name,
             name=f"test-backend-{uuid.uuid4().hex}",
             restart_policy={"Name": "no"},
+            **container_kwargs,
         )
         if sleep:
             time.sleep(1)

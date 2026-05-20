@@ -42,6 +42,7 @@ class NginxProxyAppConfig(TypedDict):
     enable_ipv6: bool
     docker_swarm: str
     swarm_docker_host: str | None
+    backend_start_grace_seconds: float
 
 
 def _strip_end(s: str, char="/") -> str:
@@ -107,6 +108,7 @@ class NginxProxyApp:
             enable_ipv6=os.getenv("ENABLE_IPV6", "false").strip().lower() == "true",
             docker_swarm=os.getenv("DOCKER_SWARM", "ignore").strip().lower(),
             swarm_docker_host=os.getenv("SWARM_DOCKER_HOST", "").strip() or None,
+            backend_start_grace_seconds=float(os.getenv("BACKEND_START_GRACE_SECONDS", "10").strip()),
         )
 
     def _setup_nginx_conf(self):

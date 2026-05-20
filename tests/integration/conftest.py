@@ -136,6 +136,7 @@ def nginx_proxy_container(docker_client: docker.DockerClient, test_network, dock
                 "VHOSTS_TEMPLATE_DIR": "/app/vhosts_template",
                 "CHALLENGE_DIR": "/etc/nginx/acme-challenges",
                 "DOCKER_SWARM": swarm_mode,
+                "BACKEND_START_GRACE_SECONDS": "2",
             },
             restart_policy={"Name": "no"},
         )

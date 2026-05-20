@@ -2,8 +2,10 @@ import copy
 import os
 import sys
 import threading
+from datetime import datetime, timezone
 from typing import List, TYPE_CHECKING
 
+import docker
 import requests
 from docker import DockerClient
 from jinja2 import Template
@@ -77,7 +79,7 @@ class WebServer:
 
         print("Reachable Networks :", self.networks)
         self.setup_error_config()
-        self.rescan_and_reload(force=True)
+        self.rescan_and_reload(force=True, bypass_start_grace=True)
         self.ssl_processor.start()
 
     def setup_error_config(self):
@@ -112,7 +114,7 @@ class WebServer:
 
         return hosts + redirect_hosts
 
-    def _do_reload(self, forced=False, has_addition=True) -> bool:
+    def _do_reload(self, forced=False) -> bool:
         """
         Creates a new configuration based on current state and signals nginx to reload.
         This is called whenever there's change in container or network state.
@@ -215,14 +217,14 @@ class WebServer:
                 "    " + deleted.name,
                 sep="\t",
             )
-            self.reload(has_addition=False)
+            self.reload()
 
-    def reload(self, immediate=False, force=False, has_addition=True) -> bool:
+    def reload(self, immediate=False, force=False) -> bool:
         """
         Schedules or performs a reload of the Nginx configuration.
         Returns True if a reload was initiated or scheduled.
         """
-        return self.throttler.throttle(lambda: self._do_reload(force, has_addition), immediate=immediate or force)
+        return self.throttler.throttle(lambda: self._do_reload(force), immediate=immediate or force)
 
     def disconnect(self, network, container, scope):
 
@@ -264,11 +266,17 @@ class WebServer:
                 return
             try:
                 container_obj = self.client.containers.get(container)
+                if container_obj.status != "running":
+                    return
+                if self._container_has_healthcheck(container_obj) and self._container_health_status(container_obj) != "healthy":
+                    return
                 if swarm_mode != "ignore" and "com.docker.swarm.service.id" in container_obj.attrs["Config"].get("Labels", {}):
                     # print(f"Skipping network connect for service task container {container}")
                     return
                 backend = BackendTarget.from_container(container_obj)
                 self.update_backend(backend)
+            except docker.errors.NotFound:
+                return
             except (KeyboardInterrupt, SystemExit):
                 raise
             except Exception as e:
@@ -289,7 +297,7 @@ class WebServer:
             pass
         return False
 
-    def rescan_all_container(self):
+    def rescan_all_container(self, bypass_start_grace=False):
         """
         Rescan all the containers and services to detect changes. 
         Previously this only did containers, but now it's a full rescan for consistency.
@@ -305,6 +313,8 @@ class WebServer:
                     containers = self.client.containers.list()
                     for container in containers:
                         if swarm_mode != "ignore" and "com.docker.swarm.service.id" in container.attrs["Config"].get("Labels", {}):
+                            continue
+                        if not self._should_register_container_now(container, bypass_start_grace=bypass_start_grace):
                             continue
                         backend = BackendTarget.from_container(container)
                         self.register_backend(backend)
@@ -342,13 +352,46 @@ class WebServer:
         Included for compatibility with DockerEventListener. Calls rescan_all_container
         to perform a unified full rescan.
         """
-        self.rescan_all_container()
+        self.rescan_all_container(bypass_start_grace=True)
 
-    def rescan_and_reload(self, force=False):
-        self.rescan_all_container()
-        return self.reload(force)
+    def rescan_and_reload(self, force=False, bypass_start_grace=True):
+        self.rescan_all_container(bypass_start_grace=bypass_start_grace)
+        return self.reload(immediate=force, force=force)
 
     def cleanup(self):
         self.throttler.shutdown()
         self.ssl_processor.shutdown()
         self.nginx.stop()
+
+    def _should_register_container_now(self, container, bypass_start_grace=False) -> bool:
+        if not self._container_is_running(container):
+            return False
+        if self._container_has_healthcheck(container):
+            return self._container_health_status(container) == "healthy"
+        if bypass_start_grace:
+            return True
+        grace_seconds = float(self.config.get("backend_start_grace_seconds", 0) or 0)
+        if grace_seconds <= 0:
+            return True
+        started_at = container.attrs.get("State", {}).get("StartedAt")
+        if not started_at:
+            return True
+        try:
+            started_time = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+        except ValueError:
+            return True
+        return (datetime.now(timezone.utc) - started_time).total_seconds() >= grace_seconds
+
+    @staticmethod
+    def _container_has_healthcheck(container) -> bool:
+        healthcheck = container.attrs.get("Config", {}).get("Healthcheck")
+        return bool(healthcheck and healthcheck.get("Test") not in (None, [], ["NONE"], ["NONE", ""]))
+
+    @staticmethod
+    def _container_health_status(container) -> str | None:
+        return container.attrs.get("State", {}).get("Health", {}).get("Status")
+
+    @staticmethod
+    def _container_is_running(container) -> bool:
+        state_status = container.attrs.get("State", {}).get("Status")
+        return state_status == "running" or getattr(container, "status", None) == "running"

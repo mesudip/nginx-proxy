@@ -57,7 +57,7 @@ class DockerTestClient:
                         return False
                 elif key == "event":
                     action = event.get("Action") or event.get("status")
-                    if action not in values:
+                    if action not in values and not any(str(action).startswith(f"{value}:") for value in values):
                         return False
             # Additional filter types can be added if needed
             return True
@@ -106,7 +106,13 @@ class MockContainerCollection:
                     "Image": image,
                 },
                 "NetworkSettings": {"Ports": {}, "Networks": {}},  # Add Ports here
+                "State": {"Status": "created"},
             }
+            healthcheck = kwargs.get("healthcheck")
+            if healthcheck:
+                test = healthcheck.get("Test") or healthcheck.get("test")
+                cont.attrs["Config"]["Healthcheck"] = {"Test": test}
+                cont.attrs["State"]["Health"] = {"Status": "starting"}
             if command:
                 cont.attrs["Config"]["Cmd"] = command if isinstance(command, list) else command.split()
             self.client._containers[cid] = cont
@@ -211,6 +217,7 @@ class MockContainer:
         with self.client._lock:
             if self.status in ("created", "stopped"):
                 self.status = "running"
+                self.attrs.setdefault("State", {})["Status"] = "running"
                 # Assign dynamic IPs if not set
                 for net_name, settings in self.attrs["NetworkSettings"]["Networks"].items():
                     if not settings["IPAddress"]:
@@ -239,6 +246,7 @@ class MockContainer:
         with self.client._lock:
             if self.status == "running":
                 self.status = "stopped"
+                self.attrs.setdefault("State", {})["Status"] = "exited"
                 # Emit stop event (and die for similarity to real behavior)
                 self.client._emit_event(
                     {
@@ -302,6 +310,7 @@ class MockContainer:
                     }
                 )
                 self.status = "stopped"
+                self.attrs.setdefault("State", {})["Status"] = "exited"
                 self.client._emit_event(
                     {
                         "status": "stop",
@@ -328,6 +337,23 @@ class MockContainer:
                     "from": self.image,
                     "Type": "container",
                     "Action": "destroy",
+                    "Actor": {"ID": self.id, "Attributes": {"name": self.name, "image": self.image}},
+                    "scope": "local",
+                    "time": int(time.time()),
+                    "timeNano": time.time_ns(),
+                }
+            )
+
+    def set_health_status(self, status):
+        with self.client._lock:
+            self.attrs.setdefault("State", {}).setdefault("Health", {})["Status"] = status
+            self.client._emit_event(
+                {
+                    "status": f"health_status: {status}",
+                    "id": self.id,
+                    "from": self.image,
+                    "Type": "container",
+                    "Action": f"health_status: {status}",
                     "Actor": {"ID": self.id, "Attributes": {"name": self.name, "image": self.image}},
                     "scope": "local",
                     "time": int(time.time()),

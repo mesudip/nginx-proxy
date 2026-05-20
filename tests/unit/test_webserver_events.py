@@ -176,6 +176,99 @@ def test_webserver_add_container(docker_client: DockerTestClient, nginx: DummyNg
     assert f"http://{container_ip}:80" in location.proxy_pass
 
 
+def test_healthchecked_container_waits_for_healthy_event(docker_client: DockerTestClient, nginx: DummyNginx):
+    hostname = "health-waits.example.com"
+    container = docker_client.containers.run(
+        "nginx:alpine",
+        name="health_waits_container",
+        environment={"VIRTUAL_HOST": hostname},
+        network="frontend",
+        healthcheck={"Test": ["CMD", "curl", "-f", "http://localhost/health"]},
+    )
+    time.sleep(0.2)
+
+    expect_server_not_present(nginx, hostname)
+
+    container.set_health_status("healthy")
+    time.sleep(0.2)
+
+    expect_server_up(nginx, hostname)
+
+
+def test_healthchecked_container_unhealthy_event_removes_backend(docker_client: DockerTestClient, nginx: DummyNginx):
+    hostname = "health-unhealthy.example.com"
+    container = docker_client.containers.run(
+        "nginx:alpine",
+        name="health_unhealthy_container",
+        environment={"VIRTUAL_HOST": hostname},
+        network="frontend",
+        healthcheck={"Test": ["CMD", "curl", "-f", "http://localhost/health"]},
+    )
+    container.set_health_status("healthy")
+    time.sleep(0.2)
+    expect_server_up(nginx, hostname)
+
+    container.set_health_status("unhealthy")
+    time.sleep(0.2)
+
+    expect_server_down(nginx, hostname)
+
+
+def test_unhealthy_container_network_reconnect_does_not_readd_backend(
+    docker_client: DockerTestClient, nginx: DummyNginx
+):
+    hostname = "health-reconnect.example.com"
+    container = docker_client.containers.run(
+        "nginx:alpine",
+        name="health_reconnect_container",
+        environment={"VIRTUAL_HOST": hostname},
+        network="frontend",
+        healthcheck={"Test": ["CMD", "curl", "-f", "http://localhost/health"]},
+    )
+    container.set_health_status("healthy")
+    time.sleep(0.2)
+    expect_server_up(nginx, hostname)
+
+    container.set_health_status("unhealthy")
+    time.sleep(0.2)
+    expect_server_down(nginx, hostname)
+
+    frontend_network = docker_client.networks.get("frontend")
+    frontend_network.disconnect(container.id)
+    time.sleep(0.2)
+    frontend_network.connect(container.id)
+    time.sleep(0.2)
+
+    expect_server_down(nginx, hostname)
+
+
+def test_container_startup_is_processed_once(docker_client: DockerTestClient):
+    with patch("certapi.manager.acme_cert_manager.AcmeCertManager.setup") as mock_acme_setup:
+        mock_acme_setup.return_value = None
+        config = get_test_config()
+        docker_client.networks.create("frontend")
+        webserver = WebServer(docker_client, config, nginx_update_throtle_sec=0.1)
+        webserver.update_backend = MagicMock(wraps=webserver.update_backend)
+
+        listener = DockerEventListener(webserver, docker_client)
+        listener_thread = threading.Thread(target=listener.run, daemon=True)
+        listener_thread.start()
+
+        try:
+            docker_client.containers.run(
+                "nginx:alpine",
+                name="count_start_once",
+                environment={"VIRTUAL_HOST": "count-start-once.example.com"},
+                network="frontend",
+            )
+            time.sleep(0.3)
+            assert webserver.update_backend.call_count == 1
+        finally:
+            docker_client.close()
+            listener_thread.join(timeout=2)
+            webserver.cleanup()
+
+
 def test_webserver_remove_container(docker_client: DockerTestClient, nginx: DummyNginx):
     container_name = "test_container"
     hostname = "remove_container.example.com"
@@ -217,6 +310,29 @@ def test_webserver_add_network(docker_client: DockerTestClient, nginx: DummyNgin
     time.sleep(0.2)
 
     # Verify that the server is now in the config
+    expect_server_up(nginx, hostname)
+
+
+def test_webserver_add_first_reachable_network_after_start(docker_client: DockerTestClient, nginx: DummyNginx):
+    container_name = "first_reachable_network_container"
+    hostname = "single-network-attach.example.com"
+    env = {
+        "VIRTUAL_HOST": hostname,
+    }
+
+    container = docker_client.containers.run("nginx:alpine", name=container_name, environment=env)
+    time.sleep(0.2)
+
+    expect_server_not_present(nginx, hostname)
+
+    bridge_network = docker_client.networks.get("bridge")
+    bridge_network.disconnect(container.id)
+    time.sleep(0.2)
+
+    frontend_network = docker_client.networks.get("frontend")
+    frontend_network.connect(container.id)
+    time.sleep(0.2)
+
     expect_server_up(nginx, hostname)
 
 

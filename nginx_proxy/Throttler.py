@@ -9,11 +9,15 @@ class Throttler:
         self._lock = threading.Lock()
         self._timer: Optional[threading.Timer] = None
         self._last_run_time = 0.0
+        self._pending_task: Optional[Callable] = None
 
-    def _trigger(self, task: Callable):
+    def _trigger(self):
         with self._lock:
+            task = self._pending_task
+            self._pending_task = None
             self._timer = None
             self._last_run_time = time.time()
+        if task is not None:
             task()
 
     def throttle(self, task: Callable, immediate: bool = False):
@@ -41,18 +45,22 @@ class Throttler:
                 if self._timer:
                     self._timer.cancel()
                     self._timer = None
+                self._pending_task = None
                 self._last_run_time = current_time
-                return task()
             else:
+                self._pending_task = task
                 # Too soon, schedule if not already scheduled
                 if not self._timer:
                     wait_time = (self._last_run_time + self.interval) - current_time
-                    self._timer = threading.Timer(wait_time, self._trigger, args=[task])
+                    self._timer = threading.Timer(wait_time, self._trigger)
                     self._timer.start()
                 return False
+
+        return task()
 
     def shutdown(self):
         with self._lock:
             if self._timer:
                 self._timer.cancel()
                 self._timer = None
+            self._pending_task = None

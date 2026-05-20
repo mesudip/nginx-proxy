@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import MagicMock, patch, mock_open
+from datetime import datetime, timedelta, timezone
 
 from nginx_proxy.WebServer import WebServer
 
@@ -29,6 +30,16 @@ def web_server(mock_config):
 def test_init(web_server):
     assert web_server.client is not None
     assert web_server.swarm_client is not None
+
+
+def test_init_bypasses_startup_grace_on_initial_rescan(mock_config):
+    with patch('builtins.open', mock_open(read_data="template_content")), \
+         patch('nginx_proxy.WebServer.DummyNginx'), \
+         patch('nginx_proxy.post_processors.SslCertificateProcessor'), \
+         patch.object(WebServer, 'rescan_and_reload') as mock_rescan:
+        WebServer(MagicMock(), mock_config, swarm_client=MagicMock())
+
+    mock_rescan.assert_called_once_with(force=True, bypass_start_grace=True)
 
 
 def test_learn_yourself_in_container(web_server):
@@ -98,3 +109,67 @@ def test_rescan_and_reload(web_server):
          patch.object(web_server, 'rescan_all_container'):
         web_server.rescan_and_reload(force=True)
         mock_reload.assert_called_once()
+
+
+def test_reload_force_runs_immediately(web_server):
+    with patch.object(web_server.throttler, 'throttle') as mock_throttle:
+        web_server.reload(force=True)
+        mock_throttle.assert_called_once()
+        assert mock_throttle.call_args.kwargs["immediate"] is True
+
+
+def test_should_register_container_now_skips_unhealthy_healthcheck(web_server):
+    container = MagicMock()
+    container.status = "running"
+    container.attrs = {
+        "Config": {"Healthcheck": {"Test": ["CMD", "curl", "-f", "http://localhost/health"]}},
+        "State": {"Status": "running", "Health": {"Status": "starting"}},
+    }
+
+    assert web_server._should_register_container_now(container) is False
+
+
+def test_should_register_container_now_honors_startup_grace(web_server):
+    web_server.config["backend_start_grace_seconds"] = 10
+    container = MagicMock()
+    container.status = "running"
+    container.attrs = {
+        "Config": {},
+        "State": {
+            "Status": "running",
+            "StartedAt": (datetime.now(timezone.utc) - timedelta(seconds=3)).isoformat().replace("+00:00", "Z"),
+        },
+    }
+
+    assert web_server._should_register_container_now(container) is False
+
+
+def test_should_register_container_now_can_bypass_startup_grace(web_server):
+    web_server.config["backend_start_grace_seconds"] = 10
+    container = MagicMock()
+    container.status = "running"
+    container.attrs = {
+        "Config": {},
+        "State": {
+            "Status": "running",
+            "StartedAt": (datetime.now(timezone.utc) - timedelta(seconds=3)).isoformat().replace("+00:00", "Z"),
+        },
+    }
+
+    assert web_server._should_register_container_now(container, bypass_start_grace=True) is True
+
+
+def test_connect_skips_unhealthy_healthchecked_container(web_server):
+    web_server.networks = {"network1": "frontend", "frontend": "network1"}
+    container = MagicMock()
+    container.status = "running"
+    container.attrs = {
+        "Config": {"Healthcheck": {"Test": ["CMD", "curl", "-f", "http://localhost/health"]}, "Labels": {}},
+        "State": {"Status": "running", "Health": {"Status": "unhealthy"}},
+    }
+    web_server.client.containers.get.return_value = container
+
+    with patch.object(web_server, 'update_backend') as mock_update_backend:
+        web_server.connect("network1", "container1", "local")
+
+    mock_update_backend.assert_not_called()

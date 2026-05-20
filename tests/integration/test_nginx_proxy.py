@@ -5,7 +5,12 @@ import pytest
 import requests
 import websocket
 import time
+from datetime import datetime, timezone
+from unittest.mock import patch
 
+from nginx.NginxConf import HttpBlock
+from nginx_proxy.WebServer import WebServer
+from tests.helpers.docker_test_client import DockerTestClient
 from tests.helpers.integration_helpers import expect_server_up_integration
 from ..helpers import start_backend, stop_backend  # Import helpers
 
@@ -31,6 +36,57 @@ def get_request_url(virtual_host, request_path, scheme="http"):
     host_part = virtual_host.split("->")[0].split(";")[0].strip()
     hostname = host_part.split("/")[0]
     return f"{scheme}://{hostname}{request_path}"
+
+
+def _has_proxy_server(config_str, server_name):
+    config = HttpBlock.parse(config_str)
+    for server in config.servers:
+        if server_name in server.server_names:
+            return any(location.proxy_pass is not None for location in server.locations)
+    return False
+
+
+def test_rescan_during_start_grace_registers_running_backend(tmp_path):
+    docker_client = DockerTestClient()
+    docker_client.networks.create("frontend")
+    hostname = "rescan-grace.example.com"
+    grace_seconds = 0.3
+    config = {
+        "dummy_nginx": True,
+        "conf_dir": str(tmp_path / "nginx"),
+        "challenge_dir": str(tmp_path / "challenges") + "/",
+        "vhosts_template_dir": "vhosts_template",
+        "ssl_dir": str(tmp_path / "ssl"),
+        "cert_renew_threshold_days": 30,
+        "docker_swarm": "ignore",
+        "backend_start_grace_seconds": grace_seconds,
+        "client_max_body_size": "1m",
+        "default_server": True,
+        "certapi": None,
+        "wellknown_path": "/.well-known/acme-challenge/",
+        "enable_ipv6": False,
+    }
+    for path in ("nginx", "challenges", "ssl"):
+        (tmp_path / path).mkdir()
+
+    with patch("certapi.manager.acme_cert_manager.AcmeCertManager.setup", return_value=None):
+        webserver = WebServer(docker_client, config, nginx_update_throtle_sec=0.05)
+
+    try:
+        container = docker_client.containers.run(
+            "nginx:alpine",
+            name="rescan_grace_backend",
+            environment={"VIRTUAL_HOST": hostname},
+            network="frontend",
+        )
+        container.attrs["State"]["StartedAt"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+        webserver.rescan_and_reload(force=True)
+
+        assert _has_proxy_server(webserver.nginx.current_config, hostname)
+    finally:
+        docker_client.close()
+        webserver.cleanup()
 
 
 @pytest.mark.parametrize(
