@@ -1,5 +1,5 @@
-# mesudip/python-nginx:alpine is merge of official python and nginx images.
-FROM mesudip/python-nginx
+# This provides nginx and python together in a container
+FROM ghcr.io/mesudip/python-nginx:py3.13.13-nginx1.30.1-alpine3.23
 
 RUN pip install --upgrade pip
 
@@ -19,7 +19,6 @@ COPY ./vhosts_template/nginx.conf /etc/nginx/nginx.conf
 ARG LETSENCRYPT_API="https://acme-v02.api.letsencrypt.org/directory"
 ENV LETSENCRYPT_API=${LETSENCRYPT_API} \
     CHALLENGE_DIR=/etc/nginx/challenges/ \
-    DHPARAM_SIZE=2048 \
     CLIENT_MAX_BODY_SIZE=1m \
     NGINX_WORKER_PROCESSES=auto \
     NGINX_WORKER_CONNECTIONS=65535 \

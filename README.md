@@ -85,7 +85,7 @@ Control the default behavior of `nginx-proxy`:
 | `NGINX_WORKER_CONNECTIONS` | `65535` | Max connections per worker. |
 | `CERT_RENEW_THRESHOLD_DAYS` | `30` | By default certificates are renewed when they have <=30 days remaining. |
 | `ENABLE_IPV6` | `false` | Enable IPv6 support on nginx. |
-| `DOCKER_SWARM` | `ignore` | Treats every container like local by defeault. Set  `enable` for Swarm support, `strict` for Swarm-only or`exclude` to not include swarm containers  |
+| `DOCKER_SWARM` | `ignore` | Controls Docker Swarm discovery. Supported values are `ignore`, `exclude`, `enable`, and `strict`; see [Docker Swarm Support](#docker-swarm-support-preview). |
 | `SWARM_DOCKER_HOST` | - | URL of the Swarm manager socket (e.g., `tcp://manager:2375`). |
 | `CERTAPI_URL` | - | External Certificate API URL. |
 | `CERTAPI_BATCH_DOMAINS` | `true` | When using `CERTAPI_URL`, request safe domain batching (`batch_domains=true`) to avoid recursive domain-order errors. |
@@ -139,10 +139,36 @@ Format: `STATIC_VIRTUAL_HOST=domain.com->http://192.168.0.1:8080`.
 **Note** Be aware that if domain as target, nginx will crash if DNS resolution fails.
 
 ## Docker Swarm Support [Preview]
-Enable swarm mode by setting `DOCKER_SWARM` to `enable` (local & swarm) or `strict` (swarm only).
-If current node is not manager, set `SWARM_DOCKER_HOST=tcp://manager:2375`.
 
-**Warning** : Automatic exposed port detection will not work when swarm support is enabled. You must explicitly set port on the `VIRTUAL_HOST` or set `VIRTUAL_PORT` on the container.
+**Warning** : Automatic exposed port detection will not work when swarm support is enabled. You must explicitly set port on the `VIRTUAL_HOST`.
+
+
+Docker Swarm discovery is controlled by the `DOCKER_SWARM` environment variable on the `nginx-proxy` container.
+
+| `DOCKER_SWARM` value | Local containers | Swarm services | Use case |
+| :--- | :--- | :--- | :--- |
+| `ignore` | Included | Not discovered | Default Docker-only behavior. Swarm task containers are treated like standalone containers if they are visible on the local Docker socket. |
+| `exclude` | Included | Not discovered | Docker-only discovery while explicitly ignoring containers that belong to Swarm services. |
+| `enable` | Included | Included | Mixed mode. Use this when `nginx-proxy` should route both standalone containers and Swarm services. |
+| `strict` | Excluded | Included | Swarm-only mode. Use this when `nginx-proxy` should route only Swarm services. |
+
+`ignore` is the default and does not require the Docker node to be in Swarm mode. In this mode, `nginx-proxy` only reads the normal Docker container API. If a Swarm task container is visible on the local Docker socket, it can be registered as if it were a regular container.
+
+`exclude` still uses only the local Docker container API, but skips containers that have Swarm service labels. This is useful when the same Docker host runs standalone containers and Swarm services, but this proxy instance should only manage standalone containers.
+
+`enable` reads both local containers and Swarm services. Standalone containers are discovered from the local Docker socket. Swarm services are discovered from the Swarm manager API, and task containers are skipped so each service is registered once.
+
+`strict` reads only Swarm services. Local standalone containers are ignored, and Swarm task containers are also ignored. This is the mode to use when this proxy instance is dedicated to Swarm routing.
+
+For `enable` and `strict`, the Swarm API client must be connected to a manager node because Docker only allows managers to list services. If `nginx-proxy` is running on a worker node, set `SWARM_DOCKER_HOST` to a reachable manager Docker API endpoint:
+
+```bash
+-e DOCKER_SWARM=enable \
+-e SWARM_DOCKER_HOST=tcp://manager:2375
+```
+
+If `SWARM_DOCKER_HOST` is not set, the local Docker socket is used for both local containers and Swarm services. When `SWARM_DOCKER_HOST` is set, `nginx-proxy` uses the local Docker socket for standalone containers and the remote manager socket for Swarm services. If the local Docker socket cannot be reached but `SWARM_DOCKER_HOST` is set, `nginx-proxy` switches to `strict` mode and uses only the remote Swarm manager.
+
 
 ## Advanced Features
 ### Redirection
