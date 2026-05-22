@@ -107,19 +107,19 @@ class Nginx:
         # Try to find the specific error line for the config file we are managing
         config_filename = os.path.basename(self.config_file_path)
         escaped_filename = re.escape(config_filename)
-        
+
         # Search for: filename:line_number
         match = re.search(f"{escaped_filename}:(\\d+)", error_msg)
         if match:
             return int(match.group(1))
-            
+
         # Fallback: Search for any line number pattern usually at end of line in Nginx errors
         lines = error_msg.splitlines()
         for line in lines:
             if "emerg" in line or "error" in line:
-                 match = re.search(r':(\d+)(?:\s|$)', line)
-                 if match:
-                     return int(match.group(1))
+                match = re.search(r":(\d+)(?:\s|$)", line)
+                if match:
+                    return int(match.group(1))
         return None
 
     def _print_error_context(self, config_str, line_no):
@@ -130,10 +130,10 @@ class Nginx:
             return False
 
         print(f"Error Location in Config (Line {line_no}):", file=sys.stderr)
-        
-        start_idx = max(0, line_no - 6) 
+
+        start_idx = max(0, line_no - 6)
         end_idx = min(total_lines, line_no + 5)
-        
+
         for i in range(start_idx, end_idx):
             current_line = i + 1
             marker = ">>" if current_line == line_no else "  "

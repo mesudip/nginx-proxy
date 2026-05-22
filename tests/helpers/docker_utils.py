@@ -31,18 +31,22 @@ def start_backend(
     if isinstance(virtual_host_env, dict):
         env_list = [f"{k}={v}" for k, v in virtual_host_env.items()]
 
-
     def slug63(name: str) -> str:
-        s = re.sub(r'[^A-Za-z0-9]+', '-', name).strip('-')
-        s = s[-63:].lstrip('-')
+        s = re.sub(r"[^A-Za-z0-9]+", "-", name).strip("-")
+        s = s[-63:].lstrip("-")
         return s
-    svc_name=f"test-service-{uuid.uuid4().hex}" if pytest_request is None else slug63(f"{pytest_request.node.name}-{uuid.uuid4().hex[:8]}")
-    
+
+    svc_name = (
+        f"test-service-{uuid.uuid4().hex}"
+        if pytest_request is None
+        else slug63(f"{pytest_request.node.name}-{uuid.uuid4().hex[:8]}")
+    )
+
     if backend_type == "service":
         service_kwargs = {}
         if healthcheck is not None:
             service_kwargs["healthcheck"] = healthcheck
-        backend= docker_client.services.create(
+        backend = docker_client.services.create(
             image=image_name,
             env=env_list,
             networks=[test_network.name],
@@ -56,7 +60,7 @@ def start_backend(
         container_kwargs = {}
         if healthcheck is not None:
             container_kwargs["healthcheck"] = healthcheck
-        backend=docker_client.containers.run(
+        backend = docker_client.containers.run(
             image_name,
             detach=True,
             environment=virtual_host_env,  # run accepts dict or list
@@ -69,6 +73,7 @@ def start_backend(
             time.sleep(1)
     return backend
 
+
 def stop_backend(
     backend: docker.models.containers.Container | docker.models.services.Service,
 ):
@@ -80,7 +85,9 @@ def stop_backend(
         backend.remove()
         # additionally try to find container and force remove it
         try:
-            containers = backend.client.containers.list(all=True, filters={"label": f"com.docker.swarm.service.name={backend.name}"})
+            containers = backend.client.containers.list(
+                all=True, filters={"label": f"com.docker.swarm.service.name={backend.name}"}
+            )
             for container in containers:
                 container.remove(force=True)
         except (KeyboardInterrupt, SystemExit):

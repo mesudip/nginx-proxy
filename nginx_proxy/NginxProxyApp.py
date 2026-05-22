@@ -72,13 +72,8 @@ class NginxProxyApp:
             port = parsed.port
             if port is None:
                 port = 443 if parsed.scheme == "https" else 80
-            
-            certapi = {
-                "url": certapi_url,
-                "host": parsed.hostname,
-                "scheme": parsed.scheme,
-                "port": port
-            }
+
+            certapi = {"url": certapi_url, "host": parsed.hostname, "scheme": parsed.scheme, "port": port}
 
         wellknown_path = os.getenv("WELLKNOWN_PATH", "/.well-known/acme-challenge/").strip()
         # Ensure wellknown_path starts with / and ends with /
@@ -163,7 +158,7 @@ class NginxProxyApp:
 
         # Validate Swarm mode if enabled
         swarm_mode = self.config["docker_swarm"]
-        if swarm_mode in ("enable", "strict"):
+        if swarm_mode in ("enable", "prefer-local", "strict"):
             try:
                 info = self.swarm_client.info()
                 swarm_info = info.get("Swarm", {})
@@ -186,7 +181,9 @@ class NginxProxyApp:
 
     def start(self):
         self.server = WebServer(self.docker_client, self.config, swarm_client=self.swarm_client)
-        self.docker_event_listener = DockerEventListener(self.server, self.docker_client, swarm_client=self.swarm_client)
+        self.docker_event_listener = DockerEventListener(
+            self.server, self.docker_client, swarm_client=self.swarm_client
+        )
 
     def stop(self):
         print("Stopping NginxProxyApp...")

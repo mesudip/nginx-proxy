@@ -37,7 +37,7 @@ class DockerEventListener:
                 t1.start()
                 threads.append(t1)
 
-            if swarm_mode in ("enable", "strict") and self.swarm_client is not None:
+            if swarm_mode in ("enable", "prefer-local", "strict") and self.swarm_client is not None:
                 t2 = threading.Thread(target=self._listen, args=(self.swarm_client,), daemon=True)
                 t2.start()
                 threads.append(t2)
@@ -53,7 +53,7 @@ class DockerEventListener:
         types = []
         events = ["health_status"]  # common events
 
-        if client == self.swarm_client and swarm_mode in ("enable", "strict"):
+        if client == self.swarm_client and swarm_mode in ("enable", "prefer-local", "strict"):
             types.append("service")
             events.extend(["create", "update", "remove"])
 
@@ -114,9 +114,9 @@ class DockerEventListener:
     def _process_container_event(self, action, event):
         container_id = event.get("Actor", {}).get("ID") or event.get("id")
         attributes = event.get("Actor", {}).get("Attributes", {})
-        
+
         swarm_mode = self.web_server.config.get("docker_swarm", "ignore")
-        if swarm_mode != "ignore" and "com.docker.swarm.service.id" in attributes:
+        if swarm_mode not in ("ignore", "prefer-local") and "com.docker.swarm.service.id" in attributes:
             # print(f"Skipping event {action} for service task container {container_id}")
             return
 
@@ -135,7 +135,7 @@ class DockerEventListener:
         attributes = event.get("Actor", {}).get("Attributes", {})
 
         swarm_mode = self.web_server.config.get("docker_swarm", "ignore")
-        if swarm_mode != "ignore" and "com.docker.swarm.service.id" in attributes:
+        if swarm_mode not in ("ignore", "prefer-local") and "com.docker.swarm.service.id" in attributes:
             return
 
         health_status = (action or "").strip().lower().removeprefix("health_status:").strip()
@@ -153,7 +153,9 @@ class DockerEventListener:
                     self._activate_backend_if_running(container_id, container=container)
                 else:
                     self._waiting_for_healthy.add(container_id)
-                    self._log_container_event("Container waiting   ", container_id, container=container, detail="for healthy")
+                    self._log_container_event(
+                        "Container waiting   ", container_id, container=container, detail="for healthy"
+                    )
                 return
 
             grace_seconds = float(self.web_server.config.get("backend_start_grace_seconds", 0) or 0)
@@ -220,7 +222,9 @@ class DockerEventListener:
         state_status = container.attrs.get("State", {}).get("Status")
         return state_status == "running" or getattr(container, "status", None) == "running"
 
-    def _log_container_event(self, label: str, container_id: str, container=None, attributes=None, detail: str | None = None):
+    def _log_container_event(
+        self, label: str, container_id: str, container=None, attributes=None, detail: str | None = None
+    ):
         container_name = self._container_name(container=container, container_id=container_id, attributes=attributes)
         parts = [label, "Id:" + container_id[:12]]
         if container_name:
@@ -296,7 +300,7 @@ class DockerEventListener:
 
         swarm_mode = self.web_server.config.get("docker_swarm", "ignore")
         labels = container.attrs.get("Config", {}).get("Labels", {})
-        if swarm_mode != "ignore" and "com.docker.swarm.service.id" in labels:
+        if swarm_mode not in ("ignore", "prefer-local") and "com.docker.swarm.service.id" in labels:
             return False
         return True
 
@@ -305,7 +309,9 @@ class DockerEventListener:
 
     def _load_started_container_ids(self) -> set[str]:
         try:
-            return {container.id for container in self.client.containers.list() if self._container_is_running(container)}
+            return {
+                container.id for container in self.client.containers.list() if self._container_is_running(container)
+            }
         except (KeyboardInterrupt, SystemExit):
             raise
         except Exception:

@@ -151,7 +151,12 @@ def host_generator(backend: BackendTarget, known_networks: set = {}):
 
     # We need a clean object to return that represents the target
     target_base = BackendTarget(
-        backend.id, name=backend.name, env=backend.env, labels=backend.labels, backend_type=backend.type
+        backend.id,
+        name=backend.name,
+        env=backend.env,
+        labels=backend.labels,
+        backend_type=backend.type,
+        backup=backend.backup,
     )
 
     found_ip = None
@@ -182,6 +187,10 @@ def host_generator(backend: BackendTarget, known_networks: set = {}):
             location = location + "/"
         container_data.id = backend.id
         container_data.name = backend.name
+        container_data.env = backend.env
+        container_data.labels = backend.labels
+        container_data.type = backend.type
+        container_data.backup = backend.backup
         host.secured = "https" in host.scheme or "wss" in host.scheme or host.port == 443
         if host.port is None:
             host.port = 443 if host.secured else 80
@@ -205,6 +214,10 @@ def host_generator(backend: BackendTarget, known_networks: set = {}):
         container_data.address = found_ip
         container_data.id = backend.id
         container_data.name = backend.name
+        container_data.env = backend.env
+        container_data.labels = backend.labels
+        container_data.type = backend.type
+        container_data.backup = backend.backup
 
         if container_data.port is None:
             if override_port:

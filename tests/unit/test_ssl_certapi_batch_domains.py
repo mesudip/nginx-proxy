@@ -147,9 +147,7 @@ def test_getssl_force_passes_self_verify_false_to_remote_backend(monkeypatch, tm
     ):
         runpy.run_path(str(REPO_ROOT / "getssl"), run_name="__main__")
 
-    backend.obtain.assert_called_once_with(
-        ["api.example.com"], key_type="ecdsa", batch_domains=True, self_verify=False
-    )
+    backend.obtain.assert_called_once_with(["api.example.com"], key_type="ecdsa", batch_domains=True, self_verify=False)
 
 
 def test_getssl_passes_self_verify_true_to_local_backend_by_default(monkeypatch, tmp_path):
@@ -181,6 +179,4 @@ def test_getssl_passes_self_verify_true_to_local_backend_by_default(monkeypatch,
     ):
         runpy.run_path(str(REPO_ROOT / "getssl"), run_name="__main__")
 
-    backend.obtain.assert_called_once_with(
-        ["api.example.com"], key_type="ecdsa", batch_domains=True, self_verify=True
-    )
+    backend.obtain.assert_called_once_with(["api.example.com"], key_type="ecdsa", batch_domains=True, self_verify=True)

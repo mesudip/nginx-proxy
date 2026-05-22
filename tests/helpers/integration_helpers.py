@@ -7,6 +7,7 @@ import time
 from nginx.NginxConf import HttpBlock, NginxConfig, ServerBlock
 from tests.helpers.docker_utils import start_backend, stop_backend
 
+
 def get_nginx_config_from_container(nginx_proxy_container: docker.models.containers.Container) -> str:
     """
     Executes a command inside the nginx_proxy_container to get the current Nginx configuration.

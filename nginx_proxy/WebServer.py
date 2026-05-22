@@ -69,7 +69,7 @@ class WebServer:
         )
         self.basic_auth_processor = post_processors.BasicAuthProcessor(self.config["conf_dir"] + "/basic_auth")
         self.redirect_processor = post_processors.RedirectProcessor()
-        self.sticky_session_processor = post_processors.StickySessionProcessor()
+        self.upstream_processor = post_processors.UpstreamProcessor()
 
         # Render default config for Nginx setup
         default_nginx_config = self.template.render(config=self.config)
@@ -137,7 +137,9 @@ class WebServer:
                 location.container = list(location.backends)[0]
             hosts.append(host)
 
-        upstreams = self.sticky_session_processor.process(hosts)
+        upstreams = self.upstream_processor.process(
+            hosts, prefer_local=self.config.get("docker_swarm") == "prefer-local"
+        )
         self.basic_auth_processor.process_basic_auth(hosts)
         self.ssl_processor.process_ssl_certificates(hosts)
         hosts = self._ensure_https_redirects(hosts)
@@ -210,7 +212,7 @@ class WebServer:
     # removes container from the maintained list.
     # this is called when a caontainer dies or leaves a known network
     def remove_backend(self, container_id: str):
-        deleted, deleted_domain = self.config_data.remove_backend(container_id)
+        deleted, deleted_domain = self._remove_backend_without_reload(container_id)
         if deleted:
             print(
                 "Container removed   ",
@@ -219,6 +221,9 @@ class WebServer:
                 sep="\t",
             )
             self.reload()
+
+    def _remove_backend_without_reload(self, container_id: str):
+        return self.config_data.remove_backend(container_id)
 
     def reload(self, immediate=False, force=False) -> bool:
         """
@@ -269,9 +274,15 @@ class WebServer:
                 container_obj = self.client.containers.get(container)
                 if container_obj.status != "running":
                     return
-                if self._container_has_healthcheck(container_obj) and self._container_health_status(container_obj) != "healthy":
+                if (
+                    self._container_has_healthcheck(container_obj)
+                    and self._container_health_status(container_obj) != "healthy"
+                ):
                     return
-                if swarm_mode != "ignore" and "com.docker.swarm.service.id" in container_obj.attrs["Config"].get("Labels", {}):
+                if swarm_mode not in (
+                    "ignore",
+                    "prefer-local",
+                ) and "com.docker.swarm.service.id" in container_obj.attrs["Config"].get("Labels", {}):
                     # print(f"Skipping network connect for service task container {container}")
                     return
                 backend = BackendTarget.from_container(container_obj)
@@ -290,30 +301,41 @@ class WebServer:
         :return: true if state change affected the nginx configuration else false
         """
         try:
-            if not self.config_data.has_backend(backend.id):
-                if self.register_backend(backend):
-                    self.reload()
-                    return True
+            existing_backend = self.config_data.has_backend(backend.id)
+            if existing_backend and backend.type != "service":
+                return False
+
+            removed = None
+            if existing_backend:
+                removed, _ = self._remove_backend_without_reload(backend.id)
+
+            registered = self.register_backend(backend)
+            if registered or removed:
+                self.reload()
+                return True
         except requests.exceptions.HTTPError as e:
             pass
         return False
 
     def rescan_all_container(self, bypass_start_grace=False):
         """
-        Rescan all the containers and services to detect changes. 
+        Rescan all the containers and services to detect changes.
         Previously this only did containers, but now it's a full rescan for consistency.
         """
         swarm_mode = self.config.get("docker_swarm", "ignore")
         with self._lock:
             # Clear previous state to ensure we don't leak dead containers/services
             self.config_data.clear()
-            
+
             # 1. Register local containers (unless in strict swarm mode)
             if swarm_mode != "strict" and self.client is not None:
                 try:
                     containers = self.client.containers.list()
                     for container in containers:
-                        if swarm_mode != "ignore" and "com.docker.swarm.service.id" in container.attrs["Config"].get("Labels", {}):
+                        if swarm_mode not in (
+                            "ignore",
+                            "prefer-local",
+                        ) and "com.docker.swarm.service.id" in container.attrs["Config"].get("Labels", {}):
                             continue
                         if not self._should_register_container_now(container, bypass_start_grace=bypass_start_grace):
                             continue
@@ -324,8 +346,8 @@ class WebServer:
                 except Exception as e:
                     print(f"Error scanning containers: {e}", file=sys.stderr)
 
-            # 2. Register swarm services (if enable or strict)
-            if swarm_mode in ("enable", "strict"):
+            # 2. Register swarm services (if enable, prefer-local, or strict)
+            if swarm_mode in ("enable", "prefer-local", "strict"):
                 try:
                     info = self.swarm_client.info()
                     swarm_info = info.get("Swarm", {})

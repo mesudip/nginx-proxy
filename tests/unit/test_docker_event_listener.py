@@ -26,14 +26,14 @@ def swarm_client():
 
 def test_run_with_separate_clients(web_server, docker_client, swarm_client):
     listener = DockerEventListener(web_server, docker_client, swarm_client)
-    with patch('threading.Thread') as mock_thread:
+    with patch("threading.Thread") as mock_thread:
         listener.run()
         assert mock_thread.call_count == 2
 
 
 def test_run_with_same_client(web_server, docker_client):
     listener = DockerEventListener(web_server, docker_client, docker_client)
-    with patch.object(listener, '_listen') as mock_listen:
+    with patch.object(listener, "_listen") as mock_listen:
         listener.run()
         mock_listen.assert_called_once_with(docker_client)
 
@@ -42,12 +42,14 @@ def test_listen_for_container_events(web_server, docker_client):
     web_server.config = {"docker_swarm": "ignore"}
     listener = DockerEventListener(web_server, docker_client, docker_client)
 
-    docker_client.events.return_value = iter([
-        {"Type": "container", "Action": "start", "id": "container1"},
-        {"Type": "container", "Action": "stop", "id": "container2"},
-    ])
+    docker_client.events.return_value = iter(
+        [
+            {"Type": "container", "Action": "start", "id": "container1"},
+            {"Type": "container", "Action": "stop", "id": "container2"},
+        ]
+    )
 
-    with patch.object(listener, '_process_container_event') as mock_process:
+    with patch.object(listener, "_process_container_event") as mock_process:
         t = threading.Thread(target=listener._listen, args=(docker_client,))
         t.daemon = True
         t.start()
@@ -57,7 +59,7 @@ def test_listen_for_container_events(web_server, docker_client):
         t.join(timeout=0.1)
 
 
-def test_process_service_event_update(web_server:WebServer, docker_client, swarm_client):
+def test_process_service_event_update(web_server: WebServer, docker_client, swarm_client):
     listener = DockerEventListener(web_server, docker_client, swarm_client)
     service_id = "service1"
     event = {"Action": "update", "Actor": {"ID": service_id}}
@@ -70,7 +72,7 @@ def test_process_service_event_update(web_server:WebServer, docker_client, swarm
     web_server.update_backend.assert_called_once()
 
 
-def test_process_service_event_remove(web_server:WebServer, docker_client, swarm_client):
+def test_process_service_event_remove(web_server: WebServer, docker_client, swarm_client):
     listener = DockerEventListener(web_server, docker_client, swarm_client)
     service_id = "service1"
     event = {"Action": "remove", "Actor": {"ID": service_id}}
@@ -78,6 +80,83 @@ def test_process_service_event_remove(web_server:WebServer, docker_client, swarm
     listener._process_service_event("remove", event)
 
     web_server.remove_backend.assert_called_once_with(service_id)
+
+
+def test_swarm_task_container_event_is_ignored_in_enable(web_server, docker_client):
+    web_server.config = {"docker_swarm": "enable", "backend_start_grace_seconds": 0}
+    listener = DockerEventListener(web_server, docker_client, docker_client)
+
+    listener._process_container_event(
+        "start",
+        {
+            "Actor": {
+                "ID": "container1",
+                "Attributes": {"com.docker.swarm.service.id": "service1"},
+            }
+        },
+    )
+
+    web_server.update_backend.assert_not_called()
+    docker_client.containers.get.assert_not_called()
+
+
+def test_swarm_task_container_event_is_processed_in_prefer_local(web_server, docker_client):
+    web_server.config = {"docker_swarm": "prefer-local", "backend_start_grace_seconds": 0}
+    listener = DockerEventListener(web_server, docker_client, docker_client)
+    container = MagicMock()
+    container.id = "container1"
+    container.attrs = {
+        "Config": {
+            "Env": [],
+            "Labels": {"com.docker.swarm.service.id": "service1"},
+        },
+        "State": {"Status": "running"},
+        "Name": "/swarm-task",
+        "NetworkSettings": {"Networks": {}, "Ports": {}},
+    }
+    docker_client.containers.get.return_value = container
+
+    listener._process_container_event(
+        "start",
+        {
+            "Actor": {
+                "ID": "container1",
+                "Attributes": {"com.docker.swarm.service.id": "service1"},
+            }
+        },
+    )
+
+    web_server.update_backend.assert_called_once()
+
+
+def test_swarm_task_container_healthcheck_waits_in_prefer_local(web_server, docker_client):
+    web_server.config = {"docker_swarm": "prefer-local", "backend_start_grace_seconds": 0}
+    listener = DockerEventListener(web_server, docker_client, docker_client)
+    container = MagicMock()
+    container.name = "swarm-health-task"
+    container.attrs = {
+        "Config": {
+            "Healthcheck": {"Test": ["CMD", "curl", "-f", "http://localhost/health"]},
+            "Labels": {"com.docker.swarm.service.id": "service1"},
+        },
+        "State": {"Status": "running", "Health": {"Status": "starting"}},
+        "Name": "/swarm-health-task",
+        "NetworkSettings": {"Networks": {}, "Ports": {}},
+    }
+    docker_client.containers.get.return_value = container
+
+    listener._process_container_event(
+        "start",
+        {
+            "Actor": {
+                "ID": "container1",
+                "Attributes": {"com.docker.swarm.service.id": "service1"},
+            }
+        },
+    )
+
+    web_server.update_backend.assert_not_called()
+    assert "container1" in listener._waiting_for_healthy
 
 
 def test_process_container_start_with_healthcheck_waits_for_healthy(web_server, docker_client):
@@ -177,7 +256,9 @@ def test_process_container_die_cancels_pending_activation(web_server, docker_cli
 
     listener._process_container_event("start", {"Actor": {"ID": "container1", "Attributes": {}}})
     with patch("builtins.print") as mock_print:
-        listener._process_container_event("die", {"Actor": {"ID": "container1", "Attributes": {"name": "dying-container"}}})
+        listener._process_container_event(
+            "die", {"Actor": {"ID": "container1", "Attributes": {"name": "dying-container"}}}
+        )
 
     time.sleep(0.1)
 

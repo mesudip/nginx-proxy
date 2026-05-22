@@ -9,7 +9,13 @@ from typing import List
 from docker.types import Healthcheck
 from nginx.NginxConf import HttpBlock, NginxConfig, ServerBlock
 from tests.helpers.docker_utils import start_backend, stop_backend
-from tests.helpers import get_nginx_config_from_container,expect_server_down_integration, expect_server_not_present_integration, expect_server_up_integration
+from tests.helpers import (
+    get_nginx_config_from_container,
+    expect_server_down_integration,
+    expect_server_not_present_integration,
+    expect_server_up_integration,
+)
+
 
 @pytest.fixture(scope="session", params=["enable"], ids=["swarm_enable"])
 def swarm_mode(request):
@@ -24,7 +30,7 @@ START_GRACE_SECONDS = 2
 
 def _http_healthcheck() -> Healthcheck:
     return Healthcheck(
-        test='node -e "require(\'http\').get(\'http://127.0.0.1:8080\', r => process.exit(r.statusCode === 200 ? 0 : 1)).on(\'error\', () => process.exit(1))"',
+        test="node -e \"require('http').get('http://127.0.0.1:8080', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))\"",
         interval=1_000_000_000,
         timeout=1_000_000_000,
         retries=2,
@@ -34,7 +40,7 @@ def _http_healthcheck() -> Healthcheck:
 
 def _marker_healthcheck() -> Healthcheck:
     return Healthcheck(
-        test='test -f /tmp/nginx-proxy-health-ready && node -e "require(\'http\').get(\'http://127.0.0.1:8080\', r => process.exit(r.statusCode === 200 ? 0 : 1)).on(\'error\', () => process.exit(1))"',
+        test="test -f /tmp/nginx-proxy-health-ready && node -e \"require('http').get('http://127.0.0.1:8080', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))\"",
         interval=1_000_000_000,
         timeout=1_000_000_000,
         retries=1,
@@ -228,7 +234,7 @@ def test_webserver_add_network_integration(
     other_network = docker_client.networks.create(other_network_name, driver="bridge")
     backend = None
     try:
-        backend = start_backend(docker_client, other_network, env, backend_type=backend_type,sleep=False)
+        backend = start_backend(docker_client, other_network, env, backend_type=backend_type, sleep=False)
 
         expect_server_not_present_integration(nginx_proxy_container[0], virtual_host, timeout=15)
 
@@ -260,7 +266,7 @@ def test_webserver_remove_network_integration(
     virtual_host = backend_type + "." + "removenet.example.com"
     env = {"VIRTUAL_HOST": virtual_host}
 
-    backend = start_backend(docker_client, test_network, env, backend_type=backend_type,sleep=False)
+    backend = start_backend(docker_client, test_network, env, backend_type=backend_type, sleep=False)
     expect_server_up_integration(nginx_proxy_container[0], virtual_host, timeout=15)
 
     # Disconnect the container from the test_network
@@ -287,7 +293,7 @@ def test_webserver_recreate_same_name_container_with_different_host_integration(
 
     # Create with old env
     backend_old = start_backend(
-        docker_client, test_network, {"VIRTUAL_HOST": old_virtual_host}, backend_type=backend_type,sleep=False
+        docker_client, test_network, {"VIRTUAL_HOST": old_virtual_host}, backend_type=backend_type, sleep=False
     )
     expect_server_up_integration(nginx_proxy_container[0], old_virtual_host, timeout=15)
 
@@ -297,8 +303,7 @@ def test_webserver_recreate_same_name_container_with_different_host_integration(
     expect_server_down_integration(nginx_proxy_container[0], old_virtual_host, timeout=15)
 
     backend_new = start_backend(
-        docker_client, test_network, {"VIRTUAL_HOST": new_virtual_host}, backend_type=backend_type
-        ,sleep=False
+        docker_client, test_network, {"VIRTUAL_HOST": new_virtual_host}, backend_type=backend_type, sleep=False
     )
     try:
         expect_server_up_integration(nginx_proxy_container[0], new_virtual_host, timeout=15)
@@ -320,7 +325,7 @@ def test_webserver_add_container_with_ssl_integration(
     and HTTPS server blocks with self-signed certificates.
     """
     virtual_host = backend_type + "." + "ssl-test.example.com"
-    env = {"VIRTUAL_HOST": f"https://{virtual_host}","VIRTUAL_PORT":"8080"}
+    env = {"VIRTUAL_HOST": f"https://{virtual_host}", "VIRTUAL_PORT": "8080"}
 
     backend = start_backend(docker_client, test_network, env, backend_type=backend_type)
     try:
@@ -430,7 +435,9 @@ def test_webserver_add_two_containers_with_same_virtual_host_integration(
 
         config_str = get_nginx_config_from_container(nginx_proxy_container[0])
         assert upstream is not None, f"Upstream block for {virtual_host} not found after timeout. Config:\n{config_str}"
-        assert len(upstream.get_directives("server")) == 2, f"Expected 2 servers in upstream, found {len(upstream.get_directives('server'))}. Config:\n{config_str}"
+        assert (
+            len(upstream.get_directives("server")) == 2
+        ), f"Expected 2 servers in upstream, found {len(upstream.get_directives('server'))}. Config:\n{config_str}"
     finally:
         stop_backend(backend1)
         stop_backend(backend2)

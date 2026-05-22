@@ -283,7 +283,7 @@ def test_webserver_remove_container(docker_client: DockerTestClient, nginx: Dumm
     # Remove container
     container.remove(force=True)
     time.sleep(1)
-    
+
     expect_server_down(nginx, hostname)
 
 

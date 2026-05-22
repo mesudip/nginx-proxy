@@ -85,7 +85,7 @@ Control the default behavior of `nginx-proxy`:
 | `NGINX_WORKER_CONNECTIONS` | `65535` | Max connections per worker. |
 | `CERT_RENEW_THRESHOLD_DAYS` | `30` | By default certificates are renewed when they have <=30 days remaining. |
 | `ENABLE_IPV6` | `false` | Enable IPv6 support on nginx. |
-| `DOCKER_SWARM` | `ignore` | Controls Docker Swarm discovery. Supported values are `ignore`, `exclude`, `enable`, and `strict`; see [Docker Swarm Support](#docker-swarm-support-preview). |
+| `DOCKER_SWARM` | `ignore` | Controls Docker Swarm discovery. Supported values are `ignore`, `exclude`, `enable`, `prefer-local`, and `strict`; see [Docker Swarm Support](#docker-swarm-support-preview). |
 | `SWARM_DOCKER_HOST` | - | URL of the Swarm manager socket (e.g., `tcp://manager:2375`). |
 | `CERTAPI_URL` | - | External Certificate API URL. |
 | `CERTAPI_BATCH_DOMAINS` | `true` | When using `CERTAPI_URL`, request safe domain batching (`batch_domains=true`) to avoid recursive domain-order errors. |
@@ -150,6 +150,7 @@ Docker Swarm discovery is controlled by the `DOCKER_SWARM` environment variable 
 | `ignore` | Included | Not discovered | Default Docker-only behavior. Swarm task containers are treated like standalone containers if they are visible on the local Docker socket. |
 | `exclude` | Included | Not discovered | Docker-only discovery while explicitly ignoring containers that belong to Swarm services. |
 | `enable` | Included | Included | Mixed mode. Use this when `nginx-proxy` should route both standalone containers and Swarm services. |
+| `prefer-local` | Included | Included | Mixed Swarm mode that prefers healthy local task containers and keeps the service VIP as a fallback. |
 | `strict` | Excluded | Included | Swarm-only mode. Use this when `nginx-proxy` should route only Swarm services. |
 
 `ignore` is the default and does not require the Docker node to be in Swarm mode. In this mode, `nginx-proxy` only reads the normal Docker container API. If a Swarm task container is visible on the local Docker socket, it can be registered as if it were a regular container.
@@ -158,9 +159,11 @@ Docker Swarm discovery is controlled by the `DOCKER_SWARM` environment variable 
 
 `enable` reads both local containers and Swarm services. Standalone containers are discovered from the local Docker socket. Swarm services are discovered from the Swarm manager API, and task containers are skipped so each service is registered once.
 
+`prefer-local` reads both local containers and Swarm services, but local Swarm task containers are also discovered from the local Docker socket. When a route has local containers and the Swarm service VIP, nginx sends normal traffic to the local containers and marks the service VIP as a `backup` upstream server. If no local container is available, the service VIP is used normally. Existing container healthcheck and `BACKEND_START_GRACE_SECONDS` behavior still applies before local containers are registered.
+
 `strict` reads only Swarm services. Local standalone containers are ignored, and Swarm task containers are also ignored. This is the mode to use when this proxy instance is dedicated to Swarm routing.
 
-For `enable` and `strict`, the Swarm API client must be connected to a manager node because Docker only allows managers to list services. If `nginx-proxy` is running on a worker node, set `SWARM_DOCKER_HOST` to a reachable manager Docker API endpoint:
+For `enable`, `prefer-local`, and `strict`, the Swarm API client must be connected to a manager node because Docker only allows managers to list services. If `nginx-proxy` is running on a worker node, set `SWARM_DOCKER_HOST` to a reachable manager Docker API endpoint:
 
 ```bash
 -e DOCKER_SWARM=enable \

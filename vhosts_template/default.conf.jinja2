@@ -22,7 +22,7 @@ client_max_body_size {{ config.client_max_body_size }};
 {% for upstream in upstreams %}
     upstream {{ upstream.id }} { {% if upstream.sticky %}
         {{ upstream.sticky }};{% endif %} {% for container in upstream.containers %}
-        server  {{ container.address }}:{{ container.port }};   # container: {{container.id[:12]}}{% endfor %}
+        server  {{ container.address }}:{{ container.port }}{% if container.backup %} backup{% endif %};   # {{ container.type }}: {{container.id[:12]}}{% endfor %}
     }
 {% endfor %}
 
@@ -48,8 +48,8 @@ server{
             {{ injection }};{% endfor %} {% if location.extras.security %}
             auth_basic "Basic Auth Enabled";
             auth_basic_user_file {{ location.extras.security_file }};{% endif %} {% if location.upstream %}
-            proxy_pass {{ location.container.scheme }}://{{ location.upstream }}{{location.container.path}};    # container: {{ location.container.id[:12] }}{% else %}
-            proxy_pass {{location.container.scheme }}://{{ location.container.address }}:{{ location.container.port }}{{ location.container.path }};  # container: {{ location.container.id[:12] }}{% endif %}{% if location.name != '/' %}
+            proxy_pass {{ location.container.scheme }}://{{ location.upstream }}{{location.container.path}};    # {{ location.container.type }}: {{ location.container.id[:12] }}{% else %}
+            proxy_pass {{location.container.scheme }}://{{ location.container.address }}:{{ location.container.port }}{{ location.container.path }};  # {{ location.container.type }}: {{ location.container.id[:12] }}{% endif %}{% if location.name != '/' %}
             proxy_redirect $scheme://$http_host{{ location.container.path if location.container.path else '/' }} $scheme://$http_host{{location.name}};{% endif %} {% if location.websocket and location.http %}
             proxy_set_header Host $http_host;
             proxy_set_header Connection $connection_upgrade;

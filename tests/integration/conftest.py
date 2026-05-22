@@ -53,7 +53,7 @@ def docker_client():
 
 
 @pytest.fixture(scope="session")
-def test_network(docker_client: docker.DockerClient,swarm_mode):
+def test_network(docker_client: docker.DockerClient, swarm_mode):
     network_name = "nginx-proxy-test-" + swarm_mode
     server_details = docker_client.info()
     is_swarm = server_details.get("Swarm", {}).get("LocalNodeState") == "active"
@@ -83,7 +83,11 @@ def test_network(docker_client: docker.DockerClient,swarm_mode):
         print(f"Error removing network {network_name}: {e}")
 
 
-@pytest.fixture(scope="session", params=["ignore", "exclude", "enable", "strict"], ids=["swarm_ignore", "swarm_exclude", "swarm_enable", "swarm_strict"])
+@pytest.fixture(
+    scope="session",
+    params=["ignore", "exclude", "enable", "strict"],
+    ids=["swarm_ignore", "swarm_exclude", "swarm_enable", "swarm_strict"],
+)
 def swarm_mode(request):
     return request.param
 
@@ -91,7 +95,7 @@ def swarm_mode(request):
 @pytest.fixture(scope="session")
 def nginx_proxy_container(docker_client: docker.DockerClient, test_network, docker_host_ip, swarm_mode):
     image_name = "mesudip/nginx-proxy:test"
-    container_name = "nginx-proxy-test-container-swarm_"+swarm_mode
+    container_name = "nginx-proxy-test-container-swarm_" + swarm_mode
 
     # Ensure previous container is stopped and removed
     try:
@@ -255,6 +259,7 @@ class NginxRequest(requests.Session):
             ws.connect(url, sock=sock, **kwargs)
 
         return ws
+
 
 @pytest.fixture
 def nginx_request(nginx_proxy_container, docker_host_ip):

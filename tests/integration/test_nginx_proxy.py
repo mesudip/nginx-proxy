@@ -19,7 +19,7 @@ def is_reachable(swarm_mode, backend_type):
     """
     Determines if a backend should be reachable based on swarm mode and backend type.
     """
-    if swarm_mode  in ("enable", "ignore"):
+    if swarm_mode in ("enable", "ignore"):
         return True
     if swarm_mode == "strict" and backend_type == "service":
         return True
@@ -96,8 +96,8 @@ def test_rescan_during_start_grace_registers_running_backend(tmp_path):
         ("/", "", "/"),
         ("/ -> /", "", "/"),
         (" -> /", "", "/"),
-        ("/api ", "/api", "/api"), 
-        ("/api/ ", "/api", "/api/"), # This is weird case. 
+        ("/api ", "/api", "/api"),
+        ("/api/ ", "/api", "/api/"),  # This is weird case.
         ("/api/ -> /", "/api", "/"),
         ("/api/ -> /internal", "/api/test", "/internaltest"),
         ("/api/ -> /internal/", "/api/test", "/internal/test"),
@@ -108,7 +108,15 @@ def test_rescan_during_start_grace_registers_running_backend(tmp_path):
 )
 @pytest.mark.parametrize("backend_type", ["container", "service"])
 def test_http_routing_discovery(
-    nginx_request, docker_client, test_network, virtual_host_path, request_path, container_received_path, swarm_mode, backend_type,request
+    nginx_request,
+    docker_client,
+    test_network,
+    virtual_host_path,
+    request_path,
+    container_received_path,
+    swarm_mode,
+    backend_type,
+    request,
 ):
     """
     Test HTTP routing discovery for various swarm modes and backend types.
@@ -116,20 +124,22 @@ def test_http_routing_discovery(
     hostname = f"{backend_type}.{swarm_mode}.routing.example.com"
     should_be_reachable = is_reachable(swarm_mode, backend_type)
 
-    env = {"VIRTUAL_HOST": hostname+virtual_host_path ,"VIRTUAL_PORT": "8080"}
+    env = {"VIRTUAL_HOST": hostname + virtual_host_path, "VIRTUAL_PORT": "8080"}
     backend = None
     try:
-        backend = start_backend(docker_client, test_network, env, backend_type=backend_type,pytest_request=request,sleep=False)
+        backend = start_backend(
+            docker_client, test_network, env, backend_type=backend_type, pytest_request=request, sleep=False
+        )
 
-        url = "http://" + hostname+request_path
+        url = "http://" + hostname + request_path
         print(f"\nTesting {swarm_mode} with {backend_type}: URL='{url}', expected={should_be_reachable}")
 
         # Retrying for async discovery
         response = None
-        ex=None
+        ex = None
         for x in range(15):
             try:
-                ex=None
+                ex = None
                 response = nginx_request.get(url, timeout=2)
                 if should_be_reachable and response.status_code == 200:
                     break
@@ -138,11 +148,11 @@ def test_http_routing_discovery(
             except SystemExit or KeyboardInterrupt:
                 raise
             except Exception as e:
-                ex=e
-                print(x,e)
+                ex = e
+                print(x, e)
 
             time.sleep(1)
-        
+
         assert ex is None
         assert response is not None
 
@@ -160,7 +170,9 @@ def test_http_routing_discovery(
 
 
 @pytest.mark.parametrize("backend_type", ["container", "service"])
-def test_http_to_https_redirect_preserves_query_string(nginx_request, docker_client, test_network, swarm_mode, backend_type, request):
+def test_http_to_https_redirect_preserves_query_string(
+    nginx_request, docker_client, test_network, swarm_mode, backend_type, request
+):
     """
     Test that HTTP->HTTPS redirect keeps the original request URI including query string.
     """
@@ -172,7 +184,9 @@ def test_http_to_https_redirect_preserves_query_string(nginx_request, docker_cli
     backend = None
 
     try:
-        backend = start_backend(docker_client, test_network, env, backend_type=backend_type, pytest_request=request, sleep=False)
+        backend = start_backend(
+            docker_client, test_network, env, backend_type=backend_type, pytest_request=request, sleep=False
+        )
 
         request_uri = "/v2/_catalog?n=50&last=abc"
         url = f"http://{hostname}{request_uri}"
@@ -271,7 +285,9 @@ def test_proxy_full_redirect_to_https_target_response(
         ("ws.example.com/ws_path", "/ws_path"),
     ],
 )
-def test_websocket_routing(nginx_request, docker_client, test_network, virtual_host_base, request_path, swarm_mode, backend_type):
+def test_websocket_routing(
+    nginx_request, docker_client, test_network, virtual_host_base, request_path, swarm_mode, backend_type
+):
     """
     Test WebSocket routing for various VIRTUAL_HOST configurations.
     """
@@ -288,7 +304,9 @@ def test_websocket_routing(nginx_request, docker_client, test_network, virtual_h
         # We need to construct the full URL that the NginxRequest class will parse for the host.
         full_url_for_host_parsing = get_request_url(virtual_host, request_path, scheme="ws")
 
-        print(f"\nTesting WebSocket {swarm_mode} with {backend_type}: VIRTUAL_HOST='{virtual_host}', WS_URL='{full_url_for_host_parsing}', expected={should_be_reachable}")
+        print(
+            f"\nTesting WebSocket {swarm_mode} with {backend_type}: VIRTUAL_HOST='{virtual_host}', WS_URL='{full_url_for_host_parsing}', expected={should_be_reachable}"
+        )
 
         # Retrying for async discovery
         connected = False
@@ -300,7 +318,7 @@ def test_websocket_routing(nginx_request, docker_client, test_network, virtual_h
             except Exception:
                 if not should_be_reachable:
                     # Connection failed as expected (e.g. 503/404)
-                    break 
+                    break
                 time.sleep(1)
 
         if should_be_reachable:
