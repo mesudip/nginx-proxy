@@ -96,13 +96,14 @@ class WebServer:
         http_hosts = {(host.hostname, int(host.port)): host for host in hosts if int(host.port) == 80}
 
         for host in hosts:
-            if not host.secured or int(host.port) == 80:
+            if host.is_redirect or not host.secured or int(host.port) == 80:
                 continue
             redirect_target = Url({"https"}, host.hostname, int(host.port), "/")
             http_host = http_hosts.get((host.hostname, 80))
             if http_host is None:
                 redirect_host = Host(host.hostname, 80)
                 redirect_host.full_redirect = redirect_target
+                redirect_host.update_extras_content("redirect_status_code", "308")
                 # Added after redirect post-processing, so mark it explicitly for template rendering.
                 redirect_host.is_redirect = True
                 redirect_hosts.append(redirect_host)

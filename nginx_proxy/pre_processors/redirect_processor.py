@@ -23,16 +23,25 @@ def process_redirection(backend: BackendTarget, environments: map, vhost_map: Di
             if len(split) == 2:
                 _sources, target = split
                 sources = [Url.parse(source) for source in _sources.split(",")]
-                target = Url.parse(target, default_port=80)
-                if single_host:
-                    if target.hostname is None:
-                        target = single_host
+                target = Url.parse(target)
+                if target.hostname is None and single_host:
+                    target.hostname = hosts[0].hostname
                 elif target.hostname is None:
                     print("Unknown target to redirect with PROXY_FULL_REDIRECT" + redirect_entry)
                     continue
+                target.port = int(target.port) if target.port is not None else None
+                if target.port is None and target.hostname in vhost_map:
+                    target_host = vhost_map[target.hostname].get(443) or vhost_map[target.hostname].get(80)
+                    if target_host is not None:
+                        target.port = target_host.port
+                        target.scheme = {"https"} if target_host.secured else {"http"}
+                if target.port is None:
+                    target.port = 443 if "https" in target.scheme or "wss" in target.scheme else 80
+                if not target.scheme:
+                    target.scheme = {"https"} if target.port == 443 else {"http"}
                 for source in sources:
                     if source.hostname is not None:
-                        port = 80 if source.port is None else source.port
+                        port = 80 if source.port is None else int(source.port)
                         if source.hostname not in vhost_map:
                             host = Host(source.hostname, port)
                             host.full_redirect = target

@@ -132,7 +132,6 @@ def nginx_proxy_container(docker_client: docker.DockerClient, test_network, dock
             name=container_name,
             environment={
                 "LETSENCRYPT_API": "https://acme-staging-v02.api.letsencrypt.org/directory",
-                "DHPARAM_SIZE": "256",
                 "VHOSTS_TEMPLATE_DIR": "/app/vhosts_template",
                 "CHALLENGE_DIR": "/etc/nginx/acme-challenges",
                 "DOCKER_SWARM": swarm_mode,

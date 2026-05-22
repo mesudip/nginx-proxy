@@ -353,6 +353,55 @@ def test_webserver_add_container_with_ssl_integration(
 
 
 @pytest.mark.parametrize("backend_type", ["container", "service"])
+def test_proxy_full_redirect_to_https_target_integration(
+    nginx_proxy_container: docker.models.containers.Container,
+    docker_client: docker.DockerClient,
+    test_network: docker.models.networks.Network,
+    backend_type: str,
+):
+    """
+    Test that PROXY_FULL_REDIRECT resolves a bare target to the existing HTTPS vhost
+    and renders a documented 301 redirect without appending :80.
+    """
+    suffix = uuid.uuid4().hex[:6]
+    target_host = f"{backend_type}.full-redirect-target-{suffix}.example.com"
+    source_host = f"{backend_type}.full-redirect-source-{suffix}.example.com"
+    env = {
+        "VIRTUAL_HOST": f"https://{target_host} -> :8080",
+        "VIRTUAL_PORT": "8080",
+        "PROXY_FULL_REDIRECT": f"{source_host} -> {target_host}",
+    }
+
+    backend = start_backend(docker_client, test_network, env, backend_type=backend_type, sleep=False)
+    try:
+        redirect_server = None
+        for _ in range(25):
+            config_str = get_nginx_config_from_container(nginx_proxy_container[0])
+            config = HttpBlock.parse(config_str)
+            redirect_server = next((s for s in config.servers if source_host in s.server_names), None)
+            if redirect_server is not None:
+                redirect_loc = next((loc for loc in redirect_server.locations if loc.path == "/"), None)
+                if redirect_loc and redirect_loc.return_code == f"301 https://{target_host}$request_uri":
+                    break
+            time.sleep(1)
+
+        config_str = get_nginx_config_from_container(nginx_proxy_container[0])
+        config = HttpBlock.parse(config_str)
+        target_servers = [s for s in config.servers if target_host in s.server_names]
+        source_servers = [s for s in config.servers if source_host in s.server_names]
+
+        assert any("443" in s.listen for s in target_servers), f"HTTPS target server not found. Config:\n{config_str}"
+        assert len(source_servers) == 1, f"Expected one redirect source server. Config:\n{config_str}"
+
+        redirect_loc = next((loc for loc in source_servers[0].locations if loc.path == "/"), None)
+        assert redirect_loc is not None, f"Redirect location not found. Config:\n{config_str}"
+        assert redirect_loc.return_code == f"301 https://{target_host}$request_uri"
+    finally:
+        if backend:
+            stop_backend(backend)
+
+
+@pytest.mark.parametrize("backend_type", ["container", "service"])
 def test_webserver_add_two_containers_with_same_virtual_host_integration(
     nginx_proxy_container,
     docker_client,

@@ -84,8 +84,8 @@ server {
             alias {{ config.challenge_dir }};
             try_files $uri =404;{% endif %}
         }
-        location / { {% if server.is_redirect %}
-                return 308 https://{{ server.full_redirect.hostname }}{% if server.full_redirect.port and server.full_redirect.port != 443 %}:{{ server.full_redirect.port }}{% endif %}$request_uri;{% else %}
+        location / { {% if server.is_redirect %}{% set redirect_scheme = "https" if "https" in server.full_redirect.scheme or "wss" in server.full_redirect.scheme else "http" %}
+                return {{ server.extras.redirect_status_code if server.extras.redirect_status_code else "301" }} {{ redirect_scheme }}://{{ server.full_redirect.hostname }}{% if server.full_redirect.port and ((redirect_scheme == "https" and server.full_redirect.port != 443) or (redirect_scheme == "http" and server.full_redirect.port != 80)) %}:{{ server.full_redirect.port }}{% endif %}$request_uri;{% else %}
                 return 308 https://$host$request_uri;{% endif %}
         }
 }{% endif %}{% endfor %}

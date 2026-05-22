@@ -412,6 +412,43 @@ def test_webserver_add_container_with_ssl(docker_client: DockerTestClient, nginx
     assert http_redirect_location.return_code == "308 https://ssl.example.com$request_uri"
 
 
+def test_proxy_full_redirect_uses_existing_https_target(docker_client: DockerTestClient, nginx: DummyNginx):
+    target_hostname = "redirect-target.example.com"
+    source_hostname = "redirect-source.example.com"
+    alternate_source = "redirect-source-www.example.com"
+    env = {
+        "VIRTUAL_HOST": f"https://{target_hostname}",
+        "PROXY_FULL_REDIRECT": f"{source_hostname},{alternate_source} -> {target_hostname}",
+    }
+
+    docker_client.containers.run("nginx:alpine", name="full_redirect_https", environment=env, network="frontend")
+
+    target_servers = expect_servers(nginx, target_hostname, 2)
+    assert next((s for s in target_servers if "443" in s.listen), None) is not None
+
+    for hostname in (source_hostname, alternate_source):
+        redirect_server = expect_server(nginx, hostname)
+        redirect_location = next((l for l in redirect_server.locations if l.path == "/"), None)
+        assert redirect_location is not None
+        assert redirect_location.return_code == f"301 https://{target_hostname}$request_uri"
+
+
+def test_proxy_full_redirect_preserves_http_target_scheme(docker_client: DockerTestClient, nginx: DummyNginx):
+    target_hostname = "redirect-http-target.example.com"
+    source_hostname = "redirect-http-source.example.com"
+    env = {
+        "VIRTUAL_HOST": target_hostname,
+        "PROXY_FULL_REDIRECT": f"{source_hostname} -> {target_hostname}",
+    }
+
+    docker_client.containers.run("nginx:alpine", name="full_redirect_http", environment=env, network="frontend")
+
+    redirect_server = expect_servers(nginx, source_hostname, 1)[0]
+    redirect_location = next((l for l in redirect_server.locations if l.path == "/"), None)
+    assert redirect_location is not None
+    assert redirect_location.return_code == f"301 http://{target_hostname}$request_uri"
+
+
 def test_webserver_ssl_does_not_override_explicit_http_location(docker_client: DockerTestClient, nginx: DummyNginx):
     container_name = "ssl_http_container"
     hostname = "ssl-http.example.com"

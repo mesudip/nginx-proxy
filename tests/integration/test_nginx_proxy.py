@@ -201,6 +201,68 @@ def test_http_to_https_redirect_preserves_query_string(nginx_request, docker_cli
 
 
 @pytest.mark.parametrize("backend_type", ["container", "service"])
+def test_proxy_full_redirect_to_https_target_response(
+    nginx_request,
+    docker_client,
+    test_network,
+    swarm_mode,
+    backend_type,
+    request,
+):
+    """
+    Test that PROXY_FULL_REDIRECT returns a 301 to the existing HTTPS target
+    while preserving the original request URI.
+    """
+    if not is_reachable(swarm_mode, backend_type):
+        pytest.skip("Backend discovery not available for this swarm mode/backend type combination.")
+
+    suffix = f"{backend_type}.{swarm_mode}.{datetime.now(timezone.utc).strftime('%H%M%S%f')}"
+    target_host = f"{suffix}.full-redirect-target.example.com"
+    source_host = f"{suffix}.full-redirect-source.example.com"
+    env = {
+        "VIRTUAL_HOST": f"https://{target_host} -> :8080",
+        "VIRTUAL_PORT": "8080",
+        "PROXY_FULL_REDIRECT": f"{source_host} -> {target_host}",
+    }
+    backend = None
+
+    try:
+        backend = start_backend(
+            docker_client,
+            test_network,
+            env,
+            backend_type=backend_type,
+            pytest_request=request,
+            sleep=False,
+        )
+
+        request_uri = "/v2/_catalog?n=50&last=abc"
+        url = f"http://{source_host}{request_uri}"
+
+        response = None
+        ex = None
+        for _ in range(20):
+            try:
+                ex = None
+                response = nginx_request.get(url, timeout=2, allow_redirects=False)
+                if response.status_code == 301:
+                    break
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except Exception as e:
+                ex = e
+            time.sleep(1)
+
+        assert ex is None
+        assert response is not None
+        assert response.status_code == 301
+        assert response.headers.get("Location") == f"https://{target_host}{request_uri}"
+    finally:
+        if backend:
+            stop_backend(backend)
+
+
+@pytest.mark.parametrize("backend_type", ["container", "service"])
 @pytest.mark.parametrize(
     "virtual_host_base, request_path",
     [
