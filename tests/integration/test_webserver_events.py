@@ -17,9 +17,7 @@ from tests.helpers import (
 )
 
 
-@pytest.fixture(scope="session", params=["enable"], ids=["swarm_enable"])
-def swarm_mode(request):
-    return request.param
+pytestmark = pytest.mark.swarm_mode("enable")
 
 
 # Regex to match the dynamically assigned IP:PORT for proxy_pass

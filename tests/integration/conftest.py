@@ -14,6 +14,40 @@ from tests.helpers.docker_test_client import DockerTestClient
 # Load environment variables from .env file
 load_dotenv()
 
+SWARM_MODES = ["ignore", "exclude", "enable", "prefer-local", "strict"]
+SWARM_MODE_IDS = {
+    "ignore": "swarm_ignore",
+    "exclude": "swarm_exclude",
+    "enable": "swarm_enable",
+    "prefer-local": "swarm_prefer_local",
+    "strict": "swarm_strict",
+}
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "swarm_mode(*modes): limit tests using the swarm_mode fixture to the given Docker Swarm modes",
+    )
+
+
+def pytest_generate_tests(metafunc):
+    if "swarm_mode" not in metafunc.fixturenames:
+        return
+
+    marker = metafunc.definition.get_closest_marker("swarm_mode")
+    modes = list(marker.args) if marker else SWARM_MODES
+    unknown_modes = [mode for mode in modes if mode not in SWARM_MODE_IDS]
+    if unknown_modes:
+        raise ValueError(f"Unknown swarm_mode marker values: {unknown_modes}")
+
+    metafunc.parametrize(
+        "swarm_mode",
+        modes,
+        ids=[SWARM_MODE_IDS[mode] for mode in modes],
+        scope="session",
+    )
+
 
 @pytest.fixture(scope="session")
 def docker_host_ip():
@@ -83,11 +117,7 @@ def test_network(docker_client: docker.DockerClient, swarm_mode):
         print(f"Error removing network {network_name}: {e}")
 
 
-@pytest.fixture(
-    scope="session",
-    params=["ignore", "exclude", "enable", "prefer-local", "strict"],
-    ids=["swarm_ignore", "swarm_exclude", "swarm_enable", "swarm_prefer_local", "swarm_strict"],
-)
+@pytest.fixture(scope="session")
 def swarm_mode(request):
     return request.param
 

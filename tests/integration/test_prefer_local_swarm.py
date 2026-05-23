@@ -8,11 +8,7 @@ from tests.helpers.docker_utils import start_backend, stop_backend
 from tests.helpers.integration_helpers import get_nginx_config_from_container
 
 
-@pytest.fixture(scope="session", params=["prefer-local"], ids=["swarm_prefer_local"])
-def swarm_mode(request):
-    return request.param
-
-
+@pytest.mark.swarm_mode("prefer-local")
 def test_prefer_local_uses_local_swarm_task_primary_and_service_vip_backup(
     nginx_proxy_container,
     docker_client,
