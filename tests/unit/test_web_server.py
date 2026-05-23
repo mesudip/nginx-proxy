@@ -134,6 +134,22 @@ def test_update_backend_ignores_existing_container_backend(web_server):
     mock_throttle.assert_not_called()
 
 
+def test_update_backend_replaces_existing_container_backend_when_requested(web_server):
+    web_server.networks = {"frontend": "frontend-id", "frontend-id": "frontend"}
+    web_server.config_data = ProxyConfigData()
+    existing = _backend_target("container1", "old.example.com", "172.18.0.2")
+    updated = _backend_target("container1", "new.example.com", "172.18.0.3")
+    web_server.register_backend(existing)
+
+    with patch.object(web_server.throttler, "throttle") as mock_throttle:
+        changed = web_server.update_backend(updated, replace_existing=True)
+
+    assert changed is True
+    assert web_server.config_data.getHost("old.example.com").isempty()
+    assert web_server.config_data.getHost("new.example.com") is not None
+    mock_throttle.assert_called_once()
+
+
 def test_update_backend_replaces_existing_service_backend(web_server):
     web_server.networks = {"frontend": "frontend-id", "frontend-id": "frontend"}
     web_server.config_data = ProxyConfigData()

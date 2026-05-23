@@ -359,6 +359,34 @@ def test_webserver_remove_network(docker_client: DockerTestClient, nginx: DummyN
     expect_server_down(nginx, hostname)
 
 
+def test_webserver_disconnect_keeps_backend_when_another_proxy_network_remains(
+    docker_client: DockerTestClient, webserver: WebServer, nginx: DummyNginx
+):
+    container_name = "multi_reachable_network_container"
+    hostname = "multi-reachable-network.example.com"
+    env = {
+        "VIRTUAL_HOST": hostname,
+    }
+
+    alt_network = docker_client.networks.create("frontend_alt")
+    webserver.networks[alt_network.id] = alt_network.name
+    webserver.networks[alt_network.name] = alt_network.id
+
+    container = docker_client.containers.run("nginx:alpine", name=container_name, environment=env, network="frontend")
+    time.sleep(0.2)
+
+    expect_server_up(nginx, hostname)
+
+    alt_network.connect(container.id)
+    time.sleep(0.2)
+
+    frontend_network = docker_client.networks.get("frontend")
+    frontend_network.disconnect(container.id)
+    time.sleep(0.2)
+
+    expect_server_up(nginx, hostname)
+
+
 def test_webserver_recreate_same_name_container_with_different_host(docker_client: DockerTestClient, nginx: DummyNginx):
     container_name = "test_container"
     old_hostname = "old.recreate.example.com"

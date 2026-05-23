@@ -250,7 +250,7 @@ class WebServer:
             if self.config_data.has_backend(container):
                 try:
                     backend = BackendTarget.from_container(self.client.containers.get(container))
-                    if not self.update_backend(backend):
+                    if not self.update_backend(backend, replace_existing=True):
                         self.remove_backend(
                             container
                         )  # remove_backend not implemented yet, using remove_container (it takes ID)
@@ -286,7 +286,7 @@ class WebServer:
                     # print(f"Skipping network connect for service task container {container}")
                     return
                 backend = BackendTarget.from_container(container_obj)
-                self.update_backend(backend)
+                self.update_backend(backend, replace_existing=True)
             except docker.errors.NotFound:
                 return
             except (KeyboardInterrupt, SystemExit):
@@ -294,7 +294,7 @@ class WebServer:
             except Exception as e:
                 print(f"Error processing connect for container {container}: {e}", file=sys.stderr)
 
-    def update_backend(self, backend: BackendTarget):
+    def update_backend(self, backend: BackendTarget, replace_existing: bool = False):
         """
         Rescan the backend to detect changes. And update nginx configuration if necessary.
         :param backend: BackendTarget object
@@ -302,7 +302,7 @@ class WebServer:
         """
         try:
             existing_backend = self.config_data.has_backend(backend.id)
-            if existing_backend and backend.type != "service":
+            if existing_backend and backend.type != "service" and not replace_existing:
                 return False
 
             removed = None

@@ -19,7 +19,7 @@ def is_reachable(swarm_mode, backend_type):
     """
     Determines if a backend should be reachable based on swarm mode and backend type.
     """
-    if swarm_mode in ("enable", "ignore"):
+    if swarm_mode in ("enable", "ignore", "prefer-local"):
         return True
     if swarm_mode == "strict" and backend_type == "service":
         return True

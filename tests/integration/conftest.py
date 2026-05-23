@@ -85,8 +85,8 @@ def test_network(docker_client: docker.DockerClient, swarm_mode):
 
 @pytest.fixture(
     scope="session",
-    params=["ignore", "exclude", "enable", "strict"],
-    ids=["swarm_ignore", "swarm_exclude", "swarm_enable", "swarm_strict"],
+    params=["ignore", "exclude", "enable", "prefer-local", "strict"],
+    ids=["swarm_ignore", "swarm_exclude", "swarm_enable", "swarm_prefer_local", "swarm_strict"],
 )
 def swarm_mode(request):
     return request.param
