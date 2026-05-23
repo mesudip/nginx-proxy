@@ -3,7 +3,9 @@ from unittest.mock import MagicMock, patch
 import threading
 import time
 
-from nginx_proxy.DockerEventListener import DockerEventListener
+import docker
+
+from nginx_proxy.DockerEventListener import ContainerEvent, DockerEventListener
 from nginx_proxy.WebServer import WebServer
 
 
@@ -26,14 +28,22 @@ def swarm_client():
 
 def test_run_with_separate_clients(web_server, docker_client, swarm_client):
     listener = DockerEventListener(web_server, docker_client, swarm_client)
-    with patch("threading.Thread") as mock_thread:
+    with (
+        patch.object(listener, "start_dispatcher"),
+        patch.object(listener, "stop_dispatcher"),
+        patch("threading.Thread") as mock_thread,
+    ):
         listener.run()
         assert mock_thread.call_count == 2
 
 
 def test_run_with_same_client(web_server, docker_client):
     listener = DockerEventListener(web_server, docker_client, docker_client)
-    with patch.object(listener, "_listen") as mock_listen:
+    with (
+        patch.object(listener, "start_dispatcher"),
+        patch.object(listener, "stop_dispatcher"),
+        patch.object(listener, "_listen") as mock_listen,
+    ):
         listener.run()
         mock_listen.assert_called_once_with(docker_client)
 
@@ -49,12 +59,13 @@ def test_listen_for_container_events(web_server, docker_client):
         ]
     )
 
-    with patch.object(listener, "_process_container_event") as mock_process:
+    with patch.object(listener, "enqueue") as mock_enqueue:
         t = threading.Thread(target=listener._listen, args=(docker_client,))
         t.daemon = True
         t.start()
         time.sleep(0.1)
-        assert mock_process.call_count == 2
+        assert mock_enqueue.call_count == 2
+        assert all(isinstance(call.args[0], ContainerEvent) for call in mock_enqueue.call_args_list)
         docker_client.events.return_value = iter([])
         t.join(timeout=0.1)
 
@@ -63,13 +74,80 @@ def test_process_service_event_update(web_server: WebServer, docker_client, swar
     listener = DockerEventListener(web_server, docker_client, swarm_client)
     service_id = "service1"
     event = {"Action": "update", "Actor": {"ID": service_id}}
+
+    with patch.object(listener, "_schedule_service_processing") as mock_schedule:
+        listener._process_service_event("update", event)
+
+    mock_schedule.assert_called_once_with(service_id, "update", 5, attempt=1)
+    swarm_client.services.get.assert_not_called()
+    web_server.update_backend.assert_not_called()
+
+
+def test_process_service_upsert_updates_backend_when_vip_is_reachable(
+    web_server: WebServer, docker_client, swarm_client
+):
+    web_server.networks = {"net1": "frontend", "frontend": "net1"}
+    listener = DockerEventListener(web_server, docker_client, swarm_client)
+    service_id = "service1"
     mock_service = MagicMock()
+    mock_service.id = service_id
+    mock_service.attrs = {
+        "Spec": {
+            "Name": "service-name",
+            "Labels": {},
+            "TaskTemplate": {"ContainerSpec": {"Env": ["VIRTUAL_HOST=service.example.com"]}},
+        },
+        "Endpoint": {
+            "Ports": [{"Protocol": "tcp", "TargetPort": 80}],
+            "VirtualIPs": [{"NetworkID": "net1", "Addr": "10.0.0.5/24"}],
+        },
+    }
     swarm_client.services.get.return_value = mock_service
 
-    listener._process_service_event("update", event)
+    listener._process_service_upsert(service_id, "update", attempt=1)
 
     swarm_client.services.get.assert_called_once_with(service_id)
     web_server.update_backend.assert_called_once()
+
+
+def test_process_service_upsert_retries_when_service_is_not_found(web_server: WebServer, docker_client, swarm_client):
+    listener = DockerEventListener(web_server, docker_client, swarm_client)
+    service_id = "service1"
+    swarm_client.services.get.side_effect = docker.errors.NotFound("missing")
+
+    with patch.object(listener, "_schedule_service_processing") as mock_schedule:
+        listener._process_service_upsert(service_id, "create", attempt=1)
+
+    mock_schedule.assert_called_once_with(service_id, "create", 20, attempt=2)
+    web_server.update_backend.assert_not_called()
+
+
+def test_process_service_upsert_retries_when_service_vip_is_not_reachable(
+    web_server: WebServer, docker_client, swarm_client
+):
+    web_server.networks = {"net1": "frontend", "frontend": "net1"}
+    listener = DockerEventListener(web_server, docker_client, swarm_client)
+    service_id = "service1"
+    mock_service = MagicMock()
+    mock_service.id = service_id
+    mock_service.attrs = {
+        "Spec": {
+            "Name": "service-name",
+            "Labels": {},
+            "TaskTemplate": {"ContainerSpec": {"Env": ["VIRTUAL_HOST=service.example.com"]}},
+        },
+        "Endpoint": {
+            "Ports": [{"Protocol": "tcp", "TargetPort": 80}],
+            "VirtualIPs": [],
+        },
+    }
+    swarm_client.services.get.return_value = mock_service
+
+    with patch.object(listener, "_schedule_service_processing") as mock_schedule:
+        listener._process_service_upsert(service_id, "create", attempt=1)
+
+    mock_schedule.assert_called_once_with(service_id, "create", 20, attempt=2)
+    web_server.update_backend.assert_not_called()
 
 
 def test_process_service_event_remove(web_server: WebServer, docker_client, swarm_client):
@@ -236,7 +314,40 @@ def test_process_container_start_with_grace_period_defers_activation(web_server,
     mock_print.assert_not_called()
 
     time.sleep(0.3)
+    web_server.update_backend.assert_not_called()
+    listener.drain_commands()
 
+    web_server.update_backend.assert_called_once()
+
+
+def test_service_delay_timer_enqueues_upsert_without_calling_webserver(web_server, docker_client, swarm_client):
+    web_server.networks = {"net1": "frontend", "frontend": "net1"}
+    listener = DockerEventListener(web_server, docker_client, swarm_client)
+    service_id = "service1"
+    mock_service = MagicMock()
+    mock_service.id = service_id
+    mock_service.attrs = {
+        "Spec": {
+            "Name": "service-name",
+            "Labels": {},
+            "TaskTemplate": {"ContainerSpec": {"Env": ["VIRTUAL_HOST=service.example.com"]}},
+        },
+        "Endpoint": {
+            "Ports": [{"Protocol": "tcp", "TargetPort": 80}],
+            "VirtualIPs": [{"NetworkID": "net1", "Addr": "10.0.0.5/24"}],
+        },
+    }
+    swarm_client.services.get.return_value = mock_service
+
+    listener._schedule_service_processing(service_id, "update", 0.01, attempt=1)
+    time.sleep(0.05)
+
+    swarm_client.services.get.assert_not_called()
+    web_server.update_backend.assert_not_called()
+
+    listener.drain_commands()
+
+    swarm_client.services.get.assert_called_once_with(service_id)
     web_server.update_backend.assert_called_once()
 
 

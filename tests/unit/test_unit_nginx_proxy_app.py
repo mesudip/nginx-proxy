@@ -2,6 +2,7 @@ import os
 import pytest
 from unittest.mock import patch, MagicMock
 
+from nginx_proxy.DockerEventListener import RescanAndReload
 from nginx_proxy.NginxProxyApp import NginxProxyApp
 
 
@@ -86,3 +87,29 @@ def test_setup_nginx_conf_skips_if_no_template(mock_exists, mock_render):
         app = NginxProxyApp()
         app._setup_nginx_conf()
         assert not mock_render.called
+
+
+def test_reload_rescans_and_forces_reload():
+    with patch("docker.from_env"), patch("docker.DockerClient"):
+        app = NginxProxyApp()
+
+    app.server = MagicMock()
+
+    app.reload()
+
+    app.server.rescan_and_reload.assert_called_once_with(force=True, bypass_start_grace=True)
+
+
+def test_reload_enqueues_rescan_when_dispatcher_is_running():
+    with patch("docker.from_env"), patch("docker.DockerClient"):
+        app = NginxProxyApp()
+
+    app.server = MagicMock()
+    app.docker_event_listener = MagicMock()
+    app.docker_event_listener.is_dispatcher_running.return_value = True
+
+    app.reload()
+
+    app.server.rescan_and_reload.assert_not_called()
+    command = app.docker_event_listener.enqueue.call_args.args[0]
+    assert command == RescanAndReload(force=True, bypass_start_grace=True)

@@ -160,7 +160,7 @@ def test_webserver_initialization(webserver: WebServer, nginx: DummyNginx):
 
 def test_webserver_add_container(docker_client: DockerTestClient, nginx: DummyNginx):
     container_name = "test_container"
-    hostname = "add_container.example.com"
+    hostname = "add-container.example.com"
     env = {"VIRTUAL_HOST": hostname}
     container = docker_client.containers.run("nginx:alpine", name=container_name, environment=env, network="frontend")
     time.sleep(0.2)  # Small delay for async event processing
@@ -271,7 +271,7 @@ def test_container_startup_is_processed_once(docker_client: DockerTestClient):
 
 def test_webserver_remove_container(docker_client: DockerTestClient, nginx: DummyNginx):
     container_name = "test_container"
-    hostname = "remove_container.example.com"
+    hostname = "remove-container.example.com"
     env = {"VIRTUAL_HOST": hostname}
 
     # Add container
@@ -289,7 +289,7 @@ def test_webserver_remove_container(docker_client: DockerTestClient, nginx: Dumm
 
 def test_webserver_add_network(docker_client: DockerTestClient, nginx: DummyNginx):
     container_name = "test_container"
-    hostname = "add_network.example.com"
+    hostname = "add-network.example.com"
     env = {
         "VIRTUAL_HOST": hostname,
     }
@@ -338,7 +338,7 @@ def test_webserver_add_first_reachable_network_after_start(docker_client: Docker
 
 def test_webserver_remove_network(docker_client: DockerTestClient, nginx: DummyNginx):
     container_name = "test_container"
-    hostname = "remove_network.example.com"
+    hostname = "remove-network.example.com"
     env = {
         "VIRTUAL_HOST": hostname,
     }
@@ -535,7 +535,7 @@ def test_webserver_ssl_respects_explicit_http_root(docker_client: DockerTestClie
 
 
 def test_webserver_add_two_containers_with_same_virtual_host(docker_client: DockerTestClient, nginx: DummyNginx):
-    hostname = "two_containers.example.com"
+    hostname = "two-containers.example.com"
     env = {"VIRTUAL_HOST": hostname}
     c1 = docker_client.containers.run("nginx:alpine", name="test_container_1", environment=env, network="frontend")
     c2 = docker_client.containers.run("nginx:alpine", name="test_container_2", environment=env, network="frontend")

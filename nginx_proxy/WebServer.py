@@ -1,9 +1,8 @@
 import copy
 import os
 import sys
-import threading
 from datetime import datetime, timezone
-from typing import List, TYPE_CHECKING
+from typing import Callable, List, TYPE_CHECKING
 
 import docker
 import requests
@@ -48,7 +47,8 @@ class WebServer:
             self.config["conf_dir"] + "/conf.d/nginx-proxy.conf", self.config["challenge_dir"]
         )
         self.config_data = ProxyConfigData()
-        self._lock = threading.Lock()
+        self._reload_dispatcher: Callable | None = None
+        self._is_reload_dispatcher_thread: Callable[[], bool] | None = None
         self.services = set()
         self.networks = {}
         vhosts_template_path = os.path.join(self.config["vhosts_template_dir"], "default.conf.jinja2")
@@ -81,6 +81,10 @@ class WebServer:
         self.setup_error_config()
         self.rescan_and_reload(force=True, bypass_start_grace=True)
         self.ssl_processor.start()
+
+    def set_reload_dispatcher(self, dispatcher: Callable | None, is_dispatcher_thread: Callable[[], bool] | None):
+        self._reload_dispatcher = dispatcher
+        self._is_reload_dispatcher_thread = is_dispatcher_thread
 
     def setup_error_config(self):
         # Render error.conf.jinja2 and save it
@@ -214,9 +218,14 @@ class WebServer:
     def remove_backend(self, container_id: str):
         deleted, deleted_domain = self._remove_backend_without_reload(container_id)
         if deleted:
+            service_id = deleted.labels.get("com.docker.swarm.service.id")
+            has_service_id = isinstance(service_id, str) and bool(service_id)
+            is_service = deleted.type == "service" or has_service_id
+            label = "Service removed     " if is_service else "Container removed   "
+            display_id = service_id[:12] if has_service_id else container_id[:12]
             print(
-                "Container removed   ",
-                "Id:" + container_id[:12],
+                label,
+                "Id:" + display_id,
                 "    " + deleted.name,
                 sep="\t",
             )
@@ -230,10 +239,20 @@ class WebServer:
         Schedules or performs a reload of the Nginx configuration.
         Returns True if a reload was initiated or scheduled.
         """
-        return self.throttler.throttle(lambda: self._do_reload(force), immediate=immediate or force)
+
+        def run_or_enqueue():
+            if self._reload_dispatcher is None:
+                return self._do_reload(force)
+            if self._is_reload_dispatcher_thread is not None and self._is_reload_dispatcher_thread():
+                return self._do_reload(force)
+
+            from nginx_proxy.DockerEventListener import Reload
+
+            return self._reload_dispatcher(Reload(force))
+
+        return self.throttler.throttle(run_or_enqueue, immediate=immediate or force)
 
     def disconnect(self, network, container, scope):
-
         if self.id is not None and container == self.id:
             if network in self.networks:
                 print("Nginx Proxy removed from network ", self.networks[network])
@@ -323,52 +342,51 @@ class WebServer:
         Previously this only did containers, but now it's a full rescan for consistency.
         """
         swarm_mode = self.config.get("docker_swarm", "ignore")
-        with self._lock:
-            # Clear previous state to ensure we don't leak dead containers/services
-            self.config_data.clear()
+        # Clear previous state to ensure we don't leak dead containers/services
+        self.config_data.clear()
 
-            # 1. Register local containers (unless in strict swarm mode)
-            if swarm_mode != "strict" and self.client is not None:
-                try:
-                    containers = self.client.containers.list()
-                    for container in containers:
-                        if swarm_mode not in (
-                            "ignore",
-                            "prefer-local",
-                        ) and "com.docker.swarm.service.id" in container.attrs["Config"].get("Labels", {}):
-                            continue
-                        if not self._should_register_container_now(container, bypass_start_grace=bypass_start_grace):
-                            continue
-                        backend = BackendTarget.from_container(container)
+        # 1. Register local containers (unless in strict swarm mode)
+        if swarm_mode != "strict" and self.client is not None:
+            try:
+                containers = self.client.containers.list()
+                for container in containers:
+                    if swarm_mode not in (
+                        "ignore",
+                        "prefer-local",
+                    ) and "com.docker.swarm.service.id" in container.attrs["Config"].get("Labels", {}):
+                        continue
+                    if not self._should_register_container_now(container, bypass_start_grace=bypass_start_grace):
+                        continue
+                    backend = BackendTarget.from_container(container)
+                    self.register_backend(backend)
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except Exception as e:
+                print(f"Error scanning containers: {e}", file=sys.stderr)
+
+        # 2. Register swarm services (if enable, prefer-local, or strict)
+        if swarm_mode in ("enable", "prefer-local", "strict"):
+            try:
+                info = self.swarm_client.info()
+                swarm_info = info.get("Swarm", {})
+                node_state = swarm_info.get("LocalNodeState", "inactive")
+                # ControlAvailable is usually present if it's a manager
+                is_manager = swarm_info.get("ControlAvailable", False)
+
+                if node_state == "active" and is_manager:
+                    services = self.swarm_client.services.list()
+                    for service in services:
+                        backend = BackendTarget.from_service(service)
                         self.register_backend(backend)
-                except (KeyboardInterrupt, SystemExit):
-                    raise
-                except Exception as e:
-                    print(f"Error scanning containers: {e}", file=sys.stderr)
-
-            # 2. Register swarm services (if enable, prefer-local, or strict)
-            if swarm_mode in ("enable", "prefer-local", "strict"):
-                try:
-                    info = self.swarm_client.info()
-                    swarm_info = info.get("Swarm", {})
-                    node_state = swarm_info.get("LocalNodeState", "inactive")
-                    # ControlAvailable is usually present if it's a manager
-                    is_manager = swarm_info.get("ControlAvailable", False)
-
-                    if node_state == "active" and is_manager:
-                        services = self.swarm_client.services.list()
-                        for service in services:
-                            backend = BackendTarget.from_service(service)
-                            self.register_backend(backend)
-                    elif node_state == "active":
-                        # If node is active but not manager, we can't list services on this client.
-                        # However, if we have a remote swarm_client, it might be a manager.
-                        # But self.swarm_client.info() would have returned is_manager=True if it were.
-                        pass
-                except (KeyboardInterrupt, SystemExit):
-                    raise
-                except Exception as e:
-                    print(f"Error scanning services: {e}", file=sys.stderr)
+                elif node_state == "active":
+                    # If node is active but not manager, we can't list services on this client.
+                    # However, if we have a remote swarm_client, it might be a manager.
+                    # But self.swarm_client.info() would have returned is_manager=True if it were.
+                    pass
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except Exception as e:
+                print(f"Error scanning services: {e}", file=sys.stderr)
 
     def rescan_services(self):
         """

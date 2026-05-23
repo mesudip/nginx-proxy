@@ -250,6 +250,8 @@ docker exec nginx-proxy verify www.example.com ## check if request routes back t
 
 docker exec nginx-proxy getssl www.example.com example.com www2.example.com # issue certificate
 
+docker exec nginx-proxy reload # rescan Docker state and reload nginx config
+
 ```
 
 ## 🚀 Roadmap

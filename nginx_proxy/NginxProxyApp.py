@@ -189,8 +189,21 @@ class NginxProxyApp:
         print("Stopping NginxProxyApp...")
         self.cleanup()
 
+    def reload(self):
+        if self.server is None:
+            print("Reload requested before NginxProxyApp started", file=sys.stderr)
+            return False
+        print("Reload requested. Rescanning Docker state...")
+        if self.docker_event_listener is not None and self.docker_event_listener.is_dispatcher_running():
+            from nginx_proxy.DockerEventListener import RescanAndReload
+
+            return self.docker_event_listener.enqueue(RescanAndReload(force=True, bypass_start_grace=True))
+        return self.server.rescan_and_reload(force=True, bypass_start_grace=True)
+
     def cleanup(self):
-        # No explicit stop for DockerEventListener needed as it's not a thread
+        if self.docker_event_listener is not None and self.docker_event_listener.is_dispatcher_running():
+            self.docker_event_listener.stop_dispatcher()
+        self.docker_event_listener = None
         if self.server is not None:
             self.server.cleanup()
             self.server = None

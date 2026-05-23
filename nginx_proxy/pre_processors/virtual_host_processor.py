@@ -36,6 +36,15 @@ def _validate_external_host(host: Host):
         raise InvalidHostConfiguration(host.hostname, "certificate hostnames must be 64 characters or fewer")
 
 
+def _backend_log_identity(backend: BackendTarget) -> str:
+    service_id = backend.labels.get("com.docker.swarm.service.id")
+    if isinstance(service_id, str) and service_id:
+        return "Service Id: " + service_id[:12]
+    if backend.type == "service":
+        return "Service Id: " + backend.id[:12]
+    return f"{backend.type:>9}".title() + " Id: " + backend.id[:12]
+
+
 def _parse_extra_directive(raw_directive: str):
     directive = raw_directive.strip()
     if not directive:
@@ -92,7 +101,7 @@ def process_virtual_hosts(backend: BackendTarget, known_networks: set) -> ProxyC
                 hosts.add_host(host)
         print(
             "Valid configuration   ",
-            f"{backend.type:>9}".title() + " Id: " + backend.id[:12],
+            _backend_log_identity(backend),
             backend.name,
             sep="\t",
         )
@@ -100,14 +109,14 @@ def process_virtual_hosts(backend: BackendTarget, known_networks: set) -> ProxyC
     except NoHostConfiguration:
         print(
             "No VIRTUAL_HOST       ",
-            f"{backend.type:>9}".title() + " Id: " + backend.id[:12],
+            _backend_log_identity(backend),
             backend.name,
             sep="\t",
         )
     except UnreachableNetwork as e:
         print(
             "Unreachable Network   ",
-            f"{backend.type:>9}".title() + " Id: " + backend.id[:12],
+            _backend_log_identity(backend),
             backend.name,
             "networks: " + ", ".join(list(e.network_names)),
             sep="\t",
@@ -115,7 +124,7 @@ def process_virtual_hosts(backend: BackendTarget, known_networks: set) -> ProxyC
     except InvalidHostConfiguration as e:
         print(
             "Invalid VIRTUAL_HOST  ",
-            f"{backend.type:>9}".title() + " Id: " + backend.id[:12],
+            _backend_log_identity(backend),
             backend.name,
             f"{e.hostname}: {e.reason}",
             sep="\t",

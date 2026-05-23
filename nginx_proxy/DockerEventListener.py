@@ -1,14 +1,84 @@
 import os
+import queue
 import re
 import subprocess
 import sys
 import threading
 import traceback
+from dataclasses import dataclass
+from typing import Any
 
 import docker
 
 from nginx_proxy.BackendTarget import BackendTarget
 from nginx_proxy.WebServer import WebServer
+
+
+SERVICE_EVENT_DELAY_SECONDS = 5
+SERVICE_EVENT_RETRY_DELAY_SECONDS = 20
+SERVICE_EVENT_MAX_ATTEMPTS = 2
+
+
+@dataclass(frozen=True)
+class ServiceEvent:
+    action: str
+    event: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ContainerEvent:
+    action: str
+    event: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ContainerHealthEvent:
+    action: str
+    event: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class NetworkEvent:
+    action: str
+    event: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ActivateBackend:
+    container_id: str
+    generation: int
+
+
+@dataclass(frozen=True)
+class ProcessServiceUpsert:
+    service_id: str
+    action: str
+    attempt: int
+    generation: int
+
+
+@dataclass(frozen=True)
+class RemoveBackend:
+    backend_id: str
+
+
+@dataclass(frozen=True)
+class RescanAndReload:
+    force: bool = False
+    bypass_start_grace: bool = True
+
+
+@dataclass(frozen=True)
+class Reload:
+    force: bool = False
+
+
+@dataclass(frozen=True)
+class SyncSslWatchDomains:
+    pass
+
+
+_STOP = object()
 
 
 class DockerEventListener:
@@ -21,29 +91,128 @@ class DockerEventListener:
         self.web_server = web_server
         self.client = docker_client
         self.swarm_client = swarm_client if swarm_client is not None else docker_client
-        self.lock = threading.Lock()
+        self._command_queue: queue.Queue = queue.Queue()
+        self._dispatcher_thread: threading.Thread | None = None
+        self._dispatcher_stop = threading.Event()
+        self._dispatcher_thread_id: int | None = None
         self._pending_backend_timers: dict[str, threading.Timer] = {}
+        self._pending_backend_generations: dict[str, int] = {}
+        self._pending_service_timers: dict[str, threading.Timer] = {}
+        self._pending_service_generations: dict[str, int] = {}
         self._waiting_for_healthy: set[str] = set()
         self._started_containers: set[str] = self._load_started_container_ids()
+        self.web_server.docker_event_listener = self
+
+    def start_dispatcher(self):
+        if self.is_dispatcher_running():
+            return
+        self._dispatcher_stop.clear()
+        self.web_server.set_reload_dispatcher(self.enqueue, self.is_dispatcher_thread)
+        self._dispatcher_thread = threading.Thread(target=self._dispatch_loop, daemon=True)
+        self._dispatcher_thread.start()
+
+    def stop_dispatcher(self):
+        self._dispatcher_stop.set()
+        self._cancel_all_timers()
+        self._command_queue.put(_STOP)
+        if self._dispatcher_thread is not None:
+            self._dispatcher_thread.join(timeout=5)
+            self._dispatcher_thread = None
+        self._dispatcher_thread_id = None
+        self.web_server.set_reload_dispatcher(None, None)
+
+    def is_dispatcher_running(self) -> bool:
+        return self._dispatcher_thread is not None and self._dispatcher_thread.is_alive()
+
+    def is_dispatcher_thread(self) -> bool:
+        return self._dispatcher_thread_id == threading.get_ident()
+
+    def enqueue(self, command):
+        self._command_queue.put(command)
+        return True
+
+    def drain_commands(self, limit: int = 100):
+        processed = 0
+        while processed < limit:
+            try:
+                command = self._command_queue.get_nowait()
+            except queue.Empty:
+                return processed
+            if command is _STOP:
+                self._command_queue.task_done()
+                continue
+            self._dispatch(command)
+            self._command_queue.task_done()
+            processed += 1
+        return processed
+
+    def _dispatch_loop(self):
+        self._dispatcher_thread_id = threading.get_ident()
+        while True:
+            command = self._command_queue.get()
+            try:
+                if command is _STOP:
+                    return
+                self._dispatch(command)
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except Exception as e:
+                print("Unexpected dispatcher error :" + e.__class__.__name__ + " -> " + str(e), file=sys.stderr)
+                traceback.print_exc(limit=10)
+            finally:
+                self._command_queue.task_done()
+
+    def _dispatch(self, command):
+        if isinstance(command, ServiceEvent):
+            self._process_service_event(command.action, command.event)
+        elif isinstance(command, ContainerEvent):
+            self._process_container_event(command.action, command.event)
+        elif isinstance(command, ContainerHealthEvent):
+            self._process_container_health_event(command.action, command.event)
+        elif isinstance(command, NetworkEvent):
+            self._process_network_event(command.action, command.event)
+        elif isinstance(command, ActivateBackend):
+            self._process_backend_activation(command.container_id, command.generation)
+        elif isinstance(command, ProcessServiceUpsert):
+            self._process_scheduled_service_upsert(
+                command.service_id, command.action, command.attempt, command.generation
+            )
+        elif isinstance(command, RemoveBackend):
+            self.web_server.remove_backend(command.backend_id)
+        elif isinstance(command, RescanAndReload):
+            self.web_server.rescan_all_container(bypass_start_grace=command.bypass_start_grace)
+            self.web_server._do_reload(command.force)
+        elif isinstance(command, Reload):
+            self.web_server._do_reload(command.force)
+        elif isinstance(command, SyncSslWatchDomains):
+            self._sync_ssl_watch_domains()
+        elif callable(command):
+            command()
+        else:
+            raise ValueError(f"Unknown DockerEventListener command: {command!r}")
 
     def run(self):
-        swarm_mode = self.web_server.config.get("docker_swarm", "ignore")
-        if self.client == self.swarm_client:
-            self._listen(self.client)
-        else:
-            threads = []
-            if swarm_mode != "strict" and self.client is not None:
-                t1 = threading.Thread(target=self._listen, args=(self.client,), daemon=True)
-                t1.start()
-                threads.append(t1)
+        self.start_dispatcher()
+        try:
+            swarm_mode = self.web_server.config.get("docker_swarm", "ignore")
+            if self.client == self.swarm_client:
+                self._listen(self.client)
+            else:
+                threads = []
+                if swarm_mode != "strict" and self.client is not None:
+                    t1 = threading.Thread(target=self._listen, args=(self.client,), daemon=True)
+                    t1.start()
+                    threads.append(t1)
 
-            if swarm_mode in ("enable", "prefer-local", "strict") and self.swarm_client is not None:
-                t2 = threading.Thread(target=self._listen, args=(self.swarm_client,), daemon=True)
-                t2.start()
-                threads.append(t2)
+                if swarm_mode in ("enable", "prefer-local", "strict") and self.swarm_client is not None:
+                    t2 = threading.Thread(target=self._listen, args=(self.swarm_client,), daemon=True)
+                    t2.start()
+                    threads.append(t2)
 
-            for t in threads:
-                t.join()
+                for t in threads:
+                    t.join()
+        finally:
+            self.stop_dispatcher()
 
     def _listen(self, client):
         client_url = getattr(getattr(client, "api", None), "base_url", "unknown")
@@ -77,16 +246,15 @@ class DockerEventListener:
                 eventType = event.get("Type")
                 eventAction = event.get("Action")
 
-                with self.lock:
-                    if eventType == "service":
-                        self._process_service_event(eventAction, event)
-                    elif eventType == "network":
-                        self._process_network_event(eventAction, event)
-                    elif eventType == "container":
-                        if eventAction and eventAction.startswith("health_status"):
-                            self._process_container_health_event(eventAction, event)
-                        else:
-                            self._process_container_event(eventAction, event)
+                if eventType == "service":
+                    self.enqueue(ServiceEvent(eventAction, event))
+                elif eventType == "network":
+                    self.enqueue(NetworkEvent(eventAction, event))
+                elif eventType == "container":
+                    if eventAction and eventAction.startswith("health_status"):
+                        self.enqueue(ContainerHealthEvent(eventAction, event))
+                    else:
+                        self.enqueue(ContainerEvent(eventAction, event))
 
             except (KeyboardInterrupt, SystemExit):
                 raise
@@ -98,18 +266,85 @@ class DockerEventListener:
     def _process_service_event(self, action, event):
         service_id = event.get("Actor", {}).get("ID") or event.get("id")
         if action in ("create", "update"):
-            try:
-                service = self.swarm_client.services.get(service_id)
-                backend = BackendTarget.from_service(service)
-                self.web_server.update_backend(backend)
-            except docker.errors.NotFound:
-                print(f"WARN: Service {service_id} not found ...", file=sys.stderr)
-            except (KeyboardInterrupt, SystemExit):
-                raise
-            except Exception as e:
-                print(f"Error processing service event {action} for {service_id}: {e}", file=sys.stderr)
+            self._schedule_service_processing(service_id, action, SERVICE_EVENT_DELAY_SECONDS, attempt=1)
         elif action == "remove":
+            self._cancel_pending_service_processing(service_id)
             self.web_server.remove_backend(service_id)
+
+    def _schedule_service_processing(self, service_id: str, action: str, delay_seconds: float, attempt: int):
+        self._cancel_pending_service_processing(service_id)
+        generation = self._pending_service_generations.get(service_id, 0) + 1
+        self._pending_service_generations[service_id] = generation
+
+        def process():
+            self.enqueue(ProcessServiceUpsert(service_id, action, attempt, generation))
+
+        timer = threading.Timer(delay_seconds, process)
+        timer.daemon = True
+        self._pending_service_timers[service_id] = timer
+        timer.start()
+
+    def _cancel_pending_service_processing(self, service_id: str):
+        timer = self._pending_service_timers.pop(service_id, None)
+        if timer is not None:
+            timer.cancel()
+        self._pending_service_generations.pop(service_id, None)
+
+    def _cancel_all_timers(self):
+        for timer in self._pending_backend_timers.values():
+            timer.cancel()
+        for timer in self._pending_service_timers.values():
+            timer.cancel()
+        self._pending_backend_timers.clear()
+        self._pending_backend_generations.clear()
+        self._pending_service_timers.clear()
+        self._pending_service_generations.clear()
+
+    def _process_scheduled_service_upsert(self, service_id: str, action: str, attempt: int, generation: int):
+        if self._pending_service_generations.get(service_id) != generation:
+            return
+        self._pending_service_timers.pop(service_id, None)
+        self._pending_service_generations.pop(service_id, None)
+        self._process_service_upsert(service_id, action, attempt)
+
+    def _process_service_upsert(self, service_id: str, action: str, attempt: int):
+        try:
+            service = self.swarm_client.services.get(service_id)
+            backend = BackendTarget.from_service(service)
+            if not self._service_backend_has_reachable_vip(backend) and self._retry_service_event(
+                service_id, action, attempt, "has no reachable VIP"
+            ):
+                return
+            self.web_server.update_backend(backend)
+        except docker.errors.NotFound:
+            if not self._retry_service_event(service_id, action, attempt, "not found"):
+                print(f"WARN: Service {service_id} not found ...", file=sys.stderr)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as e:
+            print(f"Error processing service event {action} for {service_id}: {e}", file=sys.stderr)
+
+    def _retry_service_event(self, service_id: str, action: str, attempt: int, reason: str) -> bool:
+        if attempt >= SERVICE_EVENT_MAX_ATTEMPTS:
+            return False
+        print(
+            f"WARN: Service {service_id} {reason}; retrying in {SERVICE_EVENT_RETRY_DELAY_SECONDS}s",
+            file=sys.stderr,
+        )
+        self._schedule_service_processing(
+            service_id,
+            action,
+            SERVICE_EVENT_RETRY_DELAY_SECONDS,
+            attempt=attempt + 1,
+        )
+        return True
+
+    def _service_backend_has_reachable_vip(self, backend: BackendTarget) -> bool:
+        known_networks = set(self.web_server.networks.keys())
+        for detail in backend.network_settings.values():
+            if detail.get("NetworkID") in known_networks and detail.get("IPAddress"):
+                return True
+        return False
 
     def _process_container_event(self, action, event):
         container_id = event.get("Actor", {}).get("ID") or event.get("id")
@@ -171,11 +406,11 @@ class DockerEventListener:
 
     def _schedule_backend_activation(self, container_id: str, grace_seconds: float):
         self._clear_pending_startup_state(container_id)
+        generation = self._pending_backend_generations.get(container_id, 0) + 1
+        self._pending_backend_generations[container_id] = generation
 
         def activate():
-            with self.lock:
-                self._pending_backend_timers.pop(container_id, None)
-                self._activate_backend_if_running(container_id)
+            self.enqueue(ActivateBackend(container_id, generation))
 
         timer = threading.Timer(grace_seconds, activate)
         timer.daemon = True
@@ -186,6 +421,7 @@ class DockerEventListener:
         timer = self._pending_backend_timers.pop(container_id, None)
         if timer is not None:
             timer.cancel()
+        self._pending_backend_generations.pop(container_id, None)
 
     def _clear_pending_startup_state(self, container_id: str) -> bool:
         had_pending_timer = container_id in self._pending_backend_timers
@@ -207,6 +443,19 @@ class DockerEventListener:
             raise
         except Exception as e:
             print(f"Error activating backend for {container_id}: {e}", file=sys.stderr)
+
+    def _process_backend_activation(self, container_id: str, generation: int):
+        if self._pending_backend_generations.get(container_id) != generation:
+            return
+        self._pending_backend_timers.pop(container_id, None)
+        self._pending_backend_generations.pop(container_id, None)
+        self._activate_backend_if_running(container_id)
+
+    def _sync_ssl_watch_domains(self):
+        try:
+            self.web_server._do_reload(True)
+        finally:
+            self.web_server.ssl_processor._dispatcher_ssl_reload_pending = False
 
     @staticmethod
     def _container_has_healthcheck(container) -> bool:

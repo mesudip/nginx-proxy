@@ -278,11 +278,55 @@ def _running_container_with_labels(labels):
     return container
 
 
+def _service(service_id="service1"):
+    service = MagicMock()
+    service.id = service_id
+    service.attrs = {
+        "Spec": {
+            "Name": service_id,
+            "Labels": {},
+            "TaskTemplate": {"ContainerSpec": {"Env": ["VIRTUAL_HOST=service.example.com"]}},
+        },
+        "Endpoint": {
+            "Ports": [{"Protocol": "tcp", "TargetPort": 80}],
+            "VirtualIPs": [{"NetworkID": "network1", "Addr": "10.0.0.5/24"}],
+        },
+    }
+    return service
+
+
 def _starting_healthcheck_container_with_labels(labels):
     container = _running_container_with_labels(labels)
     container.attrs["Config"]["Healthcheck"] = {"Test": ["CMD", "curl", "-f", "http://localhost/health"]}
     container.attrs["State"]["Health"] = {"Status": "starting"}
     return container
+
+
+@pytest.mark.parametrize(
+    "swarm_mode, expected_backend_ids",
+    [
+        ("ignore", ["standalone", "task"]),
+        ("exclude", ["standalone"]),
+        ("enable", ["standalone", "service1"]),
+        ("prefer-local", ["standalone", "task", "service1"]),
+        ("strict", ["service1"]),
+    ],
+)
+def test_rescan_all_container_matches_swarm_mode_matrix(web_server, swarm_mode, expected_backend_ids):
+    web_server.config["docker_swarm"] = swarm_mode
+    standalone = _running_container_with_labels({})
+    standalone.id = "standalone"
+    task = _running_container_with_labels({"com.docker.swarm.service.id": "service1"})
+    task.id = "task"
+    web_server.client.containers.list.return_value = [standalone, task]
+    web_server.swarm_client.info.return_value = {"Swarm": {"LocalNodeState": "active", "ControlAvailable": True}}
+    web_server.swarm_client.services.list.return_value = [_service()]
+
+    with patch.object(web_server, "register_backend") as mock_register:
+        web_server.rescan_all_container(bypass_start_grace=True)
+
+    backend_ids = [call.args[0].id for call in mock_register.call_args_list]
+    assert backend_ids == expected_backend_ids
 
 
 def test_rescan_skips_swarm_task_container_in_enable(web_server):

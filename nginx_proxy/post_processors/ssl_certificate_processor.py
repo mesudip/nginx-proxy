@@ -30,6 +30,7 @@ class SslCertificateProcessor:
         self.cert_manager = backend_info.cert_manager
         self.certapi_client = backend_info.certapi_client
         self.challenge_store = backend_info.challenge_store
+        self._dispatcher_ssl_reload_pending = False
         self.renewal_manager = RenewalManager(
             self.backend,
             renewal_callback=self.sync_watch_domains,
@@ -45,6 +46,15 @@ class SslCertificateProcessor:
 
     def sync_watch_domains(self):
         if self.server is None:
+            return
+        listener = getattr(self.server, "docker_event_listener", None)
+        if listener is not None and listener.is_dispatcher_running():
+            if self._dispatcher_ssl_reload_pending:
+                return
+            from nginx_proxy.DockerEventListener import SyncSslWatchDomains
+
+            self._dispatcher_ssl_reload_pending = True
+            listener.enqueue(SyncSslWatchDomains())
             return
         domains = sorted({host.hostname for host in self.server.config_data.host_list() if host.secured})
         self.renewal_manager.update_watch_domains(domains)

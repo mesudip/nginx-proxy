@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from nginx_proxy.Host import Host
+from nginx_proxy.DockerEventListener import SyncSslWatchDomains
 from nginx_proxy.post_processors.ssl_certificate_processor import SslCertificateProcessor
 
 
@@ -116,6 +117,21 @@ def test_sync_watch_domains_publishes_secured_hosts_to_renewal_manager(monkeypat
 
     renewal.update_watch_domains.assert_called_once_with(["*.example.com", "secure.example.com"])
     server.reload.assert_called_once_with(force=True)
+
+
+def test_sync_watch_domains_enqueues_when_dispatcher_is_running(monkeypatch):
+    server = _make_server()
+    listener = Mock()
+    listener.is_dispatcher_running.return_value = True
+    server.docker_event_listener = listener
+    processor, _backend, renewal = _build_processor(monkeypatch, None)
+    processor.server = server
+
+    processor.sync_watch_domains()
+
+    renewal.update_watch_domains.assert_not_called()
+    server.reload.assert_not_called()
+    listener.enqueue.assert_called_once_with(SyncSslWatchDomains())
 
 
 def test_getssl_force_passes_self_verify_false_to_remote_backend(monkeypatch, tmp_path):

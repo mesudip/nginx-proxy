@@ -11,7 +11,7 @@ RUN apk --no-cache add  openssl && \
     gcc libc-dev openssl-dev linux-headers libffi-dev && \
     pip install --no-cache-dir -r /requirements.txt &&  \
     rm -f /requirements.txt && apk del .build-deps && \
-    ln -s /app/getssl /bin/getssl && ln -s /app/verify /bin/verify && \
+    ln -s /app/getssl /bin/getssl && ln -s /app/verify /bin/verify && ln -s /app/reload /bin/reload && \
     mv /docker-entrypoint.sh /nginx-entrypoint.sh  && \
     ln -s /app/docker-entrypoint.sh /docker-entrypoint.sh
 RUN rm -rf /var/log/nginx/* && chown nginx:nginx /var/log/nginx && truncate -s 0 /etc/nginx/conf.d/default.conf
