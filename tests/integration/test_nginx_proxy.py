@@ -38,6 +38,10 @@ def get_request_url(virtual_host, request_path, scheme="http"):
     return f"{scheme}://{hostname}{request_path}"
 
 
+def _hostname_mode_token(swarm_mode):
+    return {"prefer-local": "pl"}.get(swarm_mode, swarm_mode)
+
+
 def _has_proxy_server(config_str, server_name):
     config = HttpBlock.parse(config_str)
     for server in config.servers:
@@ -230,9 +234,9 @@ def test_proxy_full_redirect_to_https_target_response(
     if not is_reachable(swarm_mode, backend_type):
         pytest.skip("Backend discovery not available for this swarm mode/backend type combination.")
 
-    suffix = f"{backend_type}.{swarm_mode}.{datetime.now(timezone.utc).strftime('%H%M%S%f')}"
-    target_host = f"{suffix}.full-redirect-target.example.com"
-    source_host = f"{suffix}.full-redirect-source.example.com"
+    suffix = f"{backend_type[:3]}.{_hostname_mode_token(swarm_mode)}.{datetime.now(timezone.utc).strftime('%H%M%S%f')}"
+    target_host = f"{suffix}.frt.example.com"
+    source_host = f"{suffix}.frs.example.com"
     env = {
         "VIRTUAL_HOST": f"https://{target_host} -> :8080",
         "VIRTUAL_PORT": "8080",

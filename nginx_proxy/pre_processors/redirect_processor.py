@@ -8,6 +8,10 @@ from nginx_proxy.BackendTarget import BackendTarget
 from nginx_proxy.Host import Host
 
 
+def _is_certificate_redirect_target(target: Url):
+    return "https" in target.scheme or "wss" in target.scheme or int(target.port or 80) == 443
+
+
 def process_redirection(backend: BackendTarget, environments: map, vhost_map: Dict[str, Dict[int, Host]]):
     redirect_env = [e[1] for e in environments.items() if e[0].startswith("PROXY_FULL_REDIRECT")]
     hosts = []
@@ -39,8 +43,19 @@ def process_redirection(backend: BackendTarget, environments: map, vhost_map: Di
                     target.port = 443 if "https" in target.scheme or "wss" in target.scheme else 80
                 if not target.scheme:
                     target.scheme = {"https"} if target.port == 443 else {"http"}
+                if not Url.is_valid_hostname(target.hostname, allow_wildcard=True):
+                    print("Invalid PROXY_FULL_REDIRECT target hostname: " + target.hostname)
+                    continue
+                if _is_certificate_redirect_target(target) and not Url.is_valid_hostname(
+                    target.hostname, allow_wildcard=True, max_length=64
+                ):
+                    print("Invalid PROXY_FULL_REDIRECT target certificate hostname: " + target.hostname)
+                    continue
                 for source in sources:
                     if source.hostname is not None:
+                        if not Url.is_valid_hostname(source.hostname, allow_wildcard=True):
+                            print("Invalid PROXY_FULL_REDIRECT source hostname: " + source.hostname)
+                            continue
                         port = 80 if source.port is None else int(source.port)
                         if source.hostname not in vhost_map:
                             host = Host(source.hostname, port)

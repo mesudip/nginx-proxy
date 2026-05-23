@@ -133,3 +133,10 @@ class UnreachableNetwork(UnconfiguredBackend):
 class NoHostConfiguration(UnconfiguredBackend):
     def __init__(self, backend_type="container"):
         super().__init__(backend_type)
+
+
+class InvalidHostConfiguration(UnconfiguredBackend):
+    def __init__(self, hostname: str, reason: str, backend_type="container"):
+        super().__init__(backend_type)
+        self.hostname = hostname
+        self.reason = reason

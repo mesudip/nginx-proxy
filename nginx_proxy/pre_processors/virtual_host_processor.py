@@ -1,7 +1,8 @@
 import re
 
+from nginx import Url
 from nginx_proxy import Host, ProxyConfigData
-from nginx_proxy.BackendTarget import BackendTarget, NoHostConfiguration, UnreachableNetwork
+from nginx_proxy.BackendTarget import BackendTarget, InvalidHostConfiguration, NoHostConfiguration, UnreachableNetwork
 from nginx_proxy.utils import split_url
 
 
@@ -18,6 +19,17 @@ def _default_external_port(schemes):
     has_secure_scheme = "https" in schemes or "wss" in schemes
     has_insecure_scheme = "http" in schemes or "ws" in schemes
     return 443 if has_secure_scheme and not has_insecure_scheme else 80
+
+
+def _requires_certificate(host: Host) -> bool:
+    return "https" in host.scheme or "wss" in host.scheme or int(host.port or 80) == 443
+
+
+def _validate_external_host(host: Host):
+    if not Url.is_valid_hostname(host.hostname, allow_wildcard=True):
+        raise InvalidHostConfiguration(host.hostname, "invalid hostname")
+    if _requires_certificate(host) and not Url.is_valid_hostname(host.hostname, allow_wildcard=True, max_length=64):
+        raise InvalidHostConfiguration(host.hostname, "certificate hostnames must be 64 characters or fewer")
 
 
 def _parse_extra_directive(raw_directive: str):
@@ -94,6 +106,14 @@ def process_virtual_hosts(backend: BackendTarget, known_networks: set) -> ProxyC
             f"{backend.type:>9}".title() + " Id: " + backend.id[:12],
             backend.name,
             "networks: " + ", ".join(list(e.network_names)),
+            sep="\t",
+        )
+    except InvalidHostConfiguration as e:
+        print(
+            "Invalid VIRTUAL_HOST  ",
+            f"{backend.type:>9}".title() + " Id: " + backend.id[:12],
+            backend.name,
+            f"{e.hostname}: {e.reason}",
             sep="\t",
         )
     return hosts
@@ -176,6 +196,7 @@ def host_generator(backend: BackendTarget, known_networks: set = {}):
 
     for host_config in static_hosts:
         host, location, container_data, extras = _parse_host_entry(host_config)
+        _validate_external_host(host)
 
         if container_data.address is None:
             print(
@@ -208,6 +229,7 @@ def host_generator(backend: BackendTarget, known_networks: set = {}):
 
     for host_config in virtual_hosts:
         host, location, container_data, extras = _parse_host_entry(host_config)
+        _validate_external_host(host)
         # Protect double / in urls.
         if location and not location.endswith("/") and container_data.path and container_data.path.endswith("/"):
             location = location + "/"
