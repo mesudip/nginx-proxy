@@ -12,6 +12,10 @@ def _is_certificate_redirect_target(target: Url):
     return "https" in target.scheme or "wss" in target.scheme or int(target.port or 80) == 443
 
 
+def _hostname_exceeds_certificate_limit(hostname: str) -> bool:
+    return bool(hostname) and len(hostname.rstrip(".")) > 64
+
+
 def process_redirection(backend: BackendTarget, environments: map, vhost_map: Dict[str, Dict[int, Host]]):
     redirect_env = [e[1] for e in environments.items() if e[0].startswith("PROXY_FULL_REDIRECT")]
     hosts = []
@@ -46,9 +50,7 @@ def process_redirection(backend: BackendTarget, environments: map, vhost_map: Di
                 if not Url.is_valid_hostname(target.hostname, allow_wildcard=True):
                     print("Invalid PROXY_FULL_REDIRECT target hostname: " + target.hostname)
                     continue
-                if _is_certificate_redirect_target(target) and not Url.is_valid_hostname(
-                    target.hostname, allow_wildcard=True, max_length=64
-                ):
+                if _is_certificate_redirect_target(target) and _hostname_exceeds_certificate_limit(target.hostname):
                     print("Invalid PROXY_FULL_REDIRECT target certificate hostname: " + target.hostname)
                     continue
                 for source in sources:

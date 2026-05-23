@@ -22,18 +22,18 @@ jobs:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v4
 
       - name: Install dependencies
         run: |
@@ -44,16 +44,113 @@ jobs:
 
       - name: Run tests
         run: |
-          pytest --cov --cov-branch --junitxml=junit.xml -o junit_family=legacy
+          pytest --cov --cov-branch --cov-report=xml:coverage.xml --junitxml=junit.xml -o junit_family=legacy
+
+      - name: Write test summary
+        if: ${{ always() }}
+        run: |
+          python - <<'PY'
+          import os
+          import sys
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if not summary_path:
+              sys.exit(0)
+
+          junit_path = Path("junit.xml")
+
+          def md_escape(value):
+              return str(value).replace("|", "\\|").replace("\n", "<br>")
+
+          lines = ["## Test summary", ""]
+
+          if not junit_path.exists():
+              lines.extend([
+                  "No `junit.xml` test report was generated.",
+                  "",
+              ])
+          else:
+              root = ET.parse(junit_path).getroot()
+              suites = [root] if root.tag == "testsuite" else list(root.findall("testsuite"))
+              if not suites:
+                  suites = [root]
+
+              totals = {"tests": 0, "failures": 0, "errors": 0, "skipped": 0, "time": 0.0}
+              for suite in suites:
+                  totals["tests"] += int(suite.attrib.get("tests", 0))
+                  totals["failures"] += int(suite.attrib.get("failures", 0))
+                  totals["errors"] += int(suite.attrib.get("errors", 0))
+                  totals["skipped"] += int(suite.attrib.get("skipped", 0))
+                  totals["time"] += float(suite.attrib.get("time", 0.0))
+
+              passed = totals["tests"] - totals["failures"] - totals["errors"] - totals["skipped"]
+              lines.extend([
+                  "| Total | Passed | Failed | Errors | Skipped | Duration |",
+                  "| ---: | ---: | ---: | ---: | ---: | ---: |",
+                  f"| {totals['tests']} | {passed} | {totals['failures']} | {totals['errors']} | {totals['skipped']} | {totals['time']:.2f}s |",
+                  "",
+                  "### Metadata",
+                  "",
+                  "| Key | Value |",
+                  "| --- | --- |",
+                  f"| Python | {md_escape(sys.version.split()[0])} |",
+                  f"| Runner OS | {md_escape(os.environ.get('RUNNER_OS', 'unknown'))} |",
+                  f"| Event | {md_escape(os.environ.get('GITHUB_EVENT_NAME', 'unknown'))} |",
+                  f"| Ref | {md_escape(os.environ.get('GITHUB_REF_NAME', 'unknown'))} |",
+                  f"| SHA | `{md_escape(os.environ.get('GITHUB_SHA', 'unknown'))}` |",
+                  f"| Actor | {md_escape(os.environ.get('GITHUB_ACTOR', 'unknown'))} |",
+                  "",
+              ])
+
+              failed_cases = []
+              for case in root.iter("testcase"):
+                  issue = case.find("failure")
+                  if issue is None:
+                      issue = case.find("error")
+                  if issue is not None:
+                      failed_cases.append((case.attrib, issue))
+
+              if failed_cases:
+                  lines.extend([
+                      "### Failed tests",
+                      "",
+                      "| Test | Type | Message |",
+                      "| --- | --- | --- |",
+                  ])
+                  for attrs, issue in failed_cases[:25]:
+                      classname = attrs.get("classname", "")
+                      name = attrs.get("name", "unknown")
+                      test_name = f"{classname}.{name}" if classname else name
+                      message = issue.attrib.get("message", "").strip() or (issue.text or "").strip().splitlines()[0:1]
+                      if isinstance(message, list):
+                          message = message[0] if message else ""
+                      lines.append(f"| `{md_escape(test_name)}` | {md_escape(issue.tag)} | {md_escape(message[:300])} |")
+                  if len(failed_cases) > 25:
+                      lines.append(f"| ... | ... | {len(failed_cases) - 25} more failing tests omitted from summary |")
+                  lines.append("")
+
+          with open(summary_path, "a", encoding="utf-8") as summary:
+              summary.write("\n".join(lines))
+              summary.write("\n")
+          PY
 
       - name: Upload coverage reports to Codecov
+        if: ${{ !cancelled() }}
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+          disable_search: true
           fail_ci_if_error: false
 
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
-        uses: codecov/test-results-action@v1
+        uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+          files: junit.xml
+          disable_search: true
+          report_type: test_results
+          fail_ci_if_error: false

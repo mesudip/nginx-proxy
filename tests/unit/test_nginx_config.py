@@ -5,7 +5,7 @@ from nginx.NginxConf import NginxConfig
 
 @pytest.fixture
 def loaded_config():
-    CONFIG = """
+    CONFIG = r"""
 user  www www;
 
 worker_processes  2;
@@ -239,7 +239,7 @@ def test_location_blocks(loaded_config):
     loc3 = server.locations[3]
     assert loc3.path == "/download/"
     assert loc3.valid_referers == ["none", "blocked", "server_names", "*.example.com"]
-    assert loc3.rewrite == "^/(download/.*)/mp3/(.*)\..*$ /$1/mp3/$2.mp3 break"
+    assert loc3.rewrite == r"^/(download/.*)/mp3/(.*)\..*$ /$1/mp3/$2.mp3 break"
     assert loc3.root == "/spool/www"
     assert loc3.access_log == "/var/log/nginx-download.access_log download"
 
@@ -251,7 +251,7 @@ def test_location_blocks(loaded_config):
 
     # Location ~* \.(jpg|jpeg|gif)$
     loc4 = server.locations[4]
-    assert loc4.path == "~* \.(jpg|jpeg|gif)$"
+    assert loc4.path == r"~* \.(jpg|jpeg|gif)$"
     assert loc4.root == "/spool/www"
     assert loc4.access_log == "off"
     assert loc4.expires == "30d"

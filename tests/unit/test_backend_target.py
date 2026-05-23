@@ -258,6 +258,18 @@ class TestVirtualHostProcessorWithBackendTarget:
         assert len(hosts) == 1
         assert hosts[0].hostname == long_hostname
 
+    def test_virtual_host_rejects_invalid_hostname(self):
+        bt = BackendTarget(
+            id="invalid-host-id",
+            name="invalid-host-test",
+            env={"VIRTUAL_HOST": "bad_host.example.com"},
+            network_settings={"my-net": {"NetworkID": "my-net-id", "IPAddress": "10.0.0.12"}},
+        )
+
+        config_data = process_virtual_hosts(bt, {"my-net-id"})
+
+        assert len(list(config_data.host_list())) == 0
+
     def test_https_virtual_host_allows_certificate_hostname_at_64_chars(self):
         hostname = f"{'a' * 52}.example.com"
         assert len(hostname) == 64
@@ -273,18 +285,6 @@ class TestVirtualHostProcessorWithBackendTarget:
         hosts = list(config_data.host_list())
         assert len(hosts) == 1
         assert hosts[0].hostname == hostname
-
-    def test_virtual_host_rejects_invalid_hostname(self):
-        bt = BackendTarget(
-            id="invalid-host-id",
-            name="invalid-host-test",
-            env={"VIRTUAL_HOST": "bad_host.example.com"},
-            network_settings={"my-net": {"NetworkID": "my-net-id", "IPAddress": "10.0.0.12"}},
-        )
-
-        config_data = process_virtual_hosts(bt, {"my-net-id"})
-
-        assert len(list(config_data.host_list())) == 0
 
     def test_virtual_host_allows_wildcard_hostname(self):
         bt = BackendTarget(

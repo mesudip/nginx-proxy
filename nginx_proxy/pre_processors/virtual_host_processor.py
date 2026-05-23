@@ -25,10 +25,14 @@ def _requires_certificate(host: Host) -> bool:
     return "https" in host.scheme or "wss" in host.scheme or int(host.port or 80) == 443
 
 
+def _hostname_exceeds_certificate_limit(hostname: str) -> bool:
+    return bool(hostname) and len(hostname.rstrip(".")) > 64
+
+
 def _validate_external_host(host: Host):
     if not Url.is_valid_hostname(host.hostname, allow_wildcard=True):
         raise InvalidHostConfiguration(host.hostname, "invalid hostname")
-    if _requires_certificate(host) and not Url.is_valid_hostname(host.hostname, allow_wildcard=True, max_length=64):
+    if _requires_certificate(host) and _hostname_exceeds_certificate_limit(host.hostname):
         raise InvalidHostConfiguration(host.hostname, "certificate hostnames must be 64 characters or fewer")
 
 
