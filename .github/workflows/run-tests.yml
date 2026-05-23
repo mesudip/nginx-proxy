@@ -15,6 +15,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    concurrency:
+      group: test-${{ github.event.pull_request.head.sha || github.sha }}
+      cancel-in-progress: true
     permissions:
       contents: read
     steps:
