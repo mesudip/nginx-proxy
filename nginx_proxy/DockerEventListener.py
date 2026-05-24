@@ -73,11 +73,6 @@ class Reload:
     force: bool = False
 
 
-@dataclass(frozen=True)
-class SyncSslWatchDomains:
-    pass
-
-
 _STOP = object()
 
 
@@ -184,8 +179,6 @@ class DockerEventListener:
             self.web_server._do_reload(command.force)
         elif isinstance(command, Reload):
             self.web_server._do_reload(command.force)
-        elif isinstance(command, SyncSslWatchDomains):
-            self._sync_ssl_watch_domains()
         elif callable(command):
             command()
         else:
@@ -451,12 +444,6 @@ class DockerEventListener:
         self._pending_backend_generations.pop(container_id, None)
         self._activate_backend_if_running(container_id)
 
-    def _sync_ssl_watch_domains(self):
-        try:
-            self.web_server._do_reload(True)
-        finally:
-            self.web_server.ssl_processor._dispatcher_ssl_reload_pending = False
-
     @staticmethod
     def _container_has_healthcheck(container) -> bool:
         healthcheck = container.attrs.get("Config", {}).get("Healthcheck")
@@ -497,7 +484,8 @@ class DockerEventListener:
             return None
         except (KeyboardInterrupt, SystemExit):
             raise
-        except Exception:
+        except Exception as e:
+            self._log_unexpected_error(f"Could not resolve container name for {container_id}", e)
             return None
         name = getattr(resolved, "name", None) or resolved.attrs.get("Name")
         return name.lstrip("/") if isinstance(name, str) else None
@@ -532,10 +520,12 @@ class DockerEventListener:
         except docker.errors.NotFound:
             return False
         except ValueError:
+            print(f"WARN: Ignoring network connect for invalid container id {container_id!r}", file=sys.stderr)
             return False
         except (KeyboardInterrupt, SystemExit):
             raise
-        except Exception:
+        except Exception as e:
+            self._log_unexpected_error(f"Could not inspect container {container_id} for network connect", e)
             return False
 
         if not self._container_is_running(container):
@@ -563,5 +553,11 @@ class DockerEventListener:
             }
         except (KeyboardInterrupt, SystemExit):
             raise
-        except Exception:
+        except Exception as e:
+            self._log_unexpected_error("Could not load running containers during Docker event listener startup", e)
             return set()
+
+    @staticmethod
+    def _log_unexpected_error(message: str, error: Exception):
+        print(f"WARN: {message}: {error.__class__.__name__} -> {error}", file=sys.stderr)
+        traceback.print_exc(limit=10)

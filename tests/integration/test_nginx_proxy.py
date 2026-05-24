@@ -5,6 +5,8 @@ import pytest
 import requests
 import websocket
 import time
+import re
+import hashlib
 from datetime import datetime, timezone
 from unittest.mock import patch
 
@@ -40,6 +42,12 @@ def get_request_url(virtual_host, request_path, scheme="http"):
 
 def _hostname_mode_token(swarm_mode):
     return {"prefer-local": "pl"}.get(swarm_mode, swarm_mode)
+
+
+def _hostname_slug(value):
+    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    digest = hashlib.sha1(value.encode("utf-8")).hexdigest()[:10]
+    return f"{slug[:36].strip('-')}-{digest}"
 
 
 def _has_proxy_server(config_str, server_name):
@@ -125,7 +133,8 @@ def test_http_routing_discovery(
     """
     Test HTTP routing discovery for various swarm modes and backend types.
     """
-    hostname = f"{backend_type}.{swarm_mode}.routing.example.com"
+    case_slug = _hostname_slug(request.node.name)
+    hostname = f"{backend_type}.{_hostname_mode_token(swarm_mode)}.{case_slug}.routing.example.com"
     should_be_reachable = is_reachable(swarm_mode, backend_type)
 
     env = {"VIRTUAL_HOST": hostname + virtual_host_path, "VIRTUAL_PORT": "8080"}

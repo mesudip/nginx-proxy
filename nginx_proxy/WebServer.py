@@ -240,17 +240,17 @@ class WebServer:
         Returns True if a reload was initiated or scheduled.
         """
 
-        def run_or_enqueue():
-            if self._reload_dispatcher is None:
-                return self._do_reload(force)
-            if self._is_reload_dispatcher_thread is not None and self._is_reload_dispatcher_thread():
-                return self._do_reload(force)
+        return self.throttler.throttle(lambda: self._do_reload(force), immediate=immediate or force)
 
-            from nginx_proxy.DockerEventListener import Reload
+    def enqueue_reload(self, force=False) -> bool:
+        if self._reload_dispatcher is None:
+            return self.reload(immediate=force, force=force)
+        if self._is_reload_dispatcher_thread is not None and self._is_reload_dispatcher_thread():
+            return self.reload(immediate=force, force=force)
 
-            return self._reload_dispatcher(Reload(force))
+        from nginx_proxy.DockerEventListener import Reload
 
-        return self.throttler.throttle(run_or_enqueue, immediate=immediate or force)
+        return self._reload_dispatcher(Reload(force))
 
     def disconnect(self, network, container, scope):
         if self.id is not None and container == self.id:

@@ -5,7 +5,6 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from nginx_proxy.Host import Host
-from nginx_proxy.DockerEventListener import SyncSslWatchDomains
 from nginx_proxy.post_processors.ssl_certificate_processor import SslCertificateProcessor
 
 
@@ -23,6 +22,7 @@ def _make_server():
             }
         },
         reload=Mock(),
+        enqueue_reload=Mock(),
     )
 
 
@@ -79,7 +79,7 @@ def test_certapi_batch_domains_passed_to_renewal_manager(monkeypatch):
     assert processor.certapi_batch_domains is False
     backend.obtain.assert_not_called()
     assert processor._test_renewal_cls_call_args.kwargs["batch_domains"] is False
-    assert processor._test_renewal_cls_call_args.kwargs["renewal_callback"] == processor.sync_watch_domains
+    assert processor._test_renewal_cls_call_args.kwargs["renewal_callback"] == processor.ssl_renewal_callback
 
 
 def test_processor_does_not_obtain_directly_and_triggers_renewal_once(monkeypatch):
@@ -104,34 +104,25 @@ def test_ssl_starts_and_stops_certapi_renewal_manager(monkeypatch):
     renewal.stop.assert_called_once_with()
 
 
-def test_sync_watch_domains_publishes_secured_hosts_to_renewal_manager(monkeypatch):
-    secured = Host("secure.example.com", 443, {"https"})
-    wildcard = Host("*.example.com", 443, {"https"})
-    plain = Host("plain.example.com", 80, {"http"})
+def test_ssl_renewal_callback_enqueues_server_reload(monkeypatch):
     server = _make_server()
-    server.config_data = SimpleNamespace(host_list=lambda: [secured, plain, wildcard])
     processor, _backend, renewal = _build_processor(monkeypatch, None)
     processor.server = server
 
-    processor.sync_watch_domains()
-
-    renewal.update_watch_domains.assert_called_once_with(["*.example.com", "secure.example.com"])
-    server.reload.assert_called_once_with(force=True)
-
-
-def test_sync_watch_domains_enqueues_when_dispatcher_is_running(monkeypatch):
-    server = _make_server()
-    listener = Mock()
-    listener.is_dispatcher_running.return_value = True
-    server.docker_event_listener = listener
-    processor, _backend, renewal = _build_processor(monkeypatch, None)
-    processor.server = server
-
-    processor.sync_watch_domains()
+    processor.ssl_renewal_callback()
 
     renewal.update_watch_domains.assert_not_called()
+    server.enqueue_reload.assert_called_once_with(force=True)
     server.reload.assert_not_called()
-    listener.enqueue.assert_called_once_with(SyncSslWatchDomains())
+
+
+def test_ssl_renewal_callback_ignores_missing_server(monkeypatch):
+    processor, _backend, renewal = _build_processor(monkeypatch, None)
+    processor.server = None
+
+    processor.ssl_renewal_callback()
+
+    renewal.update_watch_domains.assert_not_called()
 
 
 def test_getssl_force_passes_self_verify_false_to_remote_backend(monkeypatch, tmp_path):

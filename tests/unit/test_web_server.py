@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch, mock_open
 from datetime import datetime, timedelta, timezone
 
 from nginx_proxy.BackendTarget import BackendTarget
+from nginx_proxy.DockerEventListener import Reload
 from nginx_proxy.ProxyConfigData import ProxyConfigData
 from nginx_proxy.WebServer import WebServer
 
@@ -204,6 +205,17 @@ def test_reload_force_runs_immediately(web_server):
         web_server.reload(force=True)
         mock_throttle.assert_called_once()
         assert mock_throttle.call_args.kwargs["immediate"] is True
+
+
+def test_enqueue_reload_uses_dispatcher_when_running(web_server):
+    dispatcher = MagicMock(return_value=True)
+    web_server.set_reload_dispatcher(dispatcher, lambda: False)
+
+    assert web_server.enqueue_reload(force=True) is True
+
+    command = dispatcher.call_args.args[0]
+    assert isinstance(command, Reload)
+    assert command.force is True
 
 
 def test_should_register_container_now_skips_unhealthy_healthcheck(web_server):
