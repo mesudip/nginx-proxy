@@ -14,6 +14,40 @@ from tests.helpers.docker_test_client import DockerTestClient
 # Load environment variables from .env file
 load_dotenv()
 
+SWARM_MODES = ["ignore", "exclude", "enable", "prefer-local", "strict"]
+SWARM_MODE_IDS = {
+    "ignore": "swarm_ignore",
+    "exclude": "swarm_exclude",
+    "enable": "swarm_enable",
+    "prefer-local": "swarm_prefer_local",
+    "strict": "swarm_strict",
+}
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "swarm_mode(*modes): limit tests using the swarm_mode fixture to the given Docker Swarm modes",
+    )
+
+
+def pytest_generate_tests(metafunc):
+    if "swarm_mode" not in metafunc.fixturenames:
+        return
+
+    marker = metafunc.definition.get_closest_marker("swarm_mode")
+    modes = list(marker.args) if marker else SWARM_MODES
+    unknown_modes = [mode for mode in modes if mode not in SWARM_MODE_IDS]
+    if unknown_modes:
+        raise ValueError(f"Unknown swarm_mode marker values: {unknown_modes}")
+
+    metafunc.parametrize(
+        "swarm_mode",
+        modes,
+        ids=[SWARM_MODE_IDS[mode] for mode in modes],
+        scope="session",
+    )
+
 
 @pytest.fixture(scope="session")
 def docker_host_ip():
@@ -53,7 +87,7 @@ def docker_client():
 
 
 @pytest.fixture(scope="session")
-def test_network(docker_client: docker.DockerClient,swarm_mode):
+def test_network(docker_client: docker.DockerClient, swarm_mode):
     network_name = "nginx-proxy-test-" + swarm_mode
     server_details = docker_client.info()
     is_swarm = server_details.get("Swarm", {}).get("LocalNodeState") == "active"
@@ -83,7 +117,7 @@ def test_network(docker_client: docker.DockerClient,swarm_mode):
         print(f"Error removing network {network_name}: {e}")
 
 
-@pytest.fixture(scope="session", params=["ignore", "exclude", "enable", "strict"], ids=["swarm_ignore", "swarm_exclude", "swarm_enable", "swarm_strict"])
+@pytest.fixture(scope="session")
 def swarm_mode(request):
     return request.param
 
@@ -91,7 +125,7 @@ def swarm_mode(request):
 @pytest.fixture(scope="session")
 def nginx_proxy_container(docker_client: docker.DockerClient, test_network, docker_host_ip, swarm_mode):
     image_name = "mesudip/nginx-proxy:test"
-    container_name = "nginx-proxy-test-container-swarm_"+swarm_mode
+    container_name = "nginx-proxy-test-container-swarm_" + swarm_mode
 
     # Ensure previous container is stopped and removed
     try:
@@ -132,10 +166,10 @@ def nginx_proxy_container(docker_client: docker.DockerClient, test_network, dock
             name=container_name,
             environment={
                 "LETSENCRYPT_API": "https://acme-staging-v02.api.letsencrypt.org/directory",
-                "DHPARAM_SIZE": "256",
                 "VHOSTS_TEMPLATE_DIR": "/app/vhosts_template",
                 "CHALLENGE_DIR": "/etc/nginx/acme-challenges",
                 "DOCKER_SWARM": swarm_mode,
+                "BACKEND_START_GRACE_SECONDS": "2",
             },
             restart_policy={"Name": "no"},
         )
@@ -255,6 +289,7 @@ class NginxRequest(requests.Session):
             ws.connect(url, sock=sock, **kwargs)
 
         return ws
+
 
 @pytest.fixture
 def nginx_request(nginx_proxy_container, docker_host_ip):

@@ -1,0 +1,15 @@
+#!/usr/bin/env sh
+set -eu
+
+pid="$(pgrep -f 'python3 -uB main.py' | head -n 1 || true)"
+if [ -z "$pid" ]; then
+  pid="$(pgrep -f 'main.py' | head -n 1 || true)"
+fi
+
+if [ -z "$pid" ]; then
+  echo "nginx-proxy process not found" >&2
+  exit 1
+fi
+
+kill -HUP "$pid"
+echo "Reload signal sent to nginx-proxy process $pid"

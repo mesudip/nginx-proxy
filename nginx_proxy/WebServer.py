@@ -1,9 +1,10 @@
 import copy
 import os
 import sys
-import threading
-from typing import List, TYPE_CHECKING
+from datetime import datetime, timezone
+from typing import Callable, List, TYPE_CHECKING
 
+import docker
 import requests
 from docker import DockerClient
 from jinja2 import Template
@@ -46,7 +47,8 @@ class WebServer:
             self.config["conf_dir"] + "/conf.d/nginx-proxy.conf", self.config["challenge_dir"]
         )
         self.config_data = ProxyConfigData()
-        self._lock = threading.Lock()
+        self._reload_dispatcher: Callable | None = None
+        self._is_reload_dispatcher_thread: Callable[[], bool] | None = None
         self.services = set()
         self.networks = {}
         vhosts_template_path = os.path.join(self.config["vhosts_template_dir"], "default.conf.jinja2")
@@ -67,7 +69,7 @@ class WebServer:
         )
         self.basic_auth_processor = post_processors.BasicAuthProcessor(self.config["conf_dir"] + "/basic_auth")
         self.redirect_processor = post_processors.RedirectProcessor()
-        self.sticky_session_processor = post_processors.StickySessionProcessor()
+        self.upstream_processor = post_processors.UpstreamProcessor()
 
         # Render default config for Nginx setup
         default_nginx_config = self.template.render(config=self.config)
@@ -77,8 +79,12 @@ class WebServer:
 
         print("Reachable Networks :", self.networks)
         self.setup_error_config()
-        self.rescan_and_reload(force=True)
+        self.rescan_and_reload(force=True, bypass_start_grace=True)
         self.ssl_processor.start()
+
+    def set_reload_dispatcher(self, dispatcher: Callable | None, is_dispatcher_thread: Callable[[], bool] | None):
+        self._reload_dispatcher = dispatcher
+        self._is_reload_dispatcher_thread = is_dispatcher_thread
 
     def setup_error_config(self):
         # Render error.conf.jinja2 and save it
@@ -94,13 +100,14 @@ class WebServer:
         http_hosts = {(host.hostname, int(host.port)): host for host in hosts if int(host.port) == 80}
 
         for host in hosts:
-            if not host.secured or int(host.port) == 80:
+            if host.is_redirect or not host.secured or int(host.port) == 80:
                 continue
             redirect_target = Url({"https"}, host.hostname, int(host.port), "/")
             http_host = http_hosts.get((host.hostname, 80))
             if http_host is None:
                 redirect_host = Host(host.hostname, 80)
                 redirect_host.full_redirect = redirect_target
+                redirect_host.update_extras_content("redirect_status_code", "308")
                 # Added after redirect post-processing, so mark it explicitly for template rendering.
                 redirect_host.is_redirect = True
                 redirect_hosts.append(redirect_host)
@@ -112,7 +119,7 @@ class WebServer:
 
         return hosts + redirect_hosts
 
-    def _do_reload(self, forced=False, has_addition=True) -> bool:
+    def _do_reload(self, forced=False) -> bool:
         """
         Creates a new configuration based on current state and signals nginx to reload.
         This is called whenever there's change in container or network state.
@@ -134,7 +141,9 @@ class WebServer:
                 location.container = list(location.backends)[0]
             hosts.append(host)
 
-        upstreams = self.sticky_session_processor.process(hosts)
+        upstreams = self.upstream_processor.process(
+            hosts, prefer_local=self.config.get("docker_swarm") == "prefer-local"
+        )
         self.basic_auth_processor.process_basic_auth(hosts)
         self.ssl_processor.process_ssl_certificates(hosts)
         hosts = self._ensure_https_redirects(hosts)
@@ -207,25 +216,43 @@ class WebServer:
     # removes container from the maintained list.
     # this is called when a caontainer dies or leaves a known network
     def remove_backend(self, container_id: str):
-        deleted, deleted_domain = self.config_data.remove_backend(container_id)
+        deleted, deleted_domain = self._remove_backend_without_reload(container_id)
         if deleted:
+            service_id = deleted.labels.get("com.docker.swarm.service.id")
+            has_service_id = isinstance(service_id, str) and bool(service_id)
+            is_service = deleted.type == "service" or has_service_id
+            label = "Service removed     " if is_service else "Container removed   "
+            display_id = service_id[:12] if has_service_id else container_id[:12]
             print(
-                "Container removed   ",
-                "Id:" + container_id[:12],
+                label,
+                "Id:" + display_id,
                 "    " + deleted.name,
                 sep="\t",
             )
-            self.reload(has_addition=False)
+            self.reload()
 
-    def reload(self, immediate=False, force=False, has_addition=True) -> bool:
+    def _remove_backend_without_reload(self, container_id: str):
+        return self.config_data.remove_backend(container_id)
+
+    def reload(self, immediate=False, force=False) -> bool:
         """
         Schedules or performs a reload of the Nginx configuration.
         Returns True if a reload was initiated or scheduled.
         """
-        return self.throttler.throttle(lambda: self._do_reload(force, has_addition), immediate=immediate or force)
+
+        return self.throttler.throttle(lambda: self._do_reload(force), immediate=immediate or force)
+
+    def enqueue_reload(self, force=False) -> bool:
+        if self._reload_dispatcher is None:
+            return self.reload(immediate=force, force=force)
+        if self._is_reload_dispatcher_thread is not None and self._is_reload_dispatcher_thread():
+            return self.reload(immediate=force, force=force)
+
+        from nginx_proxy.DockerEventListener import Reload
+
+        return self._reload_dispatcher(Reload(force))
 
     def disconnect(self, network, container, scope):
-
         if self.id is not None and container == self.id:
             if network in self.networks:
                 print("Nginx Proxy removed from network ", self.networks[network])
@@ -242,7 +269,7 @@ class WebServer:
             if self.config_data.has_backend(container):
                 try:
                     backend = BackendTarget.from_container(self.client.containers.get(container))
-                    if not self.update_backend(backend):
+                    if not self.update_backend(backend, replace_existing=True):
                         self.remove_backend(
                             container
                         )  # remove_backend not implemented yet, using remove_container (it takes ID)
@@ -264,91 +291,148 @@ class WebServer:
                 return
             try:
                 container_obj = self.client.containers.get(container)
-                if swarm_mode != "ignore" and "com.docker.swarm.service.id" in container_obj.attrs["Config"].get("Labels", {}):
+                if container_obj.status != "running":
+                    return
+                if (
+                    self._container_has_healthcheck(container_obj)
+                    and self._container_health_status(container_obj) != "healthy"
+                ):
+                    return
+                if swarm_mode not in (
+                    "ignore",
+                    "prefer-local",
+                ) and "com.docker.swarm.service.id" in container_obj.attrs["Config"].get("Labels", {}):
                     # print(f"Skipping network connect for service task container {container}")
                     return
                 backend = BackendTarget.from_container(container_obj)
-                self.update_backend(backend)
+                self.update_backend(backend, replace_existing=True)
+            except docker.errors.NotFound:
+                return
             except (KeyboardInterrupt, SystemExit):
                 raise
             except Exception as e:
                 print(f"Error processing connect for container {container}: {e}", file=sys.stderr)
 
-    def update_backend(self, backend: BackendTarget):
+    def update_backend(self, backend: BackendTarget, replace_existing: bool = False):
         """
         Rescan the backend to detect changes. And update nginx configuration if necessary.
         :param backend: BackendTarget object
         :return: true if state change affected the nginx configuration else false
         """
         try:
-            if not self.config_data.has_backend(backend.id):
-                if self.register_backend(backend):
-                    self.reload()
-                    return True
+            existing_backend = self.config_data.has_backend(backend.id)
+            if existing_backend and backend.type != "service" and not replace_existing:
+                return False
+
+            removed = None
+            if existing_backend:
+                removed, _ = self._remove_backend_without_reload(backend.id)
+
+            registered = self.register_backend(backend)
+            if registered or removed:
+                self.reload()
+                return True
         except requests.exceptions.HTTPError as e:
             pass
         return False
 
-    def rescan_all_container(self):
+    def rescan_all_container(self, bypass_start_grace=False):
         """
-        Rescan all the containers and services to detect changes. 
+        Rescan all the containers and services to detect changes.
         Previously this only did containers, but now it's a full rescan for consistency.
         """
         swarm_mode = self.config.get("docker_swarm", "ignore")
-        with self._lock:
-            # Clear previous state to ensure we don't leak dead containers/services
-            self.config_data.clear()
-            
-            # 1. Register local containers (unless in strict swarm mode)
-            if swarm_mode != "strict" and self.client is not None:
-                try:
-                    containers = self.client.containers.list()
-                    for container in containers:
-                        if swarm_mode != "ignore" and "com.docker.swarm.service.id" in container.attrs["Config"].get("Labels", {}):
-                            continue
-                        backend = BackendTarget.from_container(container)
+        # Clear previous state to ensure we don't leak dead containers/services
+        self.config_data.clear()
+
+        # 1. Register local containers (unless in strict swarm mode)
+        if swarm_mode != "strict" and self.client is not None:
+            try:
+                containers = self.client.containers.list()
+                for container in containers:
+                    if swarm_mode not in (
+                        "ignore",
+                        "prefer-local",
+                    ) and "com.docker.swarm.service.id" in container.attrs["Config"].get("Labels", {}):
+                        continue
+                    if not self._should_register_container_now(container, bypass_start_grace=bypass_start_grace):
+                        continue
+                    backend = BackendTarget.from_container(container)
+                    self.register_backend(backend)
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except Exception as e:
+                print(f"Error scanning containers: {e}", file=sys.stderr)
+
+        # 2. Register swarm services (if enable, prefer-local, or strict)
+        if swarm_mode in ("enable", "prefer-local", "strict"):
+            try:
+                info = self.swarm_client.info()
+                swarm_info = info.get("Swarm", {})
+                node_state = swarm_info.get("LocalNodeState", "inactive")
+                # ControlAvailable is usually present if it's a manager
+                is_manager = swarm_info.get("ControlAvailable", False)
+
+                if node_state == "active" and is_manager:
+                    services = self.swarm_client.services.list()
+                    for service in services:
+                        backend = BackendTarget.from_service(service)
                         self.register_backend(backend)
-                except (KeyboardInterrupt, SystemExit):
-                    raise
-                except Exception as e:
-                    print(f"Error scanning containers: {e}", file=sys.stderr)
-
-            # 2. Register swarm services (if enable or strict)
-            if swarm_mode in ("enable", "strict"):
-                try:
-                    info = self.swarm_client.info()
-                    swarm_info = info.get("Swarm", {})
-                    node_state = swarm_info.get("LocalNodeState", "inactive")
-                    # ControlAvailable is usually present if it's a manager
-                    is_manager = swarm_info.get("ControlAvailable", False)
-
-                    if node_state == "active" and is_manager:
-                        services = self.swarm_client.services.list()
-                        for service in services:
-                            backend = BackendTarget.from_service(service)
-                            self.register_backend(backend)
-                    elif node_state == "active":
-                        # If node is active but not manager, we can't list services on this client.
-                        # However, if we have a remote swarm_client, it might be a manager.
-                        # But self.swarm_client.info() would have returned is_manager=True if it were.
-                        pass
-                except (KeyboardInterrupt, SystemExit):
-                    raise
-                except Exception as e:
-                    print(f"Error scanning services: {e}", file=sys.stderr)
+                elif node_state == "active":
+                    # If node is active but not manager, we can't list services on this client.
+                    # However, if we have a remote swarm_client, it might be a manager.
+                    # But self.swarm_client.info() would have returned is_manager=True if it were.
+                    pass
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except Exception as e:
+                print(f"Error scanning services: {e}", file=sys.stderr)
 
     def rescan_services(self):
         """
         Included for compatibility with DockerEventListener. Calls rescan_all_container
         to perform a unified full rescan.
         """
-        self.rescan_all_container()
+        self.rescan_all_container(bypass_start_grace=True)
 
-    def rescan_and_reload(self, force=False):
-        self.rescan_all_container()
-        return self.reload(force)
+    def rescan_and_reload(self, force=False, bypass_start_grace=True):
+        self.rescan_all_container(bypass_start_grace=bypass_start_grace)
+        return self.reload(immediate=force, force=force)
 
     def cleanup(self):
         self.throttler.shutdown()
         self.ssl_processor.shutdown()
         self.nginx.stop()
+
+    def _should_register_container_now(self, container, bypass_start_grace=False) -> bool:
+        if not self._container_is_running(container):
+            return False
+        if self._container_has_healthcheck(container):
+            return self._container_health_status(container) == "healthy"
+        if bypass_start_grace:
+            return True
+        grace_seconds = float(self.config.get("backend_start_grace_seconds", 0) or 0)
+        if grace_seconds <= 0:
+            return True
+        started_at = container.attrs.get("State", {}).get("StartedAt")
+        if not started_at:
+            return True
+        try:
+            started_time = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+        except ValueError:
+            return True
+        return (datetime.now(timezone.utc) - started_time).total_seconds() >= grace_seconds
+
+    @staticmethod
+    def _container_has_healthcheck(container) -> bool:
+        healthcheck = container.attrs.get("Config", {}).get("Healthcheck")
+        return bool(healthcheck and healthcheck.get("Test") not in (None, [], ["NONE"], ["NONE", ""]))
+
+    @staticmethod
+    def _container_health_status(container) -> str | None:
+        return container.attrs.get("State", {}).get("Health", {}).get("Status")
+
+    @staticmethod
+    def _container_is_running(container) -> bool:
+        state_status = container.attrs.get("State", {}).get("Status")
+        return state_status == "running" or getattr(container, "status", None) == "running"

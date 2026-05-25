@@ -160,7 +160,7 @@ def test_webserver_initialization(webserver: WebServer, nginx: DummyNginx):
 
 def test_webserver_add_container(docker_client: DockerTestClient, nginx: DummyNginx):
     container_name = "test_container"
-    hostname = "add_container.example.com"
+    hostname = "add-container.example.com"
     env = {"VIRTUAL_HOST": hostname}
     container = docker_client.containers.run("nginx:alpine", name=container_name, environment=env, network="frontend")
     time.sleep(0.2)  # Small delay for async event processing
@@ -176,9 +176,102 @@ def test_webserver_add_container(docker_client: DockerTestClient, nginx: DummyNg
     assert f"http://{container_ip}:80" in location.proxy_pass
 
 
+def test_healthchecked_container_waits_for_healthy_event(docker_client: DockerTestClient, nginx: DummyNginx):
+    hostname = "health-waits.example.com"
+    container = docker_client.containers.run(
+        "nginx:alpine",
+        name="health_waits_container",
+        environment={"VIRTUAL_HOST": hostname},
+        network="frontend",
+        healthcheck={"Test": ["CMD", "curl", "-f", "http://localhost/health"]},
+    )
+    time.sleep(0.2)
+
+    expect_server_not_present(nginx, hostname)
+
+    container.set_health_status("healthy")
+    time.sleep(0.2)
+
+    expect_server_up(nginx, hostname)
+
+
+def test_healthchecked_container_unhealthy_event_removes_backend(docker_client: DockerTestClient, nginx: DummyNginx):
+    hostname = "health-unhealthy.example.com"
+    container = docker_client.containers.run(
+        "nginx:alpine",
+        name="health_unhealthy_container",
+        environment={"VIRTUAL_HOST": hostname},
+        network="frontend",
+        healthcheck={"Test": ["CMD", "curl", "-f", "http://localhost/health"]},
+    )
+    container.set_health_status("healthy")
+    time.sleep(0.2)
+    expect_server_up(nginx, hostname)
+
+    container.set_health_status("unhealthy")
+    time.sleep(0.2)
+
+    expect_server_down(nginx, hostname)
+
+
+def test_unhealthy_container_network_reconnect_does_not_readd_backend(
+    docker_client: DockerTestClient, nginx: DummyNginx
+):
+    hostname = "health-reconnect.example.com"
+    container = docker_client.containers.run(
+        "nginx:alpine",
+        name="health_reconnect_container",
+        environment={"VIRTUAL_HOST": hostname},
+        network="frontend",
+        healthcheck={"Test": ["CMD", "curl", "-f", "http://localhost/health"]},
+    )
+    container.set_health_status("healthy")
+    time.sleep(0.2)
+    expect_server_up(nginx, hostname)
+
+    container.set_health_status("unhealthy")
+    time.sleep(0.2)
+    expect_server_down(nginx, hostname)
+
+    frontend_network = docker_client.networks.get("frontend")
+    frontend_network.disconnect(container.id)
+    time.sleep(0.2)
+    frontend_network.connect(container.id)
+    time.sleep(0.2)
+
+    expect_server_down(nginx, hostname)
+
+
+def test_container_startup_is_processed_once(docker_client: DockerTestClient):
+    with patch("certapi.manager.acme_cert_manager.AcmeCertManager.setup") as mock_acme_setup:
+        mock_acme_setup.return_value = None
+        config = get_test_config()
+        docker_client.networks.create("frontend")
+        webserver = WebServer(docker_client, config, nginx_update_throtle_sec=0.1)
+        webserver.update_backend = MagicMock(wraps=webserver.update_backend)
+
+        listener = DockerEventListener(webserver, docker_client)
+        listener_thread = threading.Thread(target=listener.run, daemon=True)
+        listener_thread.start()
+
+        try:
+            docker_client.containers.run(
+                "nginx:alpine",
+                name="count_start_once",
+                environment={"VIRTUAL_HOST": "count-start-once.example.com"},
+                network="frontend",
+            )
+            time.sleep(0.3)
+            assert webserver.update_backend.call_count == 1
+        finally:
+            docker_client.close()
+            listener_thread.join(timeout=2)
+            webserver.cleanup()
+
+
 def test_webserver_remove_container(docker_client: DockerTestClient, nginx: DummyNginx):
     container_name = "test_container"
-    hostname = "remove_container.example.com"
+    hostname = "remove-container.example.com"
     env = {"VIRTUAL_HOST": hostname}
 
     # Add container
@@ -190,13 +283,13 @@ def test_webserver_remove_container(docker_client: DockerTestClient, nginx: Dumm
     # Remove container
     container.remove(force=True)
     time.sleep(1)
-    
+
     expect_server_down(nginx, hostname)
 
 
 def test_webserver_add_network(docker_client: DockerTestClient, nginx: DummyNginx):
     container_name = "test_container"
-    hostname = "add_network.example.com"
+    hostname = "add-network.example.com"
     env = {
         "VIRTUAL_HOST": hostname,
     }
@@ -220,9 +313,32 @@ def test_webserver_add_network(docker_client: DockerTestClient, nginx: DummyNgin
     expect_server_up(nginx, hostname)
 
 
+def test_webserver_add_first_reachable_network_after_start(docker_client: DockerTestClient, nginx: DummyNginx):
+    container_name = "first_reachable_network_container"
+    hostname = "single-network-attach.example.com"
+    env = {
+        "VIRTUAL_HOST": hostname,
+    }
+
+    container = docker_client.containers.run("nginx:alpine", name=container_name, environment=env)
+    time.sleep(0.2)
+
+    expect_server_not_present(nginx, hostname)
+
+    bridge_network = docker_client.networks.get("bridge")
+    bridge_network.disconnect(container.id)
+    time.sleep(0.2)
+
+    frontend_network = docker_client.networks.get("frontend")
+    frontend_network.connect(container.id)
+    time.sleep(0.2)
+
+    expect_server_up(nginx, hostname)
+
+
 def test_webserver_remove_network(docker_client: DockerTestClient, nginx: DummyNginx):
     container_name = "test_container"
-    hostname = "remove_network.example.com"
+    hostname = "remove-network.example.com"
     env = {
         "VIRTUAL_HOST": hostname,
     }
@@ -241,6 +357,34 @@ def test_webserver_remove_network(docker_client: DockerTestClient, nginx: DummyN
 
     # Verify that the server is no longer in the config
     expect_server_down(nginx, hostname)
+
+
+def test_webserver_disconnect_keeps_backend_when_another_proxy_network_remains(
+    docker_client: DockerTestClient, webserver: WebServer, nginx: DummyNginx
+):
+    container_name = "multi_reachable_network_container"
+    hostname = "multi-reachable-network.example.com"
+    env = {
+        "VIRTUAL_HOST": hostname,
+    }
+
+    alt_network = docker_client.networks.create("frontend_alt")
+    webserver.networks[alt_network.id] = alt_network.name
+    webserver.networks[alt_network.name] = alt_network.id
+
+    container = docker_client.containers.run("nginx:alpine", name=container_name, environment=env, network="frontend")
+    time.sleep(0.2)
+
+    expect_server_up(nginx, hostname)
+
+    alt_network.connect(container.id)
+    time.sleep(0.2)
+
+    frontend_network = docker_client.networks.get("frontend")
+    frontend_network.disconnect(container.id)
+    time.sleep(0.2)
+
+    expect_server_up(nginx, hostname)
 
 
 def test_webserver_recreate_same_name_container_with_different_host(docker_client: DockerTestClient, nginx: DummyNginx):
@@ -294,6 +438,43 @@ def test_webserver_add_container_with_ssl(docker_client: DockerTestClient, nginx
     http_redirect_location = next((l for l in http_redirect_server.locations if l.path == "/"), None)
     assert http_redirect_location is not None
     assert http_redirect_location.return_code == "308 https://ssl.example.com$request_uri"
+
+
+def test_proxy_full_redirect_uses_existing_https_target(docker_client: DockerTestClient, nginx: DummyNginx):
+    target_hostname = "redirect-target.example.com"
+    source_hostname = "redirect-source.example.com"
+    alternate_source = "redirect-source-www.example.com"
+    env = {
+        "VIRTUAL_HOST": f"https://{target_hostname}",
+        "PROXY_FULL_REDIRECT": f"{source_hostname},{alternate_source} -> {target_hostname}",
+    }
+
+    docker_client.containers.run("nginx:alpine", name="full_redirect_https", environment=env, network="frontend")
+
+    target_servers = expect_servers(nginx, target_hostname, 2)
+    assert next((s for s in target_servers if "443" in s.listen), None) is not None
+
+    for hostname in (source_hostname, alternate_source):
+        redirect_server = expect_server(nginx, hostname)
+        redirect_location = next((l for l in redirect_server.locations if l.path == "/"), None)
+        assert redirect_location is not None
+        assert redirect_location.return_code == f"301 https://{target_hostname}$request_uri"
+
+
+def test_proxy_full_redirect_preserves_http_target_scheme(docker_client: DockerTestClient, nginx: DummyNginx):
+    target_hostname = "redirect-http-target.example.com"
+    source_hostname = "redirect-http-source.example.com"
+    env = {
+        "VIRTUAL_HOST": target_hostname,
+        "PROXY_FULL_REDIRECT": f"{source_hostname} -> {target_hostname}",
+    }
+
+    docker_client.containers.run("nginx:alpine", name="full_redirect_http", environment=env, network="frontend")
+
+    redirect_server = expect_servers(nginx, source_hostname, 1)[0]
+    redirect_location = next((l for l in redirect_server.locations if l.path == "/"), None)
+    assert redirect_location is not None
+    assert redirect_location.return_code == f"301 http://{target_hostname}$request_uri"
 
 
 def test_webserver_ssl_does_not_override_explicit_http_location(docker_client: DockerTestClient, nginx: DummyNginx):
@@ -354,7 +535,7 @@ def test_webserver_ssl_respects_explicit_http_root(docker_client: DockerTestClie
 
 
 def test_webserver_add_two_containers_with_same_virtual_host(docker_client: DockerTestClient, nginx: DummyNginx):
-    hostname = "two_containers.example.com"
+    hostname = "two-containers.example.com"
     env = {"VIRTUAL_HOST": hostname}
     c1 = docker_client.containers.run("nginx:alpine", name="test_container_1", environment=env, network="frontend")
     c2 = docker_client.containers.run("nginx:alpine", name="test_container_2", environment=env, network="frontend")

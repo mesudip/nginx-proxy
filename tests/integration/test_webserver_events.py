@@ -6,18 +6,44 @@ import uuid
 import requests
 from typing import List
 
+from docker.types import Healthcheck
 from nginx.NginxConf import HttpBlock, NginxConfig, ServerBlock
 from tests.helpers.docker_utils import start_backend, stop_backend
-from tests.helpers import get_nginx_config_from_container,expect_server_down_integration, expect_server_not_present_integration, expect_server_up_integration
+from tests.helpers import (
+    get_nginx_config_from_container,
+    expect_server_down_integration,
+    expect_server_not_present_integration,
+    expect_server_up_integration,
+)
 
-@pytest.fixture(scope="session", params=["enable"], ids=["swarm_enable"])
-def swarm_mode(request):
-    return request.param
+
+pytestmark = pytest.mark.swarm_mode("enable")
 
 
 # Regex to match the dynamically assigned IP:PORT for proxy_pass
 # Example: http://172.18.0.2:80
 pattern = re.compile(r"^http://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:80")
+START_GRACE_SECONDS = 2
+
+
+def _http_healthcheck() -> Healthcheck:
+    return Healthcheck(
+        test="node -e \"require('http').get('http://127.0.0.1:8080', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))\"",
+        interval=1_000_000_000,
+        timeout=1_000_000_000,
+        retries=2,
+        start_period=0,
+    )
+
+
+def _marker_healthcheck() -> Healthcheck:
+    return Healthcheck(
+        test="test -f /tmp/nginx-proxy-health-ready && node -e \"require('http').get('http://127.0.0.1:8080', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))\"",
+        interval=1_000_000_000,
+        timeout=1_000_000_000,
+        retries=1,
+        start_period=0,
+    )
 
 
 def test_webserver_initialization_integration(nginx_proxy_container: docker.models.containers.Container):
@@ -83,6 +109,86 @@ def test_webserver_add_container_integration(
             stop_backend(backend)
 
 
+def test_container_start_grace_delays_config_update(
+    nginx_proxy_container,
+    docker_client,
+    test_network,
+):
+    virtual_host = f"container.grace-{uuid.uuid4().hex[:6]}.example.com"
+    before_config = get_nginx_config_from_container(nginx_proxy_container[0])
+    backend = None
+    try:
+        backend = start_backend(
+            docker_client,
+            test_network,
+            {"VIRTUAL_HOST": virtual_host},
+            backend_type="container",
+            sleep=False,
+        )
+
+        time.sleep(START_GRACE_SECONDS / 2)
+        within_grace_config = get_nginx_config_from_container(nginx_proxy_container[0])
+        assert within_grace_config == before_config
+
+        expect_server_up_integration(nginx_proxy_container[0], virtual_host, timeout=20)
+        after_grace_config = get_nginx_config_from_container(nginx_proxy_container[0])
+        assert after_grace_config != before_config
+    finally:
+        if backend:
+            stop_backend(backend)
+
+
+def test_healthchecked_container_waits_until_healthy_integration(
+    nginx_proxy_container,
+    docker_client,
+    test_network,
+):
+    virtual_host = f"container.health-{uuid.uuid4().hex[:6]}.example.com"
+    backend = None
+    try:
+        backend = start_backend(
+            docker_client,
+            test_network,
+            {"VIRTUAL_HOST": virtual_host, "VIRTUAL_PORT": "8080"},
+            backend_type="container",
+            sleep=False,
+            healthcheck=_marker_healthcheck(),
+        )
+
+        time.sleep(START_GRACE_SECONDS + 1)
+        expect_server_not_present_integration(nginx_proxy_container[0], virtual_host, timeout=1)
+
+        backend.exec_run("touch /tmp/nginx-proxy-health-ready")
+
+        expect_server_up_integration(nginx_proxy_container[0], virtual_host, timeout=20)
+    finally:
+        if backend:
+            stop_backend(backend)
+
+
+def test_healthchecked_service_is_discovered_integration(
+    nginx_proxy_container,
+    docker_client,
+    test_network,
+):
+    virtual_host = f"service.health-{uuid.uuid4().hex[:6]}.example.com"
+    backend = None
+    try:
+        backend = start_backend(
+            docker_client,
+            test_network,
+            {"VIRTUAL_HOST": virtual_host, "VIRTUAL_PORT": "8080"},
+            backend_type="service",
+            sleep=False,
+            healthcheck=_http_healthcheck(),
+        )
+
+        expect_server_up_integration(nginx_proxy_container[0], virtual_host, timeout=20)
+    finally:
+        if backend:
+            stop_backend(backend)
+
+
 @pytest.mark.parametrize("backend_type", ["container", "service"])
 def test_webserver_remove_container_integration(
     nginx_proxy_container,
@@ -126,7 +232,7 @@ def test_webserver_add_network_integration(
     other_network = docker_client.networks.create(other_network_name, driver="bridge")
     backend = None
     try:
-        backend = start_backend(docker_client, other_network, env, backend_type=backend_type,sleep=False)
+        backend = start_backend(docker_client, other_network, env, backend_type=backend_type, sleep=False)
 
         expect_server_not_present_integration(nginx_proxy_container[0], virtual_host, timeout=15)
 
@@ -158,7 +264,7 @@ def test_webserver_remove_network_integration(
     virtual_host = backend_type + "." + "removenet.example.com"
     env = {"VIRTUAL_HOST": virtual_host}
 
-    backend = start_backend(docker_client, test_network, env, backend_type=backend_type,sleep=False)
+    backend = start_backend(docker_client, test_network, env, backend_type=backend_type, sleep=False)
     expect_server_up_integration(nginx_proxy_container[0], virtual_host, timeout=15)
 
     # Disconnect the container from the test_network
@@ -185,7 +291,7 @@ def test_webserver_recreate_same_name_container_with_different_host_integration(
 
     # Create with old env
     backend_old = start_backend(
-        docker_client, test_network, {"VIRTUAL_HOST": old_virtual_host}, backend_type=backend_type,sleep=False
+        docker_client, test_network, {"VIRTUAL_HOST": old_virtual_host}, backend_type=backend_type, sleep=False
     )
     expect_server_up_integration(nginx_proxy_container[0], old_virtual_host, timeout=15)
 
@@ -195,8 +301,7 @@ def test_webserver_recreate_same_name_container_with_different_host_integration(
     expect_server_down_integration(nginx_proxy_container[0], old_virtual_host, timeout=15)
 
     backend_new = start_backend(
-        docker_client, test_network, {"VIRTUAL_HOST": new_virtual_host}, backend_type=backend_type
-        ,sleep=False
+        docker_client, test_network, {"VIRTUAL_HOST": new_virtual_host}, backend_type=backend_type, sleep=False
     )
     try:
         expect_server_up_integration(nginx_proxy_container[0], new_virtual_host, timeout=15)
@@ -218,7 +323,7 @@ def test_webserver_add_container_with_ssl_integration(
     and HTTPS server blocks with self-signed certificates.
     """
     virtual_host = backend_type + "." + "ssl-test.example.com"
-    env = {"VIRTUAL_HOST": f"https://{virtual_host}","VIRTUAL_PORT":"8080"}
+    env = {"VIRTUAL_HOST": f"https://{virtual_host}", "VIRTUAL_PORT": "8080"}
 
     backend = start_backend(docker_client, test_network, env, backend_type=backend_type)
     try:
@@ -245,6 +350,55 @@ def test_webserver_add_container_with_ssl_integration(
         redirect_loc = next((loc for loc in http_redirect_server.locations if loc.path == "/"), None)
         assert redirect_loc is not None
         assert redirect_loc.return_code == f"308 https://{virtual_host}$request_uri"
+    finally:
+        if backend:
+            stop_backend(backend)
+
+
+@pytest.mark.parametrize("backend_type", ["container", "service"])
+def test_proxy_full_redirect_to_https_target_integration(
+    nginx_proxy_container: docker.models.containers.Container,
+    docker_client: docker.DockerClient,
+    test_network: docker.models.networks.Network,
+    backend_type: str,
+):
+    """
+    Test that PROXY_FULL_REDIRECT resolves a bare target to the existing HTTPS vhost
+    and renders a documented 301 redirect without appending :80.
+    """
+    suffix = uuid.uuid4().hex[:6]
+    target_host = f"{backend_type}.full-redirect-target-{suffix}.example.com"
+    source_host = f"{backend_type}.full-redirect-source-{suffix}.example.com"
+    env = {
+        "VIRTUAL_HOST": f"https://{target_host} -> :8080",
+        "VIRTUAL_PORT": "8080",
+        "PROXY_FULL_REDIRECT": f"{source_host} -> {target_host}",
+    }
+
+    backend = start_backend(docker_client, test_network, env, backend_type=backend_type, sleep=False)
+    try:
+        redirect_server = None
+        for _ in range(25):
+            config_str = get_nginx_config_from_container(nginx_proxy_container[0])
+            config = HttpBlock.parse(config_str)
+            redirect_server = next((s for s in config.servers if source_host in s.server_names), None)
+            if redirect_server is not None:
+                redirect_loc = next((loc for loc in redirect_server.locations if loc.path == "/"), None)
+                if redirect_loc and redirect_loc.return_code == f"301 https://{target_host}$request_uri":
+                    break
+            time.sleep(1)
+
+        config_str = get_nginx_config_from_container(nginx_proxy_container[0])
+        config = HttpBlock.parse(config_str)
+        target_servers = [s for s in config.servers if target_host in s.server_names]
+        source_servers = [s for s in config.servers if source_host in s.server_names]
+
+        assert any("443" in s.listen for s in target_servers), f"HTTPS target server not found. Config:\n{config_str}"
+        assert len(source_servers) == 1, f"Expected one redirect source server. Config:\n{config_str}"
+
+        redirect_loc = next((loc for loc in source_servers[0].locations if loc.path == "/"), None)
+        assert redirect_loc is not None, f"Redirect location not found. Config:\n{config_str}"
+        assert redirect_loc.return_code == f"301 https://{target_host}$request_uri"
     finally:
         if backend:
             stop_backend(backend)
@@ -279,7 +433,9 @@ def test_webserver_add_two_containers_with_same_virtual_host_integration(
 
         config_str = get_nginx_config_from_container(nginx_proxy_container[0])
         assert upstream is not None, f"Upstream block for {virtual_host} not found after timeout. Config:\n{config_str}"
-        assert len(upstream.get_directives("server")) == 2, f"Expected 2 servers in upstream, found {len(upstream.get_directives('server'))}. Config:\n{config_str}"
+        assert (
+            len(upstream.get_directives("server")) == 2
+        ), f"Expected 2 servers in upstream, found {len(upstream.get_directives('server'))}. Config:\n{config_str}"
     finally:
         stop_backend(backend1)
         stop_backend(backend2)

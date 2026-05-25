@@ -17,6 +17,7 @@ class BackendTarget:
         network_settings: dict = None,
         ports: dict = None,
         backend_type: str = "container",
+        backup: bool = False,
     ):
         self.name = name
         self.id = id
@@ -30,6 +31,7 @@ class BackendTarget:
         self.network_settings = network_settings if network_settings else {}
         self.ports = ports if ports else {}
         self.type = backend_type
+        self.backup = backup
 
     @staticmethod
     def from_container(container: DockerContainer):
@@ -131,3 +133,10 @@ class UnreachableNetwork(UnconfiguredBackend):
 class NoHostConfiguration(UnconfiguredBackend):
     def __init__(self, backend_type="container"):
         super().__init__(backend_type)
+
+
+class InvalidHostConfiguration(UnconfiguredBackend):
+    def __init__(self, hostname: str, reason: str, backend_type="container"):
+        super().__init__(backend_type)
+        self.hostname = hostname
+        self.reason = reason

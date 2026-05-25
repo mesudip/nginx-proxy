@@ -1,7 +1,8 @@
 import re
 
+from nginx import Url
 from nginx_proxy import Host, ProxyConfigData
-from nginx_proxy.BackendTarget import BackendTarget, NoHostConfiguration, UnreachableNetwork
+from nginx_proxy.BackendTarget import BackendTarget, InvalidHostConfiguration, NoHostConfiguration, UnreachableNetwork
 from nginx_proxy.utils import split_url
 
 
@@ -18,6 +19,30 @@ def _default_external_port(schemes):
     has_secure_scheme = "https" in schemes or "wss" in schemes
     has_insecure_scheme = "http" in schemes or "ws" in schemes
     return 443 if has_secure_scheme and not has_insecure_scheme else 80
+
+
+def _requires_certificate(host: Host) -> bool:
+    return "https" in host.scheme or "wss" in host.scheme or int(host.port or 80) == 443
+
+
+def _hostname_exceeds_certificate_limit(hostname: str) -> bool:
+    return bool(hostname) and len(hostname.rstrip(".")) > 64
+
+
+def _validate_external_host(host: Host):
+    if not Url.is_valid_hostname(host.hostname, allow_wildcard=True):
+        raise InvalidHostConfiguration(host.hostname, "invalid hostname")
+    if _requires_certificate(host) and _hostname_exceeds_certificate_limit(host.hostname):
+        raise InvalidHostConfiguration(host.hostname, "certificate hostnames must be 64 characters or fewer")
+
+
+def _backend_log_identity(backend: BackendTarget) -> str:
+    service_id = backend.labels.get("com.docker.swarm.service.id")
+    if isinstance(service_id, str) and service_id:
+        return "Service Id: " + service_id[:12]
+    if backend.type == "service":
+        return "Service Id: " + backend.id[:12]
+    return f"{backend.type:>9}".title() + " Id: " + backend.id[:12]
 
 
 def _parse_extra_directive(raw_directive: str):
@@ -76,7 +101,7 @@ def process_virtual_hosts(backend: BackendTarget, known_networks: set) -> ProxyC
                 hosts.add_host(host)
         print(
             "Valid configuration   ",
-            f"{backend.type:>9}".title() + " Id: " + backend.id[:12],
+            _backend_log_identity(backend),
             backend.name,
             sep="\t",
         )
@@ -84,16 +109,24 @@ def process_virtual_hosts(backend: BackendTarget, known_networks: set) -> ProxyC
     except NoHostConfiguration:
         print(
             "No VIRTUAL_HOST       ",
-            f"{backend.type:>9}".title() + " Id: " + backend.id[:12],
+            _backend_log_identity(backend),
             backend.name,
             sep="\t",
         )
     except UnreachableNetwork as e:
         print(
             "Unreachable Network   ",
-            f"{backend.type:>9}".title() + " Id: " + backend.id[:12],
+            _backend_log_identity(backend),
             backend.name,
             "networks: " + ", ".join(list(e.network_names)),
+            sep="\t",
+        )
+    except InvalidHostConfiguration as e:
+        print(
+            "Invalid VIRTUAL_HOST  ",
+            _backend_log_identity(backend),
+            backend.name,
+            f"{e.hostname}: {e.reason}",
             sep="\t",
         )
     return hosts
@@ -151,7 +184,12 @@ def host_generator(backend: BackendTarget, known_networks: set = {}):
 
     # We need a clean object to return that represents the target
     target_base = BackendTarget(
-        backend.id, name=backend.name, env=backend.env, labels=backend.labels, backend_type=backend.type
+        backend.id,
+        name=backend.name,
+        env=backend.env,
+        labels=backend.labels,
+        backend_type=backend.type,
+        backup=backend.backup,
     )
 
     found_ip = None
@@ -171,6 +209,7 @@ def host_generator(backend: BackendTarget, known_networks: set = {}):
 
     for host_config in static_hosts:
         host, location, container_data, extras = _parse_host_entry(host_config)
+        _validate_external_host(host)
 
         if container_data.address is None:
             print(
@@ -182,6 +221,10 @@ def host_generator(backend: BackendTarget, known_networks: set = {}):
             location = location + "/"
         container_data.id = backend.id
         container_data.name = backend.name
+        container_data.env = backend.env
+        container_data.labels = backend.labels
+        container_data.type = backend.type
+        container_data.backup = backend.backup
         host.secured = "https" in host.scheme or "wss" in host.scheme or host.port == 443
         if host.port is None:
             host.port = 443 if host.secured else 80
@@ -199,12 +242,17 @@ def host_generator(backend: BackendTarget, known_networks: set = {}):
 
     for host_config in virtual_hosts:
         host, location, container_data, extras = _parse_host_entry(host_config)
+        _validate_external_host(host)
         # Protect double / in urls.
         if location and not location.endswith("/") and container_data.path and container_data.path.endswith("/"):
             location = location + "/"
         container_data.address = found_ip
         container_data.id = backend.id
         container_data.name = backend.name
+        container_data.env = backend.env
+        container_data.labels = backend.labels
+        container_data.type = backend.type
+        container_data.backup = backend.backup
 
         if container_data.port is None:
             if override_port:

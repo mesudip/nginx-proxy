@@ -17,9 +17,14 @@ def receiveSignal(signalNumber, frame):
             app.stop()
             app = None
         sys.exit(0)
+    if signalNumber == signal.SIGHUP:
+        print("\nReload Requested")
+        if app is not None:
+            app.reload()
 
 
 signal.signal(signal.SIGTERM, receiveSignal)
+signal.signal(signal.SIGHUP, receiveSignal)
 
 
 def setup_debug_mode():

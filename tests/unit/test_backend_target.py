@@ -19,6 +19,7 @@ class TestBackendTarget:
         assert bt.labels == {}
         assert bt.network_settings == {}
         assert bt.ports == {}
+        assert bt.backup is False
 
     def test_backend_target_from_container(self):
         container = MagicMock()
@@ -52,21 +53,15 @@ class TestBackendTargetFromService:
             "Spec": {
                 "Name": "my-web-service",
                 "Labels": {"com.example.foo": "bar"},
-                "TaskTemplate": {
-                    "ContainerSpec": {
-                        "Env": ["VIRTUAL_HOST=web.service.local", "DB_HOST=db.local"]
-                    }
-                }
+                "TaskTemplate": {"ContainerSpec": {"Env": ["VIRTUAL_HOST=web.service.local", "DB_HOST=db.local"]}},
             },
             "Endpoint": {
-                "Ports": [
-                    {"Protocol": "tcp", "TargetPort": 80, "PublishedPort": 8080}
-                ],
+                "Ports": [{"Protocol": "tcp", "TargetPort": 80, "PublishedPort": 8080}],
                 "VirtualIPs": [
                     {"NetworkID": "net1", "Addr": "10.0.0.5/24"},
-                    {"NetworkID": "net2", "Addr": "192.168.1.5/24"}
-                ]
-            }
+                    {"NetworkID": "net2", "Addr": "192.168.1.5/24"},
+                ],
+            },
         }
 
         bt = BackendTarget.from_service(service)
@@ -128,6 +123,21 @@ class TestVirtualHostProcessorWithBackendTarget:
         assert len(hosts) == 1
         assert hosts[0].hostname == "int.test"
 
+    def test_process_virtual_hosts_preserves_service_backend_type(self):
+        bt = BackendTarget(
+            id="service-id",
+            name="service-test",
+            env={"VIRTUAL_HOST": "svc.test -> :8080"},
+            network_settings={"int-net": {"NetworkID": "int-net-id", "IPAddress": "10.0.0.10"}},
+            backend_type="service",
+        )
+        known_networks = {"int-net-id"}
+
+        config_data = process_virtual_hosts(bt, known_networks)
+
+        hosts = list(config_data.host_list())
+        backend = hosts[0].locations["/"].backends[0]
+        assert backend.type == "service"
 
     def test_duplicate_injected_directives_are_deduplicated(self):
         known_networks = {"shared-net-id"}
@@ -162,7 +172,6 @@ class TestVirtualHostProcessorWithBackendTarget:
         host = aggregated.getHost("dup.example.com")
         injections = host.locations["/"].extras.get("injected", [])
         assert injections.count("client_max_body_size 200M") == 1
-
 
     def test_process_virtual_hosts_no_virtual_host(self):
         bt = BackendTarget(
@@ -218,6 +227,78 @@ class TestVirtualHostProcessorWithBackendTarget:
         location = hosts[0].locations["/"]
         backend = location.backends[0]
         assert backend.address == "10.0.0.12"
+
+    def test_https_virtual_host_rejects_certificate_hostname_longer_than_64_chars(self):
+        long_hostname = f"{'a' * 55}.example.com"
+        assert len(long_hostname) > 64
+        bt = BackendTarget(
+            id="long-https-id",
+            name="long-https-test",
+            env={"VIRTUAL_HOST": f"https://{long_hostname}"},
+            network_settings={"my-net": {"NetworkID": "my-net-id", "IPAddress": "10.0.0.12"}},
+        )
+
+        config_data = process_virtual_hosts(bt, {"my-net-id"})
+
+        assert len(list(config_data.host_list())) == 0
+
+    def test_http_virtual_host_allows_dns_valid_hostname_longer_than_64_chars(self):
+        long_hostname = f"{'a' * 55}.example.com"
+        assert len(long_hostname) > 64
+        bt = BackendTarget(
+            id="long-http-id",
+            name="long-http-test",
+            env={"VIRTUAL_HOST": long_hostname},
+            network_settings={"my-net": {"NetworkID": "my-net-id", "IPAddress": "10.0.0.12"}},
+        )
+
+        config_data = process_virtual_hosts(bt, {"my-net-id"})
+
+        hosts = list(config_data.host_list())
+        assert len(hosts) == 1
+        assert hosts[0].hostname == long_hostname
+
+    def test_virtual_host_rejects_invalid_hostname(self):
+        bt = BackendTarget(
+            id="invalid-host-id",
+            name="invalid-host-test",
+            env={"VIRTUAL_HOST": "bad_host.example.com"},
+            network_settings={"my-net": {"NetworkID": "my-net-id", "IPAddress": "10.0.0.12"}},
+        )
+
+        config_data = process_virtual_hosts(bt, {"my-net-id"})
+
+        assert len(list(config_data.host_list())) == 0
+
+    def test_https_virtual_host_allows_certificate_hostname_at_64_chars(self):
+        hostname = f"{'a' * 52}.example.com"
+        assert len(hostname) == 64
+        bt = BackendTarget(
+            id="max-https-id",
+            name="max-https-test",
+            env={"VIRTUAL_HOST": f"https://{hostname}"},
+            network_settings={"my-net": {"NetworkID": "my-net-id", "IPAddress": "10.0.0.12"}},
+        )
+
+        config_data = process_virtual_hosts(bt, {"my-net-id"})
+
+        hosts = list(config_data.host_list())
+        assert len(hosts) == 1
+        assert hosts[0].hostname == hostname
+
+    def test_virtual_host_allows_wildcard_hostname(self):
+        bt = BackendTarget(
+            id="wildcard-host-id",
+            name="wildcard-host-test",
+            env={"VIRTUAL_HOST": "https://*.example.com"},
+            network_settings={"my-net": {"NetworkID": "my-net-id", "IPAddress": "10.0.0.12"}},
+        )
+
+        config_data = process_virtual_hosts(bt, {"my-net-id"})
+
+        hosts = list(config_data.host_list())
+        assert len(hosts) == 1
+        assert hosts[0].hostname == "*.example.com"
 
     def test_parse_host_entry_simple(self):
         h, loc, c, extras = _parse_host_entry("example.com")

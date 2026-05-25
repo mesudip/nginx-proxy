@@ -291,9 +291,10 @@ def test_failed_initial_request_delegates_fallback_to_renewal_manager(webserver_
     processor = webserver.ssl_processor
 
     hosts = [Host(hostname="test-fallback-delegated.example.com", port=443, scheme={"https"})]
-    with patch.object(processor.cert_manager, "obtain") as mock_obtain, patch.object(
-        processor.renewal_manager, "update_watch_domains"
-    ) as mock_update_watch_domains:
+    with (
+        patch.object(processor.cert_manager, "obtain") as mock_obtain,
+        patch.object(processor.renewal_manager, "update_watch_domains") as mock_update_watch_domains,
+    ):
         processor.process_ssl_certificates(hosts)
 
     mock_obtain.assert_not_called()
@@ -351,9 +352,10 @@ def test_fresh_wildcard_cert_remains_preferred(webserver_for_error_tests):
             return ("*.example.com", Mock(), [fresh_cert])
         return None
 
-    with patch.object(webserver.ssl_processor.key_store, "find_key_and_cert_by_domain", side_effect=find_cert), patch.object(
-        webserver.ssl_processor.renewal_manager, "update_watch_domains"
-    ) as mock_update_watch_domains:
+    with (
+        patch.object(webserver.ssl_processor.key_store, "find_key_and_cert_by_domain", side_effect=find_cert),
+        patch.object(webserver.ssl_processor.renewal_manager, "update_watch_domains") as mock_update_watch_domains,
+    ):
         webserver.ssl_processor.process_ssl_certificates(hosts)
 
     assert hosts[0].ssl_file == "*.example.com"
@@ -374,9 +376,10 @@ def test_wildcard_near_expiry_is_not_preferred(webserver_for_error_tests):
             return ("*.example.com", Mock(), [expiring_cert])
         return None
 
-    with patch.object(webserver.ssl_processor.key_store, "find_key_and_cert_by_domain", side_effect=find_cert), patch.object(
-        webserver.ssl_processor.renewal_manager, "update_watch_domains"
-    ) as mock_update_watch_domains:
+    with (
+        patch.object(webserver.ssl_processor.key_store, "find_key_and_cert_by_domain", side_effect=find_cert),
+        patch.object(webserver.ssl_processor.renewal_manager, "update_watch_domains") as mock_update_watch_domains,
+    ):
         webserver.ssl_processor.process_ssl_certificates(hosts)
 
     assert hosts[0].ssl_file == "*.example.com"
@@ -397,7 +400,9 @@ def test_existing_cert_is_kept_while_renewal_manager_handles_retry(webserver_for
 
     with (
         patch.object(processor.key_store, "find_key_and_cert_by_domain", side_effect=find_cert),
-        patch.object(processor.cert_manager, "obtain", side_effect=CertApiException("ACME renewal failed", step="Test")) as mock_obtain,
+        patch.object(
+            processor.cert_manager, "obtain", side_effect=CertApiException("ACME renewal failed", step="Test")
+        ) as mock_obtain,
     ):
         hosts = [Host(hostname=hostname, port=443, scheme={"https"})]
         webserver.ssl_processor.process_ssl_certificates(hosts)

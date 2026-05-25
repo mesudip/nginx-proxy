@@ -28,6 +28,7 @@ class Host:
         self.scheme: set = scheme
         self.secured: bool = "https" in scheme or "wss" in scheme
         self.full_redirect: Union[Url, None] = None
+        self.is_redirect: bool = False
         self.extras: Dict[str, Any] = {}
 
     def set_external_parameters(self, host, port) -> None:

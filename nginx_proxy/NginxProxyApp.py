@@ -42,6 +42,7 @@ class NginxProxyAppConfig(TypedDict):
     enable_ipv6: bool
     docker_swarm: str
     swarm_docker_host: str | None
+    backend_start_grace_seconds: float
 
 
 def _strip_end(s: str, char="/") -> str:
@@ -71,13 +72,8 @@ class NginxProxyApp:
             port = parsed.port
             if port is None:
                 port = 443 if parsed.scheme == "https" else 80
-            
-            certapi = {
-                "url": certapi_url,
-                "host": parsed.hostname,
-                "scheme": parsed.scheme,
-                "port": port
-            }
+
+            certapi = {"url": certapi_url, "host": parsed.hostname, "scheme": parsed.scheme, "port": port}
 
         wellknown_path = os.getenv("WELLKNOWN_PATH", "/.well-known/acme-challenge/").strip()
         # Ensure wellknown_path starts with / and ends with /
@@ -107,6 +103,7 @@ class NginxProxyApp:
             enable_ipv6=os.getenv("ENABLE_IPV6", "false").strip().lower() == "true",
             docker_swarm=os.getenv("DOCKER_SWARM", "ignore").strip().lower(),
             swarm_docker_host=os.getenv("SWARM_DOCKER_HOST", "").strip() or None,
+            backend_start_grace_seconds=float(os.getenv("BACKEND_START_GRACE_SECONDS", "10").strip()),
         )
 
     def _setup_nginx_conf(self):
@@ -161,7 +158,7 @@ class NginxProxyApp:
 
         # Validate Swarm mode if enabled
         swarm_mode = self.config["docker_swarm"]
-        if swarm_mode in ("enable", "strict"):
+        if swarm_mode in ("enable", "prefer-local", "strict"):
             try:
                 info = self.swarm_client.info()
                 swarm_info = info.get("Swarm", {})
@@ -184,14 +181,29 @@ class NginxProxyApp:
 
     def start(self):
         self.server = WebServer(self.docker_client, self.config, swarm_client=self.swarm_client)
-        self.docker_event_listener = DockerEventListener(self.server, self.docker_client, swarm_client=self.swarm_client)
+        self.docker_event_listener = DockerEventListener(
+            self.server, self.docker_client, swarm_client=self.swarm_client
+        )
 
     def stop(self):
         print("Stopping NginxProxyApp...")
         self.cleanup()
 
+    def reload(self):
+        if self.server is None:
+            print("Reload requested before NginxProxyApp started", file=sys.stderr)
+            return False
+        print("Reload requested. Rescanning Docker state...")
+        if self.docker_event_listener is not None and self.docker_event_listener.is_dispatcher_running():
+            from nginx_proxy.DockerEventListener import RescanAndReload
+
+            return self.docker_event_listener.enqueue(RescanAndReload(force=True, bypass_start_grace=True))
+        return self.server.rescan_and_reload(force=True, bypass_start_grace=True)
+
     def cleanup(self):
-        # No explicit stop for DockerEventListener needed as it's not a thread
+        if self.docker_event_listener is not None and self.docker_event_listener.is_dispatcher_running():
+            self.docker_event_listener.stop_dispatcher()
+        self.docker_event_listener = None
         if self.server is not None:
             self.server.cleanup()
             self.server = None

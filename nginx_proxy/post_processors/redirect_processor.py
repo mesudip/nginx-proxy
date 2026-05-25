@@ -10,7 +10,7 @@ class RedirectProcessor:
         for host in config.host_list():
             if host.isredirect():
                 redirected_hosts[host.hostname] = host.full_redirect
-                target = config.getHost(host.full_redirect.hostname)
+                target = config.getHost(host.full_redirect.hostname, host.full_redirect.port)
                 if target is not None:
                     if target.hostname == host.hostname:
                         host.full_redirect = None

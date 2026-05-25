@@ -36,16 +36,20 @@ class Url:
         return Url(scheme, host if host else None, port, location)
 
     @staticmethod
-    def is_valid_hostname(hostname: str) -> bool:
+    def is_valid_hostname(hostname: str, allow_wildcard: bool = False, max_length: int = 253) -> bool:
         """
         https://stackoverflow.com/a/33214423/2804342
         :return: True if for valid hostname False otherwise
         """
+        if not hostname:
+            return False
         if hostname[-1] == ".":
             # strip exactly one dot from the right, if present
             hostname = hostname[:-1]
-        if len(hostname) > 253:
+        if len(hostname) > max_length:
             return False
+        if allow_wildcard and hostname.startswith("*."):
+            hostname = hostname[2:]
 
         labels = hostname.split(".")
 
