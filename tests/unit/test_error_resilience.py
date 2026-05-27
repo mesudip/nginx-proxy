@@ -363,6 +363,35 @@ def test_fresh_wildcard_cert_remains_preferred(webserver_for_error_tests):
     mock_update_watch_domains.assert_called_once_with(["*.example.com", "api.example.com"])
 
 
+def test_fresh_wildcard_is_preferred_over_existing_specific_cert(webserver_for_error_tests):
+    webserver = webserver_for_error_tests
+    wildcard = "*.example.com"
+    specific = "api.example.com"
+    hosts = [
+        Host(hostname=wildcard, port=443, scheme={"https"}),
+        Host(hostname=specific, port=443, scheme={"https"}),
+    ]
+    fresh_wildcard_cert = Mock(not_valid_after_utc=datetime.now(timezone.utc) + timedelta(days=30))
+    specific_cert = Mock(not_valid_after_utc=datetime.now(timezone.utc) + timedelta(days=90))
+
+    def find_cert(domain):
+        if domain == wildcard:
+            return (wildcard, Mock(), [fresh_wildcard_cert])
+        if domain == specific:
+            return (specific, Mock(), [specific_cert])
+        return None
+
+    with (
+        patch.object(webserver.ssl_processor.key_store, "find_key_and_cert_by_domain", side_effect=find_cert),
+        patch.object(webserver.ssl_processor.renewal_manager, "update_watch_domains") as mock_update_watch_domains,
+    ):
+        webserver.ssl_processor.process_ssl_certificates(hosts)
+
+    assert hosts[0].ssl_file == wildcard
+    assert hosts[1].ssl_file == wildcard
+    mock_update_watch_domains.assert_called_once_with([wildcard, specific])
+
+
 def test_wildcard_near_expiry_is_not_preferred(webserver_for_error_tests):
     webserver = webserver_for_error_tests
     hosts = [
@@ -383,7 +412,7 @@ def test_wildcard_near_expiry_is_not_preferred(webserver_for_error_tests):
         webserver.ssl_processor.process_ssl_certificates(hosts)
 
     assert hosts[0].ssl_file == "*.example.com"
-    assert hosts[1].ssl_file == "api.example.com.selfsigned"
+    assert hosts[1].ssl_file == "*.example.com"
     mock_update_watch_domains.assert_called_once_with(["*.example.com", "api.example.com"])
 
 
@@ -454,8 +483,43 @@ def test_failed_wildcard_with_existing_cert_gets_concrete_individual_cert(webser
         webserver.ssl_processor.process_ssl_certificates(hosts)
 
     assert hosts[0].ssl_file == wildcard
-    assert hosts[1].ssl_file == "api.example.com.selfsigned"
+    assert hosts[1].ssl_file == wildcard
     mock_update_watch_domains.assert_called_once_with(["*.example.com", "api.example.com"])
+
+
+def test_stale_wildcard_switches_to_specific_cert_after_successful_renewal(webserver_for_error_tests):
+    webserver = webserver_for_error_tests
+    processor = webserver.ssl_processor
+    wildcard = "*.example.com"
+    specific = "api.example.com"
+    hosts = [
+        Host(hostname=wildcard, port=443, scheme={"https"}),
+        Host(hostname=specific, port=443, scheme={"https"}),
+    ]
+    wildcard_cert = Mock(not_valid_after_utc=datetime.now(timezone.utc) + timedelta(days=3))
+    specific_cert = Mock(not_valid_after_utc=datetime.now(timezone.utc) + timedelta(days=90))
+    issued_specific = False
+
+    def find_cert(domain):
+        if domain == wildcard:
+            return (wildcard, Mock(), [wildcard_cert])
+        if domain == specific and issued_specific:
+            return (specific, Mock(), [specific_cert])
+        return None
+
+    def update_watch_domains(domains):
+        nonlocal issued_specific
+        assert domains == [wildcard, specific]
+        issued_specific = True
+
+    with (
+        patch.object(processor.key_store, "find_key_and_cert_by_domain", side_effect=find_cert),
+        patch.object(processor.renewal_manager, "update_watch_domains", side_effect=update_watch_domains),
+    ):
+        webserver.ssl_processor.process_ssl_certificates(hosts)
+
+    assert hosts[0].ssl_file == wildcard
+    assert hosts[1].ssl_file == specific
 
 
 def test_failed_wildcard_expiring_within_48h_triggers_individual_dependent_issuance(webserver_for_error_tests):
@@ -468,7 +532,7 @@ def test_failed_wildcard_expiring_within_48h_triggers_individual_dependent_issua
     ]
     expiring_in_12h = Mock(not_valid_after_utc=datetime.now(timezone.utc) + timedelta(hours=12))
 
-    processor.update_threshold_secs = 3600
+    processor.update_threshold_secs = 48 * 3600
 
     def find_cert(domain):
         if domain == wildcard:

@@ -125,9 +125,10 @@ class UnconfiguredBackend(Exception):
 
 
 class UnreachableNetwork(UnconfiguredBackend):
-    def __init__(self, network_names: List[str], backend_type="container"):
+    def __init__(self, network_names: List[str], backend_type="container", vip_not_ready=False):
         super().__init__(backend_type)
         self.network_names = network_names
+        self.vip_not_ready = vip_not_ready
 
 
 class NoHostConfiguration(UnconfiguredBackend):

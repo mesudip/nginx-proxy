@@ -149,8 +149,14 @@ class DockerEventListener:
                 if command is _STOP:
                     return
                 self._dispatch(command)
-            except (KeyboardInterrupt, SystemExit):
-                raise
+            except (KeyboardInterrupt, SystemExit) as e:
+                print(
+                    "Dispatcher command requested termination :"
+                    + e.__class__.__name__
+                    + " -> "
+                    + str(e),
+                    file=sys.stderr,
+                )
             except Exception as e:
                 print("Unexpected dispatcher error :" + e.__class__.__name__ + " -> " + str(e), file=sys.stderr)
                 traceback.print_exc(limit=10)
@@ -209,9 +215,8 @@ class DockerEventListener:
 
     def _listen(self, client):
         client_url = getattr(getattr(client, "api", None), "base_url", "unknown")
-        print(f"Starting Docker event listener loop for client {client_url}")
-
         swarm_mode = self.web_server.config.get("docker_swarm", "ignore")
+        print(f"Starting Docker event listener loop for client {client_url} with DOCKER_SWARM={swarm_mode}")
         types = []
         events = ["health_status"]  # common events
 
