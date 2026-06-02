@@ -47,7 +47,9 @@ server{
         location {{ location.name if location.name else '/'}} { {% for injection in location.extras.injected %}
             {{ injection }};{% endfor %} {% if location.extras.security %}
             auth_basic "Basic Auth Enabled";
-            auth_basic_user_file {{ location.extras.security_file }};{% endif %} {% if location.upstream %}
+            auth_basic_user_file {{ location.extras.security_file }};{% endif %} {% if location.container.type == "static_site" %}
+            root {{ location.container.path }};
+            try_files $uri $uri/ /index.html;{% elif location.upstream %}
             proxy_pass {{ location.container.scheme }}://{{ location.upstream }}{{location.container.path}};    # {{ location.container.type }}: {{ location.container.id[:12] }}{% else %}
             proxy_pass {{location.container.scheme }}://{{ location.container.address }}:{{ location.container.port }}{{ location.container.path }};  # {{ location.container.type }}: {{ location.container.id[:12] }}{% endif %}{% if location.name != '/' %}
             proxy_redirect $scheme://$http_host{{ location.container.path if location.container.path else '/' }} $scheme://$http_host{{location.name}};{% endif %} {% if location.websocket and location.http %}

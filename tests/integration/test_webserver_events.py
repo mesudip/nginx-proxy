@@ -108,6 +108,32 @@ def test_webserver_add_container_integration(
             stop_backend(backend)
 
 
+def test_new_basic_auth_backend_is_accepted_after_candidate_validation(
+    nginx_proxy_container,
+    docker_client,
+    test_network,
+):
+    virtual_host = f"basic-auth-{uuid.uuid4().hex[:6]}.example.com"
+    backend = None
+    try:
+        backend = start_backend(
+            docker_client,
+            test_network,
+            {
+                "VIRTUAL_HOST": virtual_host,
+                "PROXY_BASIC_AUTH": "testuser:testpassword",
+            },
+            sleep=False,
+        )
+
+        expect_server_up_integration(nginx_proxy_container[0], virtual_host, timeout=20)
+        result, output = nginx_proxy_container[0].exec_run(f"test -s /etc/nginx/basic_auth/{virtual_host}/_")
+        assert result == 0, output.decode("utf-8")
+    finally:
+        if backend:
+            stop_backend(backend)
+
+
 @pytest.mark.parametrize("backend_type", ["container", "service"])
 def test_invalid_backend_config_is_ignored_and_does_not_poison_future_updates_integration(
     nginx_proxy_container,

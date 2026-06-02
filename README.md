@@ -92,6 +92,7 @@ Control the default behavior of `nginx-proxy`:
 | `CHALLENGE_DIR` | `/etc/nginx/challenges/` | Base directory for acme challenge store, when requesting certificates with acme. `.well-known/acme-challenge` folder lives inside this.|
 | `CLOUDFLARE_API_KEY_KEY*` | - | Cloudflare api keys to issue DNS certificates.|
 | `BACKEND_START_GRACE_SECONDS` | `10` | Delay registering containers without a Docker healthcheck so crashing backends dont' result reload|
+| `STATIC_SITE_ROOT` | `/static` | Directory scanned for static sites. Each domain is served from `$STATIC_SITE_ROOT/$domain/current`. |
 
 
 ## Virtual Hosts
@@ -137,6 +138,16 @@ Proxy to external hosts, (not in Docker) using `STATIC_VIRTUAL_HOST`. The contai
 Format: `STATIC_VIRTUAL_HOST=domain.com->http://192.168.0.1:8080`.
 
 **Note** Be aware that if domain as target, nginx will crash if DNS resolution fails.
+
+### Static Sites
+Serve static files directly from `nginx-proxy` by placing domain directories under `STATIC_SITE_ROOT`. `STATIC_SITE_ROOT` defaults to `/static`.
+
+Files are served from `$STATIC_SITE_ROOT/$domain/current`. For example, `/static/example.com/current` hosts `https://example.com`.
+`STATIC_SITE_ROOT` may contain only letters, numbers, `/`, `.`, `_`, and `-`; paths with spaces or other special characters are rejected and all static sites are ignored.
+
+`current` can be a symlink to the active release directory, which allows versioned deploys by switching the symlink and issuing a reload/HUP. Static site directories are scanned only during a full reload. Invalid domain directory names are ignored with a warning.
+
+Static sites are mounted at `/`. Container-backed proxy locations can still be configured on more specific paths such as `/api` or `/admin`. If a container configures `/` for the same domain, that container route overrides the static site root and `nginx-proxy` logs a warning.
 
 ## Docker Swarm Support [Preview]
 

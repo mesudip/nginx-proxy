@@ -109,14 +109,17 @@ class ProxyConfigData:
                 for location in host.locations.values():
                     print(host_url(location.websocket) + location.name)
                     for container in location.backends:
-                        print(
-                            "      -> ",
-                            (container.scheme)
-                            + "://"
-                            + container.address
-                            + (":" + str(container.port) if container.port else "")
-                            + container.path,
-                        )
+                        if container.type == "static_site":
+                            print("      -> ", container.path)
+                        else:
+                            print(
+                                "      -> ",
+                                (container.scheme)
+                                + "://"
+                                + container.address
+                                + (":" + str(container.port) if container.port else "")
+                                + container.path,
+                            )
 
                     if len(location.extras):
                         self.printextra("      ", location.extras)

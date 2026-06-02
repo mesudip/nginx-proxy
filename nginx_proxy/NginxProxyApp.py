@@ -43,6 +43,7 @@ class NginxProxyAppConfig(TypedDict):
     docker_swarm: str
     swarm_docker_host: str | None
     backend_start_grace_seconds: float
+    static_site_root: str
 
 
 def _strip_end(s: str, char="/") -> str:
@@ -104,6 +105,7 @@ class NginxProxyApp:
             docker_swarm=os.getenv("DOCKER_SWARM", "ignore").strip().lower(),
             swarm_docker_host=os.getenv("SWARM_DOCKER_HOST", "").strip() or None,
             backend_start_grace_seconds=float(os.getenv("BACKEND_START_GRACE_SECONDS", "10").strip()),
+            static_site_root=_strip_end(os.getenv("STATIC_SITE_ROOT", "").strip() or "/static"),
         )
 
     def _setup_nginx_conf(self):

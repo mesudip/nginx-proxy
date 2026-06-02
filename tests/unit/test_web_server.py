@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from nginx_proxy.BackendTarget import BackendTarget
 from nginx_proxy.DockerEventListener import Reload
+from nginx_proxy.Host import Host
 from nginx_proxy.ProxyConfigData import ProxyConfigData
 from nginx_proxy.WebServer import WebServer
 
@@ -119,6 +120,109 @@ def _backend_target(backend_id, hostname, address, port=80, backend_type="contai
     )
 
 
+def _static_site_config(hostname="example.com", path="/static/example.com/current"):
+    config_data = ProxyConfigData()
+    host = Host(hostname, 443, scheme={"https"})
+    host.add_container(
+        "/",
+        BackendTarget(
+            id=f"static-site:{hostname}",
+            name=hostname,
+            path=path,
+            backend_type="static_site",
+        ),
+    )
+    config_data.add_host(host)
+    return config_data
+
+
+def _secured_config(hostname, password):
+    config_data = ProxyConfigData()
+    host = Host(hostname, 80)
+    host.add_container(
+        "/",
+        BackendTarget(id=f"backend-{hostname}", address="172.18.0.2", port=80, path="", backend_type="container"),
+    )
+    host.update_extras_content("security", {"user": password})
+    config_data.add_host(host)
+    return config_data
+
+
+def test_register_static_sites_merges_root_with_existing_path_proxy(web_server):
+    hostname = "mixed.example.com"
+    existing_host = Host(hostname, 443, scheme={"https"})
+    existing_host.add_container(
+        "/api",
+        BackendTarget(id="api", address="172.18.0.2", port=8080, path="", backend_type="container"),
+    )
+    web_server.config_data = ProxyConfigData()
+    web_server.config_data.add_host(existing_host)
+
+    with patch("nginx_proxy.WebServer.pre_processors.process_static_sites") as process_static_sites:
+        process_static_sites.return_value = _static_site_config(hostname)
+        web_server._register_static_sites()
+
+    host = web_server.config_data.getHost(hostname, 443)
+    assert "/api" in host.locations
+    assert "/" in host.locations
+    assert host.locations["/"].backends[0].type == "static_site"
+
+
+def test_register_static_sites_warns_when_existing_root_overrides_static(web_server, capsys):
+    hostname = "root-proxy.example.com"
+    existing_host = Host(hostname, 443, scheme={"https"})
+    existing_host.add_container(
+        "/",
+        BackendTarget(id="root", address="172.18.0.2", port=8080, path="", backend_type="container"),
+    )
+    web_server.config_data = ProxyConfigData()
+    web_server.config_data.add_host(existing_host)
+
+    with patch("nginx_proxy.WebServer.pre_processors.process_static_sites") as process_static_sites:
+        process_static_sites.return_value = _static_site_config(hostname)
+        web_server._register_static_sites()
+
+    host = web_server.config_data.getHost(hostname, 443)
+    assert len(host.locations["/"].backends) == 1
+    assert host.locations["/"].backends[0].type == "container"
+    assert "WARNING: Static site root skipped" in capsys.readouterr().err
+
+
+def test_register_backend_root_warns_and_overrides_existing_static_site(web_server, capsys):
+    hostname = "container-root.example.com"
+    web_server.networks = {"frontend": "frontend-id", "frontend-id": "frontend"}
+    web_server.config_data = _static_site_config(hostname)
+    backend = _backend_target("container1", f"https://{hostname} -> :8080", "172.18.0.2", port=8080)
+
+    registered = web_server.register_backend(backend)
+
+    host = web_server.config_data.getHost(hostname, 443)
+    assert registered is True
+    assert len(host.locations["/"].backends) == 1
+    assert host.locations["/"].backends[0].type == "container"
+    assert "WARNING: Container route overrides static site root" in capsys.readouterr().err
+
+
+def test_remove_backend_restores_overridden_static_site_root(web_server):
+    hostname = "container-root.example.com"
+    web_server.networks = {"frontend": "frontend-id", "frontend-id": "frontend"}
+    web_server.config_data = _static_site_config(hostname)
+    backend = _backend_target("container1", f"https://{hostname} -> :8080", "172.18.0.2", port=8080)
+    web_server.register_backend(backend)
+
+    with (
+        patch("nginx_proxy.WebServer.pre_processors.process_static_sites") as process_static_sites,
+        patch.object(web_server.throttler, "throttle") as mock_throttle,
+    ):
+        process_static_sites.return_value = _static_site_config(hostname)
+        web_server.remove_backend("container1")
+
+    host = web_server.config_data.getHost(hostname, 443)
+    assert len(host.locations["/"].backends) == 1
+    assert host.locations["/"].backends[0].type == "static_site"
+    mock_throttle.assert_called_once()
+
+
 def test_update_backend_ignores_existing_container_backend(web_server):
     web_server.networks = {"frontend": "frontend-id", "frontend-id": "frontend"}
     web_server.config_data = ProxyConfigData()
@@ -205,11 +309,43 @@ def test_update_backend_ignores_candidate_when_nginx_validation_fails(web_server
     with patch.object(web_server.throttler, "throttle") as mock_throttle:
         changed = web_server.update_backend(updated)
 
-    assert changed is True
+    assert changed is False
     assert web_server.config_data.getHost("old.example.com") is not None
     assert web_server.config_data.getHost("new.example.com") is None
     assert web_server.config_data.has_backend("service1")
     mock_throttle.assert_not_called()
+
+
+def test_validation_does_not_overwrite_live_basic_auth_file(web_server):
+    hostname = "auth.example.com"
+    auth_file = web_server.basic_auth_processor.generate_htpasswd_file(hostname, "_", {"user": "old-password"})
+    with open(auth_file) as file:
+        original_auth = file.read()
+    web_server.nginx.validate_config.return_value = (False, "invalid config")
+
+    valid = web_server._validate_config_data(_secured_config(hostname, "new-password"))
+
+    assert valid is False
+    with open(auth_file) as file:
+        assert file.read() == original_auth
+
+
+def test_validation_does_not_mutate_default_server_config(web_server):
+    web_server.config["default_server"] = True
+    candidate = ProxyConfigData()
+    host = Host("candidate-default.example.com", 80)
+    host.add_container(
+        "/",
+        BackendTarget(id="backend-default", address="172.18.0.2", port=80, path="", backend_type="container"),
+    )
+    host.update_extras_content("default_server", "default_server")
+    candidate.add_host(host)
+    web_server.nginx.validate_config.return_value = (False, "invalid config")
+
+    valid = web_server._validate_config_data(candidate)
+
+    assert valid is False
+    assert web_server.config["default_server"] is True
 
 
 def test_rescan_and_reload(web_server):

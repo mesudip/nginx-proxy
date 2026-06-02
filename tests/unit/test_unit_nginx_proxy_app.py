@@ -35,6 +35,7 @@ def test_load_config_from_env(mock_docker_client, mock_from_env):
             assert config["enable_ipv6"] is True
             assert config["docker_swarm"] == "strict"
             assert config["swarm_docker_host"] == "tcp://swarm:2375"
+            assert config["static_site_root"] == "/static"
 
 
 @patch("docker.from_env")
