@@ -119,17 +119,13 @@ class WebServer:
 
         return hosts + redirect_hosts
 
-    def _do_reload(self, forced=False) -> bool:
-        """
-        Creates a new configuration based on current state and signals nginx to reload.
-        This is called whenever there's change in container or network state.
-        :return:
-        """
-        # print("web_server._do_reload(forced="+str(forced)+")")
-        self.redirect_processor.process_redirection(self.config_data)
+    def _render_config(self, config_data: ProxyConfigData | None = None, update_ssl_watch_domains: bool = True) -> str:
+        render_config_data = copy.deepcopy(config_data if config_data is not None else self.config_data)
+        self.redirect_processor.process_redirection(render_config_data)
+
         hosts: List[Host] = []
         has_default = False
-        for host_data in self.config_data.host_list():
+        for host_data in render_config_data.host_list():
             host = copy.deepcopy(host_data)
             host.is_down = host_data.isempty()
             if "default_server" in host.extras:
@@ -137,7 +133,7 @@ class WebServer:
                     del host.extras["default_server"]
                 else:
                     has_default = True
-            for i, location in enumerate(host.locations.values()):
+            for location in host.locations.values():
                 location.container = list(location.backends)[0]
             hosts.append(host)
 
@@ -145,16 +141,46 @@ class WebServer:
             hosts, prefer_local=self.config.get("docker_swarm") == "prefer-local"
         )
         self.basic_auth_processor.process_basic_auth(hosts)
-        self.ssl_processor.process_ssl_certificates(hosts)
+        self.ssl_processor.process_ssl_certificates(hosts, update_watch_domains=update_ssl_watch_domains)
         hosts = self._ensure_https_redirects(hosts)
         self.config["default_server"] = not has_default
 
-        output = self.template.render(
+        return self.template.render(
             virtual_servers=hosts,
             upstreams=upstreams,
             config=self.config,
         )
-        response = self.nginx.update_config(output, force=forced)
+
+    def _validate_config_data(self, config_data: ProxyConfigData, backend: BackendTarget | None = None) -> bool:
+        output = self._render_config(config_data, update_ssl_watch_domains=False)
+        validation = self.nginx.validate_config(output)
+        if isinstance(validation, tuple):
+            valid, error = validation
+        else:
+            valid, error = bool(validation), None
+
+        if valid:
+            return True
+
+        if backend is not None:
+            print(
+                "WARN: Ignoring backend update because generated nginx config failed validation "
+                f"type={backend.type} id={backend.id[:12]} name={backend.name}",
+                file=sys.stderr,
+            )
+        else:
+            print("WARN: Generated nginx config failed validation", file=sys.stderr)
+        return False
+
+    def _do_reload(self, forced=False, validate=True) -> bool:
+        """
+        Creates a new configuration based on current state and signals nginx to reload.
+        This is called whenever there's change in container or network state.
+        :return:
+        """
+        # print("web_server._do_reload(forced="+str(forced)+")")
+        output = self._render_config(self.config_data, update_ssl_watch_domains=True)
+        response = self.nginx.update_config(output, force=forced, validate=validate)
         return response
 
     def learn_yourself(self):
@@ -194,7 +220,7 @@ class WebServer:
             self.networks[network.id] = default_network
             self.networks[default_network] = network.id
 
-    def register_backend(self, backend: BackendTarget):
+    def register_backend(self, backend: BackendTarget, config_data: ProxyConfigData | None = None):
         """
         Find the details about container and register it and return True.
         If it's not configured with desired settings or is not accessible, return False
@@ -209,8 +235,9 @@ class WebServer:
             pre_processors.process_basic_auth(backend, environments, hosts.config_map)
             pre_processors.process_redirection(backend, environments, hosts.config_map)
             hosts.print()
+            target_config_data = config_data if config_data is not None else self.config_data
             for h in hosts.host_list():
-                self.config_data.add_host(h)
+                target_config_data.add_host(h)
         return len(hosts) > 0
 
     # removes container from the maintained list.
@@ -234,13 +261,13 @@ class WebServer:
     def _remove_backend_without_reload(self, container_id: str):
         return self.config_data.remove_backend(container_id)
 
-    def reload(self, immediate=False, force=False) -> bool:
+    def reload(self, immediate=False, force=False, validate=True) -> bool:
         """
         Schedules or performs a reload of the Nginx configuration.
         Returns True if a reload was initiated or scheduled.
         """
 
-        return self.throttler.throttle(lambda: self._do_reload(force), immediate=immediate or force)
+        return self.throttler.throttle(lambda: self._do_reload(force, validate=validate), immediate=immediate or force)
 
     def enqueue_reload(self, force=False) -> bool:
         if self._reload_dispatcher is None:
@@ -313,24 +340,29 @@ class WebServer:
             except Exception as e:
                 print(f"Error processing connect for container {container}: {e}", file=sys.stderr)
 
-    def update_backend(self, backend: BackendTarget, replace_existing: bool = False):
+    def update_backend(self, backend: BackendTarget, replace_existing: bool = False, reload: bool = True):
         """
         Rescan the backend to detect changes. And update nginx configuration if necessary.
         :param backend: BackendTarget object
         :return: true if state change affected the nginx configuration else false
         """
         try:
-            existing_backend = self.config_data.has_backend(backend.id)
+            candidate_config_data = copy.deepcopy(self.config_data)
+            existing_backend = candidate_config_data.has_backend(backend.id)
             if existing_backend and backend.type != "service" and not replace_existing:
                 return False
 
             removed = None
             if existing_backend:
-                removed, _ = self._remove_backend_without_reload(backend.id)
+                removed, _ = candidate_config_data.remove_backend(backend.id)
 
-            registered = self.register_backend(backend)
+            registered = self.register_backend(backend, candidate_config_data)
             if registered or removed:
-                self.reload()
+                if not self._validate_config_data(candidate_config_data, backend):
+                    return True
+                self.config_data = candidate_config_data
+                if reload:
+                    self.reload(validate=False)
                 return True
         except requests.exceptions.HTTPError as e:
             pass
@@ -342,8 +374,7 @@ class WebServer:
         Previously this only did containers, but now it's a full rescan for consistency.
         """
         swarm_mode = self.config.get("docker_swarm", "ignore")
-        # Clear previous state to ensure we don't leak dead containers/services
-        self.config_data.clear()
+        backends: List[BackendTarget] = []
 
         # 1. Register local containers (unless in strict swarm mode)
         if swarm_mode != "strict" and self.client is not None:
@@ -358,7 +389,7 @@ class WebServer:
                     if not self._should_register_container_now(container, bypass_start_grace=bypass_start_grace):
                         continue
                     backend = BackendTarget.from_container(container)
-                    self.register_backend(backend)
+                    backends.append(backend)
             except (KeyboardInterrupt, SystemExit):
                 raise
             except Exception as e:
@@ -377,7 +408,7 @@ class WebServer:
                     services = self.swarm_client.services.list()
                     for service in services:
                         backend = BackendTarget.from_service(service)
-                        self.register_backend(backend)
+                        backends.append(backend)
                 elif node_state == "active":
                     # If node is active but not manager, we can't list services on this client.
                     # However, if we have a remote swarm_client, it might be a manager.
@@ -387,6 +418,10 @@ class WebServer:
                 raise
             except Exception as e:
                 print(f"Error scanning services: {e}", file=sys.stderr)
+
+        self.config_data = ProxyConfigData()
+        for backend in backends:
+            self.update_backend(backend, replace_existing=True, reload=False)
 
     def rescan_services(self):
         """

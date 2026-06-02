@@ -67,6 +67,39 @@ class Nginx:
             return False
         return True
 
+    def validate_config(self, config_str) -> tuple[bool, Union[str, None]]:
+        """
+        Validate a candidate managed config without reloading nginx or changing last_working_config.
+        The managed config file is restored to its previous contents after the test.
+        """
+        had_existing_config = path.exists(self.config_file_path)
+        previous_config = ""
+        if had_existing_config:
+            with open(self.config_file_path) as file:
+                previous_config = file.read()
+
+        try:
+            write_file(self.config_file_path, config_str)
+            test_result = subprocess.run(Nginx.command_config_test, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if test_result.returncode == 0:
+                return True, None
+
+            error = test_result.stderr.decode("utf-8")
+            printed_context = False
+            error_line = self._parse_error_line(error)
+            if error_line is not None:
+                printed_context = self._print_error_context(config_str, error_line)
+            if not printed_context:
+                self._print_diff_with_line_numbers(previous_config, config_str)
+            if error is not None:
+                print(error, file=sys.stderr)
+            return False, error
+        finally:
+            if had_existing_config:
+                write_file(self.config_file_path, previous_config)
+            elif path.exists(self.config_file_path):
+                os.remove(self.config_file_path)
+
     def push_config(self, config_str):
 
         if config_str == self.last_working_config:
@@ -194,17 +227,24 @@ class Nginx:
             # Fallback for special diff lines such as "\\ No newline at end of file"
             print(line, file=sys.stderr)
 
-    def update_config(self, config_str, force=False) -> bool:
+    def update_config(self, config_str, force=False, validate=True) -> bool:
         """
         Change the nginx configuration.
         :param config_str: string containing configuration to be written into config file
         :param force: Force reload even if the configuration is same as previous
+        :param validate: Run nginx config test before reloading
         :return: true if the new config was used false if error or if the new configuration is same as previous
         """
 
         if config_str == self.last_working_config and not force:
             print("Configuration not changed, skipping nginx reload")
             return False
+
+        if validate:
+            valid, data = self.validate_config(config_str)
+            if not valid:
+                print("ERROR: New change made nginx config invalid. Thus it's rolled back", file=sys.stderr)
+                return False
 
         write_file(self.config_file_path, config_str)
         result, data = self.reload(return_error=True)

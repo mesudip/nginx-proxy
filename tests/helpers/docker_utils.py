@@ -2,9 +2,81 @@ import re
 import docker
 import time
 import uuid
+import requests
 
 import docker.models
 import docker.models.containers
+
+
+def start_nginx_proxy_container(
+    docker_client: docker.DockerClient,
+    test_network: docker.models.networks.Network,
+    docker_host_ip: str,
+    swarm_mode: str,
+    container_name: str,
+    backend_start_grace_seconds: str = "2",
+):
+    image_name = "mesudip/nginx-proxy:test"
+
+    print(f"\nBuilding {image_name}...")
+    try:
+        docker_client.images.build(path=".", tag=image_name, rm=True)
+        print(f"Successfully built {image_name}")
+    except docker.errors.BuildError as e:
+        print(f"Docker build failed: {e}")
+        raise
+
+    print(f"Starting {image_name} container...")
+    container = docker_client.containers.run(
+        image_name,
+        detach=True,
+        ports={"80/tcp": None, "443/tcp": None},
+        volumes={
+            "/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "ro"},
+            "nginx-test-dhparam": {"bind": "/etc/nginx/dhparam", "mode": "rw"},
+            "nginx-test-ssl": {"bind": "/etc/ssl", "mode": "rw"},
+        },
+        network=test_network.name,
+        name=container_name,
+        environment={
+            "LETSENCRYPT_API": "https://acme-staging-v02.api.letsencrypt.org/directory",
+            "VHOSTS_TEMPLATE_DIR": "/app/vhosts_template",
+            "CHALLENGE_DIR": "/etc/nginx/acme-challenges",
+            "DOCKER_SWARM": swarm_mode,
+            "BACKEND_START_GRACE_SECONDS": backend_start_grace_seconds,
+        },
+        restart_policy={"Name": "no"},
+    )
+
+    time.sleep(1)
+    container.reload()
+    port_80 = container.ports["80/tcp"][0]["HostPort"]
+    port_443 = container.ports["443/tcp"][0]["HostPort"]
+
+    print(f"nginx-proxy running on host ports: HTTP={port_80}, HTTPS={port_443}")
+
+    ready = False
+    for i in range(120):
+        try:
+            response = requests.get(
+                f"http://{docker_host_ip}:{port_80}",
+                headers={"Host": "nonexistent.example.com"},
+                timeout=1,
+            )
+            if response.status_code == 503:
+                print(f"nginx-proxy is ready after {i+1} seconds.")
+                ready = True
+                break
+        except requests.exceptions.ConnectionError:
+            pass
+        time.sleep(1)
+
+    if not ready:
+        print("\nnginx-proxy did not become ready in time. Container logs:")
+        print(container.logs().decode("utf-8"))
+        raise RuntimeError("nginx-proxy did not become ready in time.")
+
+    return container, port_80, port_443
 
 
 def start_backend(

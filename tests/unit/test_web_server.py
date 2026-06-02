@@ -194,6 +194,24 @@ def test_update_backend_removes_existing_service_when_updated_config_is_invalid(
     mock_throttle.assert_called_once()
 
 
+def test_update_backend_ignores_candidate_when_nginx_validation_fails(web_server):
+    web_server.networks = {"frontend": "frontend-id", "frontend-id": "frontend"}
+    web_server.config_data = ProxyConfigData()
+    existing = _backend_target("service1", "old.example.com", "10.0.0.2", backend_type="service")
+    updated = _backend_target("service1", "new.example.com", "10.0.0.3", backend_type="service")
+    web_server.register_backend(existing)
+    web_server.nginx.validate_config.return_value = (False, "duplicate directive")
+
+    with patch.object(web_server.throttler, "throttle") as mock_throttle:
+        changed = web_server.update_backend(updated)
+
+    assert changed is True
+    assert web_server.config_data.getHost("old.example.com") is not None
+    assert web_server.config_data.getHost("new.example.com") is None
+    assert web_server.config_data.has_backend("service1")
+    mock_throttle.assert_not_called()
+
+
 def test_rescan_and_reload(web_server):
     with patch.object(web_server, "_do_reload") as mock_reload, patch.object(web_server, "rescan_all_container"):
         web_server.rescan_and_reload(force=True)

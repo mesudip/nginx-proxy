@@ -105,7 +105,7 @@ class SslCertificateProcessor:
 
         return host.hostname + ".selfsigned"
 
-    def process_ssl_certificates(self, hosts: List[Host]):
+    def process_ssl_certificates(self, hosts: List[Host], update_watch_domains: bool = True):
         if not hosts:
             return
 
@@ -117,7 +117,8 @@ class SslCertificateProcessor:
             self._prepare_host_for_ssl(host)
 
         secured_domains = sorted({host.hostname for host in secured_hosts})
-        self.renewal_manager.update_watch_domains(secured_domains)
+        if update_watch_domains:
+            self.renewal_manager.update_watch_domains(secured_domains)
 
         for host in secured_hosts:
             host.ssl_file = self._select_ssl_file(host)

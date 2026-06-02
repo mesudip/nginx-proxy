@@ -3,12 +3,11 @@ import docker
 import time
 import re
 import uuid
-import requests
 from typing import List
 
 from docker.types import Healthcheck
 from nginx.NginxConf import HttpBlock, NginxConfig, ServerBlock
-from tests.helpers.docker_utils import start_backend, stop_backend
+from tests.helpers.docker_utils import start_backend, start_nginx_proxy_container, stop_backend
 from tests.helpers import (
     get_nginx_config_from_container,
     expect_server_down_integration,
@@ -107,6 +106,118 @@ def test_webserver_add_container_integration(
     finally:
         if backend:
             stop_backend(backend)
+
+
+@pytest.mark.parametrize("backend_type", ["container", "service"])
+def test_invalid_backend_config_is_ignored_and_does_not_poison_future_updates_integration(
+    nginx_proxy_container,
+    docker_client,
+    test_network,
+    backend_type,
+):
+    good_host_1 = f"{backend_type}.valid-before-{uuid.uuid4().hex[:6]}.example.com"
+    bad_host = f"{backend_type}.invalid-{uuid.uuid4().hex[:6]}.example.com"
+    good_host_2 = f"{backend_type}.valid-after-{uuid.uuid4().hex[:6]}.example.com"
+
+    good_backend_1 = None
+    bad_backend = None
+    good_backend_2 = None
+    try:
+        good_backend_1 = start_backend(
+            docker_client,
+            test_network,
+            {"VIRTUAL_HOST": good_host_1},
+            backend_type=backend_type,
+            sleep=False,
+        )
+        expect_server_up_integration(nginx_proxy_container[0], good_host_1, timeout=20)
+
+        bad_backend = start_backend(
+            docker_client,
+            test_network,
+            {"VIRTUAL_HOST": f"{bad_host}; invalid_nginx_directive value"},
+            backend_type=backend_type,
+            sleep=False,
+        )
+        expect_server_not_present_integration(nginx_proxy_container[0], bad_host, timeout=15)
+        expect_server_up_integration(nginx_proxy_container[0], good_host_1, timeout=5)
+
+        good_backend_2 = start_backend(
+            docker_client,
+            test_network,
+            {"VIRTUAL_HOST": good_host_2},
+            backend_type=backend_type,
+            sleep=False,
+        )
+        expect_server_up_integration(nginx_proxy_container[0], good_host_2, timeout=20)
+        expect_server_up_integration(nginx_proxy_container[0], good_host_1, timeout=5)
+        expect_server_not_present_integration(nginx_proxy_container[0], bad_host, timeout=5)
+
+        result, output = nginx_proxy_container[0].exec_run("nginx -t")
+        assert result == 0, output.decode("utf-8")
+    finally:
+        for backend in (good_backend_1, bad_backend, good_backend_2):
+            if backend:
+                stop_backend(backend)
+
+
+def test_startup_ignores_existing_backend_with_nginx_rejected_virtual_host_config_integration(
+    docker_client,
+    test_network,
+    docker_host_ip,
+    swarm_mode,
+):
+    good_host = f"startup-valid-{uuid.uuid4().hex[:6]}.example.com"
+    bad_host = f"startup-invalid-{uuid.uuid4().hex[:6]}.example.com"
+
+    good_backend = None
+    bad_backend = None
+    proxy_container = None
+    try:
+        good_backend = start_backend(
+            docker_client,
+            test_network,
+            {"VIRTUAL_HOST": good_host, "VIRTUAL_PORT": "8080"},
+            backend_type="container",
+            sleep=False,
+        )
+        bad_backend = start_backend(
+            docker_client,
+            test_network,
+            {
+                "VIRTUAL_HOST": f"https://{bad_host};unknown_key -1;",
+                "VIRTUAL_PORT": "8080",
+            },
+            backend_type="container",
+            sleep=False,
+        )
+
+        proxy_container, _, _ = start_nginx_proxy_container(
+            docker_client,
+            test_network,
+            docker_host_ip,
+            swarm_mode,
+            f"nginx-proxy-startup-invalid-{swarm_mode}-{uuid.uuid4().hex[:8]}",
+            backend_start_grace_seconds="2",
+        )
+
+        expect_server_up_integration(proxy_container, good_host, timeout=20)
+        expect_server_not_present_integration(proxy_container, bad_host, timeout=10)
+
+        result, output = proxy_container.exec_run("nginx -t")
+        assert result == 0, output.decode("utf-8")
+
+        logs = proxy_container.logs().decode("utf-8")
+        assert "unknown_key" in logs
+    finally:
+        if proxy_container:
+            print("=========================== Container Logs Start ===========================")
+            print(proxy_container.logs().decode("utf-8"))
+            print("=========================== Container Logs End ===========================")
+            proxy_container.remove(force=True)
+        for backend in (good_backend, bad_backend):
+            if backend:
+                stop_backend(backend)
 
 
 def test_container_start_grace_delays_config_update(
