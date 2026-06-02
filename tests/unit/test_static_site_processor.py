@@ -4,7 +4,7 @@ from jinja2 import Template
 
 from nginx.NginxConf import NginxConfig
 from nginx_proxy.post_processors.upstream_processor import UpstreamProcessor
-from nginx_proxy.pre_processors.static_site_processor import process_static_sites
+from nginx_proxy.pre_processors.static_site_processor import process_default_ssl_domains, process_static_sites
 
 
 def test_process_static_sites_discovers_valid_domain_directories(tmp_path, capsys):
@@ -165,3 +165,23 @@ def test_static_site_location_renders_root_and_try_files(tmp_path):
     assert location.root == str(current)
     assert location.try_files == "$uri $uri/ /index.html"
     assert location.proxy_pass is None
+
+
+def test_process_default_ssl_domains_hosts_lost_page_root():
+    config_data = process_default_ssl_domains(["*.xyz.com", " *.example.com "], "/app/vhosts_template/errors")
+
+    xyz = config_data.getHost("*.xyz.com", 443)
+    example = config_data.getHost("*.example.com", 443)
+
+    assert xyz is not None
+    assert example is not None
+    assert xyz.secured is True
+    assert xyz.locations["/"].backends[0].type == "static_site"
+    assert xyz.locations["/"].backends[0].path == "/app/vhosts_template/errors"
+
+
+def test_process_default_ssl_domains_skips_invalid_wildcard(capsys):
+    config_data = process_default_ssl_domains(["api.*.xyz.com"], "/app/vhosts_template/errors")
+
+    assert len(config_data) == 0
+    assert "Ignoring invalid domain: api.*.xyz.com: invalid hostname" in capsys.readouterr().out

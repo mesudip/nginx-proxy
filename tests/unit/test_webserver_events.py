@@ -36,6 +36,7 @@ def get_test_config(enable_ipv6: bool = False) -> NginxProxyAppConfig:
         enable_ipv6=enable_ipv6,
         docker_swarm="ignore",
         swarm_docker_host=None,
+        default_ssl_domains=[],
     )
 
 

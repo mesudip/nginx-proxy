@@ -93,6 +93,7 @@ Control the default behavior of `nginx-proxy`:
 | `CLOUDFLARE_API_KEY_KEY*` | - | Cloudflare api keys to issue DNS certificates.|
 | `BACKEND_START_GRACE_SECONDS` | `10` | Delay registering containers without a Docker healthcheck so crashing backends dont' result reload|
 | `STATIC_SITE_ROOT` | `/static` | Directory scanned for static sites. Each domain is served from `$STATIC_SITE_ROOT/$domain/current`. |
+| `DEFAULT_SSL_DOMAINS` | - | Comma-separated HTTPS domains, including wildcards like `*.example.com`, served by the built-in lost page. |
 
 
 ## Virtual Hosts
@@ -220,6 +221,15 @@ docker run -d \
     ...
     mesudip/nginx-proxy
 ```
+
+### Built-In Lost Page Domains
+Set `DEFAULT_SSL_DOMAINS` to serve the bundled lost page from `vhosts_template/errors/index.html` for HTTPS domains that are not backed by a container.
+
+```bash
+-e DEFAULT_SSL_DOMAINS="*.example.com,*.example.net"
+```
+
+These domains are rendered as normal hosted HTTPS sites, not as nginx default servers. If a container later configures the same domain and `/` route, the container route overrides the built-in lost page.
 
 ### Custom Certificates
 Mount your own certificates:

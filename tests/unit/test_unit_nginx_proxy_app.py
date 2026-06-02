@@ -21,6 +21,7 @@ def test_load_config_from_env(mock_docker_client, mock_from_env):
             "ENABLE_IPV6": "true",
             "DOCKER_SWARM": "strict",
             "SWARM_DOCKER_HOST": "tcp://swarm:2375",
+            "DEFAULT_SSL_DOMAINS": "*.xyz.com, *.example.com",
         },
     ):
         with patch("sys.exit"):
@@ -36,6 +37,7 @@ def test_load_config_from_env(mock_docker_client, mock_from_env):
             assert config["docker_swarm"] == "strict"
             assert config["swarm_docker_host"] == "tcp://swarm:2375"
             assert config["static_site_root"] == "/static"
+            assert config["default_ssl_domains"] == ["*.xyz.com", "*.example.com"]
 
 
 @patch("docker.from_env")

@@ -44,6 +44,7 @@ class NginxProxyAppConfig(TypedDict):
     swarm_docker_host: str | None
     backend_start_grace_seconds: float
     static_site_root: str
+    default_ssl_domains: list[str]
 
 
 def _strip_end(s: str, char="/") -> str:
@@ -86,6 +87,9 @@ class NginxProxyApp:
         ssl_dir = _strip_end(os.getenv("SSL_DIR", "/etc/ssl").strip())
         ssl_certs_dir = os.getenv("SSL_CERTS_DIR", ssl_dir + "/certs").strip()
         ssl_key_dir = os.getenv("SSL_KEY_DIR", ssl_dir + "/private").strip()
+        default_ssl_domains = [
+            domain.strip() for domain in os.getenv("DEFAULT_SSL_DOMAINS", "").split(",") if domain.strip()
+        ]
 
         return NginxProxyAppConfig(
             cert_renew_threshold_days=int(os.getenv("CERT_RENEW_THRESHOLD_DAYS", "30").strip()),
@@ -106,6 +110,7 @@ class NginxProxyApp:
             swarm_docker_host=os.getenv("SWARM_DOCKER_HOST", "").strip() or None,
             backend_start_grace_seconds=float(os.getenv("BACKEND_START_GRACE_SECONDS", "10").strip()),
             static_site_root=_strip_end(os.getenv("STATIC_SITE_ROOT", "").strip() or "/static"),
+            default_ssl_domains=default_ssl_domains,
         )
 
     def _setup_nginx_conf(self):

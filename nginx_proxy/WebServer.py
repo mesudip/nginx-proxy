@@ -1,5 +1,6 @@
 import copy
 import os
+import subprocess
 import sys
 from datetime import datetime, timezone
 from typing import Callable, List, TYPE_CHECKING
@@ -149,6 +150,8 @@ class WebServer:
         )
         self.basic_auth_processor.process_basic_auth(hosts, dry_run=dry_run, created_files=dry_run_auth_files)
         self.ssl_processor.process_ssl_certificates(hosts, update_watch_domains=update_ssl_watch_domains)
+        if dry_run:
+            self._ensure_selfsigned_certificate_files(hosts)
         hosts = self._ensure_https_redirects(hosts)
         render_config["default_server"] = not has_default
         if not dry_run:
@@ -199,6 +202,44 @@ class WebServer:
                     os.rmdir(folder_path)
             except OSError as e:
                 print(f"WARN: Could not clean up dry-run basic auth file {file_path}: {e}", file=sys.stderr)
+
+    def _ensure_selfsigned_certificate_files(self, hosts: List[Host]) -> None:
+        certs_dir = self.config.get("ssl_certs_dir") or os.path.join(self.config["ssl_dir"], "certs")
+        keys_dir = self.config.get("ssl_key_dir") or os.path.join(self.config["ssl_dir"], "private")
+        os.makedirs(certs_dir, exist_ok=True)
+        os.makedirs(keys_dir, exist_ok=True)
+
+        for host in hosts:
+            ssl_file = getattr(host, "ssl_file", None)
+            if not host.secured or not ssl_file or not str(ssl_file).endswith(".selfsigned"):
+                continue
+
+            cert_path = os.path.join(certs_dir, ssl_file + ".crt")
+            key_path = os.path.join(keys_dir, ssl_file + ".key")
+            if os.path.exists(cert_path) and os.path.exists(key_path):
+                continue
+
+            subprocess.run(
+                [
+                    "openssl",
+                    "req",
+                    "-x509",
+                    "-nodes",
+                    "-newkey",
+                    "rsa:2048",
+                    "-days",
+                    "30",
+                    "-subj",
+                    f"/CN={host.hostname}",
+                    "-keyout",
+                    key_path,
+                    "-out",
+                    cert_path,
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
 
     def _do_reload(self, forced=False, validate=True) -> bool:
         """
@@ -457,23 +498,33 @@ class WebServer:
     def _register_static_sites(self):
         static_hosts = pre_processors.process_static_sites(self.config.get("static_site_root", "/static"))
         for host in static_hosts.host_list():
-            existing_host = self.config_data.getHost(host.hostname, host.port)
-            if existing_host is None:
-                self.config_data.add_host(host)
-                continue
+            self._register_static_host(host)
 
-            if "/" in existing_host.locations:
-                if self._location_has_static_site(existing_host.locations["/"]):
-                    continue
-                print(
-                    "[static-site] WARNING: Static site root skipped for "
-                    f"{host.hostname}:{host.port}. Existing / location overrides "
-                    f"{host.locations['/'].backends[0].path}",
-                    file=sys.stderr,
-                )
-                continue
+        default_ssl_hosts = pre_processors.process_default_ssl_domains(
+            self.config.get("default_ssl_domains", []),
+            os.path.join(self.config["vhosts_template_dir"], "errors"),
+        )
+        for host in default_ssl_hosts.host_list():
+            self._register_static_host(host)
 
+    def _register_static_host(self, host: Host):
+        existing_host = self.config_data.getHost(host.hostname, host.port)
+        if existing_host is None:
             self.config_data.add_host(host)
+            return
+
+        if "/" in existing_host.locations:
+            if self._location_has_static_site(existing_host.locations["/"]):
+                return
+            print(
+                "[static-site] WARNING: Static site root skipped for "
+                f"{host.hostname}:{host.port}. Existing / location overrides "
+                f"{host.locations['/'].backends[0].path}",
+                file=sys.stderr,
+            )
+            return
+
+        self.config_data.add_host(host)
 
     @staticmethod
     def _location_has_static_site(location) -> bool:

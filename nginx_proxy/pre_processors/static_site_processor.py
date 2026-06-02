@@ -85,3 +85,32 @@ def process_static_sites(static_site_root: str = "/static") -> ProxyConfigData:
         print(f"[static-site] Hosting {domain} from {current_path}")
 
     return hosts
+
+
+def process_default_ssl_domains(default_ssl_domains: list[str], site_root: str) -> ProxyConfigData:
+    hosts = ProxyConfigData()
+    root = site_root.rstrip("/") or "/"
+
+    for domain in default_ssl_domains:
+        domain = domain.strip()
+        if not domain:
+            continue
+
+        host = Host(domain, 443, scheme={"https"})
+        try:
+            _validate_external_host(host)
+        except InvalidHostConfiguration as e:
+            print(f"[default-ssl-domain] Ignoring invalid domain: {domain}: {e.reason}")
+            continue
+
+        backend = BackendTarget(
+            id=f"default-ssl-domain:{domain}",
+            name=domain,
+            path=root,
+            backend_type="static_site",
+        )
+        host.add_container("/", backend, websocket=False, http=True)
+        hosts.add_host(host)
+        print(f"[default-ssl-domain] Hosting {domain} from {root}")
+
+    return hosts
