@@ -107,6 +107,43 @@ def test_process_static_sites_skips_entry_when_entry_inspection_fails(tmp_path, 
     assert "entry permission denied" in captured.err
 
 
+def test_process_static_sites_inspects_entries_while_scandir_is_open(tmp_path, monkeypatch):
+    static_root = tmp_path / "static"
+    current = static_root / "example.com" / "current"
+    current.mkdir(parents=True)
+
+    class Entry:
+        name = "example.com"
+        path = str(static_root / "example.com")
+
+        def __init__(self, scandir_result):
+            self.scandir_result = scandir_result
+
+        def is_dir(self, follow_symlinks=True):
+            if not self.scandir_result.open:
+                raise OSError("scandir already closed")
+            return True
+
+    class ScandirResult:
+        def __init__(self):
+            self.open = False
+            self.entry = Entry(self)
+
+        def __enter__(self):
+            self.open = True
+            return [self.entry]
+
+        def __exit__(self, exc_type, exc, tb):
+            self.open = False
+            return False
+
+    monkeypatch.setattr("nginx_proxy.pre_processors.static_site_processor.os.scandir", lambda _root: ScandirResult())
+
+    config_data = process_static_sites(str(static_root))
+
+    assert config_data.getHost("example.com", 443) is not None
+
+
 def test_process_static_sites_skips_domain_when_current_path_inspection_fails(tmp_path, monkeypatch, capsys):
     static_root = tmp_path / "static"
     current = static_root / "example.com" / "current"

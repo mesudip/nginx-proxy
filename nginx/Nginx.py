@@ -24,6 +24,10 @@ def write_file(file_path: str, content: str):
         os.fsync(file.fileno())  # Ensure data is written to disk
 
 
+def _decode_subprocess_output(output: bytes) -> str:
+    return output.decode("utf-8", errors="replace")
+
+
 class Nginx:
     command_config_test = ["nginx", "-t"]
     command_stop = ["nginx", "-s", "quit"]
@@ -62,7 +66,7 @@ class Nginx:
         test_result = subprocess.run(Nginx.command_config_test, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if test_result.returncode != 0:
             print("Nginx configtest failed!", file=sys.stderr)
-            self.last_error = test_result.stderr.decode("utf-8")
+            self.last_error = _decode_subprocess_output(test_result.stderr)
             print(self.last_error, file=sys.stderr)
             return False
         return True
@@ -84,7 +88,7 @@ class Nginx:
             if test_result.returncode == 0:
                 return True, None
 
-            error = test_result.stderr.decode("utf-8")
+            error = _decode_subprocess_output(test_result.stderr)
             printed_context = False
             error_line = self._parse_error_line(error)
             if error_line is not None:
@@ -277,10 +281,10 @@ class Nginx:
         reload_result = subprocess.run(Nginx.command_reload, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if reload_result.returncode != 0:
             if return_error:
-                return False, reload_result.stderr.decode("utf-8")
+                return False, _decode_subprocess_output(reload_result.stderr)
             else:
                 print("Nginx reload failed with exit code ", file=sys.stderr)
-                print(reload_result.stderr.decode("utf-8"), file=sys.stderr)
+                print(_decode_subprocess_output(reload_result.stderr), file=sys.stderr)
                 result = False
         else:
             result = True

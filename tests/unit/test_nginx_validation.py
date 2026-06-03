@@ -24,6 +24,43 @@ def test_validate_config_restores_previous_config_after_failure(tmp_path, monkey
     assert nginx.last_working_config == "previous config"
 
 
+def test_validate_config_handles_invalid_utf8_stderr(tmp_path, monkeypatch):
+    config_file = tmp_path / "conf.d" / "nginx-proxy.conf"
+    config_file.parent.mkdir()
+    config_file.write_text("previous config")
+
+    nginx = Nginx(str(config_file), str(tmp_path / "challenges"))
+
+    def fake_run(command, stdout=None, stderr=None):
+        return SimpleNamespace(returncode=1, stderr=b"nginx: invalid byte: \xff\n")
+
+    monkeypatch.setattr("nginx.Nginx.subprocess.run", fake_run)
+
+    valid, error = nginx.validate_config("candidate config")
+
+    assert valid is False
+    assert "nginx: invalid byte: \ufffd" in error
+    assert config_file.read_text() == "previous config"
+
+
+def test_reload_handles_invalid_utf8_stderr(tmp_path, monkeypatch):
+    config_file = tmp_path / "conf.d" / "nginx-proxy.conf"
+    config_file.parent.mkdir()
+    config_file.write_text("previous config")
+
+    nginx = Nginx(str(config_file), str(tmp_path / "challenges"))
+
+    def fake_run(command, stdout=None, stderr=None):
+        return SimpleNamespace(returncode=1, stderr=b"reload failed: \xff\n")
+
+    monkeypatch.setattr("nginx.Nginx.subprocess.run", fake_run)
+
+    reloaded, error = nginx.reload(return_error=True)
+
+    assert reloaded is False
+    assert "reload failed: \ufffd" in error
+
+
 def test_validate_config_restores_previous_config_after_success(tmp_path, monkeypatch):
     config_file = tmp_path / "conf.d" / "nginx-proxy.conf"
     config_file.parent.mkdir()

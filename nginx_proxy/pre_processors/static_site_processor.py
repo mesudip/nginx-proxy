@@ -42,20 +42,18 @@ def process_static_sites(static_site_root: str = "/static") -> ProxyConfigData:
 
     try:
         with os.scandir(root) as entries:
-            root_entries = sorted(entries, key=lambda item: item.name)
+            root_entries = []
+            for entry in sorted(entries, key=lambda item: item.name):
+                try:
+                    if entry.is_dir(follow_symlinks=True):
+                        root_entries.append((entry.name.strip(), entry.path))
+                except OSError as e:
+                    print(f"[static-site] WARNING: Could not inspect {entry.path}, skipping: {e}", file=sys.stderr)
     except OSError as e:
         print(f"[static-site] WARNING: Could not scan root {root}, skipping static sites: {e}", file=sys.stderr)
         return hosts
 
-    for entry in root_entries:
-        try:
-            if not entry.is_dir(follow_symlinks=True):
-                continue
-        except OSError as e:
-            print(f"[static-site] WARNING: Could not inspect {entry.path}, skipping: {e}", file=sys.stderr)
-            continue
-
-        domain = entry.name.strip()
+    for domain, domain_path in root_entries:
         host = Host(domain, 443, scheme={"https"})
         try:
             _validate_external_host(host)
@@ -64,7 +62,7 @@ def process_static_sites(static_site_root: str = "/static") -> ProxyConfigData:
             print(f"[static-site] Ignoring invalid domain directory: {domain}: {reason}")
             continue
 
-        current_path = os.path.join(root, domain, "current")
+        current_path = os.path.join(domain_path, "current")
         try:
             current_is_dir = os.path.isdir(current_path)
         except OSError as e:
