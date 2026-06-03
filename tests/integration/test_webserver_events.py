@@ -25,7 +25,7 @@ pattern = re.compile(r"^http://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:80")
 START_GRACE_SECONDS = 2
 
 
-def test_certapi_unresolvable_hostname_crashes_nginx_startup_without_resolver(
+def test_certapi_unresolvable_hostname_does_not_crash_nginx_startup(
     docker_client,
     test_network,
     swarm_mode,
@@ -58,12 +58,13 @@ def test_certapi_unresolvable_hostname_crashes_nginx_startup_without_resolver(
             restart_policy={"Name": "no"},
         )
 
-        time.sleep(5)
+        time.sleep(10)
         container.reload()
         logs = container.logs(stdout=True, stderr=True).decode("utf-8", errors="replace")
 
-        assert container.status != "running", logs
-        assert "host not found in upstream" in logs
+        assert container.status == "running", logs
+        assert "host not found in upstream" not in logs
+        assert "Nginx is alive" in logs
     finally:
         if container:
             print("=========================== Container Logs Start ===========================")
