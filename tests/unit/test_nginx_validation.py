@@ -12,7 +12,7 @@ def test_validate_config_restores_previous_config_after_failure(tmp_path, monkey
 
     def fake_run(command, stdout=None, stderr=None):
         assert config_file.read_text() == "candidate config"
-        return SimpleNamespace(returncode=1, stderr=b'nginx: [emerg] invalid in nginx-proxy.conf:1\n')
+        return SimpleNamespace(returncode=1, stderr=b"nginx: [emerg] invalid in nginx-proxy.conf:1\n")
 
     monkeypatch.setattr("nginx.Nginx.subprocess.run", fake_run)
 
@@ -93,7 +93,7 @@ def test_update_config_rejects_invalid_candidate_before_reload(tmp_path, monkeyp
     def fake_run(command, stdout=None, stderr=None):
         commands.append(command)
         assert command == Nginx.command_config_test
-        return SimpleNamespace(returncode=1, stderr=b'nginx: [emerg] invalid in nginx-proxy.conf:1\n')
+        return SimpleNamespace(returncode=1, stderr=b"nginx: [emerg] invalid in nginx-proxy.conf:1\n")
 
     monkeypatch.setattr("nginx.Nginx.subprocess.run", fake_run)
 

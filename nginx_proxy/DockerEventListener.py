@@ -151,10 +151,7 @@ class DockerEventListener:
                 self._dispatch(command)
             except (KeyboardInterrupt, SystemExit) as e:
                 print(
-                    "Dispatcher command requested termination :"
-                    + e.__class__.__name__
-                    + " -> "
-                    + str(e),
+                    "Dispatcher command requested termination :" + e.__class__.__name__ + " -> " + str(e),
                     file=sys.stderr,
                 )
             except Exception as e:

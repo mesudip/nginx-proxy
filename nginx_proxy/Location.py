@@ -139,7 +139,9 @@ class Location:
                 if existing["value"] == value:
                     continue
 
-                chosen = self._choose_injected_directive(existing, {"key": key, "value": value, "backend_id": backend_id})
+                chosen = self._choose_injected_directive(
+                    existing, {"key": key, "value": value, "backend_id": backend_id}
+                )
                 self._warn_conflicting_injected_directive(existing, backend_id, key, value, chosen["value"])
                 merged_by_key[key] = chosen
 

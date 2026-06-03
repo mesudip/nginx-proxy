@@ -14,6 +14,13 @@ def _is_safe_static_site_root(root: str) -> bool:
     return bool(_SAFE_STATIC_SITE_ROOT.fullmatch(root))
 
 
+def _is_path_inside_root(path: str, root: str) -> bool:
+    try:
+        return os.path.commonpath([root, path]) == root
+    except ValueError:
+        return False
+
+
 def process_static_sites(static_site_root: str = "/static") -> ProxyConfigData:
     hosts = ProxyConfigData()
     root = static_site_root.rstrip("/") or "/"
@@ -39,6 +46,8 @@ def process_static_sites(static_site_root: str = "/static") -> ProxyConfigData:
     if not root_is_dir:
         print(f"[static-site] Root is not a directory, skipping: {root}")
         return hosts
+
+    root_realpath = os.path.realpath(root)
 
     try:
         with os.scandir(root) as entries:
@@ -70,6 +79,14 @@ def process_static_sites(static_site_root: str = "/static") -> ProxyConfigData:
             continue
         if not current_is_dir:
             print(f"[static-site] Ignoring {domain}: missing directory or symlink target {current_path}")
+            continue
+        current_realpath = os.path.realpath(current_path)
+        if not _is_path_inside_root(current_realpath, root_realpath):
+            print(
+                "[static-site] WARNING: Ignoring "
+                f"{domain}: current symlink target escapes STATIC_SITE_ROOT ({current_path} -> {current_realpath})",
+                file=sys.stderr,
+            )
             continue
 
         backend = BackendTarget(

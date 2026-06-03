@@ -36,7 +36,9 @@ class BasicAuthProcessor:
     def htpasswd_file_path(self, folder: str, file: str) -> str:
         return os.path.join(self.basic_auth_dir, folder, file)
 
-    def _ensure_htpasswd_file(self, folder: str, file: str, securities: Dict[str, str], created_files: List[str]) -> str:
+    def _ensure_htpasswd_file(
+        self, folder: str, file: str, securities: Dict[str, str], created_files: List[str]
+    ) -> str:
         file_path = self.htpasswd_file_path(folder, file)
         if os.path.exists(file_path):
             return file_path

@@ -2,6 +2,8 @@ import os
 import pytest
 from unittest.mock import patch, MagicMock
 
+from jinja2 import Template
+
 from nginx_proxy.DockerEventListener import RescanAndReload
 from nginx_proxy.NginxProxyApp import NginxProxyApp, _detect_nginx_resolvers
 
@@ -95,6 +97,45 @@ def test_certapi_url_accepts_http_and_https(
     assert app.config["certapi"]["scheme"] == expected_scheme
     assert app.config["certapi"]["port"] == expected_port
     assert app.config["certapi"]["endpoint"] == f"certapi.example.com:{expected_port}"
+
+
+def _render_default_server_certapi_location(nginx_resolvers):
+    with open("vhosts_template/default.conf.jinja2") as template_file:
+        return Template(template_file.read()).render(
+            virtual_servers=[],
+            upstreams=[],
+            config={
+                "certapi": {
+                    "url": "https://certapi.example.com:8443",
+                    "host": "certapi.example.com",
+                    "scheme": "https",
+                    "port": 8443,
+                    "endpoint": "certapi.example.com:8443",
+                },
+                "nginx_resolvers": nginx_resolvers,
+                "client_max_body_size": "1m",
+                "default_server": True,
+                "enable_ipv6": False,
+                "wellknown_path": "/.well-known/acme-challenge/",
+                "challenge_dir": "/etc/nginx/challenges/",
+                "vhosts_template_dir": "/app/vhosts_template",
+            },
+        )
+
+
+def test_certapi_challenge_proxy_uses_runtime_resolver_when_configured():
+    rendered = _render_default_server_certapi_location(["127.0.0.11"])
+
+    assert "set $certapi_endpoint certapi.example.com:8443;" in rendered
+    assert "proxy_pass https://$certapi_endpoint;" in rendered
+    assert "proxy_pass https://certapi.example.com:8443;" not in rendered
+
+
+def test_certapi_challenge_proxy_uses_literal_url_without_runtime_resolver():
+    rendered = _render_default_server_certapi_location([])
+
+    assert "set $certapi_endpoint" not in rendered
+    assert "proxy_pass https://certapi.example.com:8443;" in rendered
 
 
 @patch("docker.from_env")

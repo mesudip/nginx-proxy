@@ -89,7 +89,7 @@ Control the default behavior of `nginx-proxy`:
 | `SWARM_DOCKER_HOST` | - | URL of the Swarm manager socket (e.g., `tcp://manager:2375`). |
 | `CERTAPI_URL` | - | External Certificate API URL. Must start with `http://` or `https://`. |
 | `CERTAPI_BATCH_DOMAINS` | `true` | When using `CERTAPI_URL`, request safe domain batching (`batch_domains=true`) to avoid recursive domain-order errors. |
-| `NGINX_RESOLVER` | `/etc/resolv.conf` nameservers | Resolver used by nginx for runtime DNS lookups when proxying ACME challenges to `CERTAPI_URL`. Set this explicitly if automatic resolver detection is not correct for your network mode. |
+| `NGINX_RESOLVER` | `/etc/resolv.conf` nameservers | Resolver used by nginx for runtime DNS lookups when proxying ACME challenges to `CERTAPI_URL`. When no resolver is detected or configured, nginx renders the literal `CERTAPI_URL` in `proxy_pass` so startup fails visibly if that host cannot be resolved. Set this explicitly if automatic resolver detection is not correct for your network mode. |
 | `CHALLENGE_DIR` | `/etc/nginx/challenges/` | Base directory for acme challenge store, when requesting certificates with acme. `.well-known/acme-challenge` folder lives inside this.|
 | `CLOUDFLARE_API_KEY_KEY*` | - | Cloudflare api keys to issue DNS certificates.|
 | `BACKEND_START_GRACE_SECONDS` | `10` | Delay registering containers without a Docker healthcheck so crashing backends dont' result reload|
@@ -147,7 +147,7 @@ Serve static files directly from `nginx-proxy` by placing domain directories und
 Files are served from `$STATIC_SITE_ROOT/$domain/current`. For example, `/static/example.com/current` hosts `https://example.com`.
 `STATIC_SITE_ROOT` may contain only letters, numbers, `/`, `.`, `_`, and `-`; paths with spaces or other special characters are rejected and all static sites are ignored.
 
-`current` can be a symlink to the active release directory, which allows versioned deploys by switching the symlink and issuing a reload/HUP. Static site directories are scanned only during a full reload. Invalid domain directory names are ignored with a warning.
+`current` can be a symlink to an active release directory inside `STATIC_SITE_ROOT`, which allows versioned deploys by switching the symlink and issuing a reload/HUP. Symlinks that resolve outside `STATIC_SITE_ROOT` are ignored. Static site locations also render `disable_symlinks on from=$document_root;` so symlinks inside the served document root cannot expose files outside the site. Static site directories are scanned only during a full reload. Invalid domain directory names are ignored with a warning.
 
 Static sites are mounted at `/`. Container-backed proxy locations can still be configured on more specific paths such as `/api` or `/admin`. If a container configures `/` for the same domain, that container route overrides the static site root and `nginx-proxy` logs a warning.
 

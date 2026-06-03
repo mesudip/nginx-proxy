@@ -57,7 +57,10 @@ def test_process_static_sites_rejects_certificate_hostname_over_64_chars(tmp_pat
 
     assert len(config_data) == 0
     output = capsys.readouterr().out
-    assert f"Ignoring invalid domain directory: {long_domain}: certificate hostnames must be 64 characters or fewer" in output
+    assert (
+        f"Ignoring invalid domain directory: {long_domain}: certificate hostnames must be 64 characters or fewer"
+        in output
+    )
     assert "Hosting" not in output
 
 
@@ -166,6 +169,38 @@ def test_process_static_sites_skips_domain_when_current_path_inspection_fails(tm
     assert "current permission denied" in captured.err
 
 
+def test_process_static_sites_allows_current_symlink_inside_static_root(tmp_path):
+    static_root = tmp_path / "static"
+    release = static_root / "example.com" / "releases" / "v1"
+    release.mkdir(parents=True)
+    domain = static_root / "example.com"
+    current = domain / "current"
+    current.symlink_to(release, target_is_directory=True)
+
+    config_data = process_static_sites(str(static_root))
+
+    host = config_data.getHost("example.com", 443)
+    assert host is not None
+    assert host.locations["/"].backends[0].path == str(current)
+
+
+def test_process_static_sites_skips_current_symlink_outside_static_root(tmp_path, capsys):
+    static_root = tmp_path / "static"
+    external_release = tmp_path / "external" / "example.com"
+    external_release.mkdir(parents=True)
+    domain = static_root / "example.com"
+    domain.mkdir(parents=True)
+    current = domain / "current"
+    current.symlink_to(external_release, target_is_directory=True)
+
+    config_data = process_static_sites(str(static_root))
+
+    assert len(config_data) == 0
+    captured = capsys.readouterr()
+    assert "current symlink target escapes STATIC_SITE_ROOT" in captured.err
+    assert "Hosting example.com" not in captured.out
+
+
 def test_static_site_location_renders_root_and_try_files(tmp_path):
     static_root = tmp_path / "static"
     current = static_root / "example.com" / "current"
@@ -200,7 +235,8 @@ def test_static_site_location_renders_root_and_try_files(tmp_path):
     location = next(loc for loc in server.locations if loc.path == "/")
 
     assert location.root == str(current)
-    assert location.try_files == "$uri $uri/ /index.html"
+    assert location._get_directive_value("disable_symlinks") == "on from=$document_root"
+    assert location.try_files == "$uri $uri/ /index.html =404"
     assert location.proxy_pass is None
 
 
