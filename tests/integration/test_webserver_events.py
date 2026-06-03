@@ -527,11 +527,19 @@ def test_webserver_add_container_with_ssl_integration(
 
     backend = start_backend(docker_client, test_network, env, backend_type=backend_type)
     try:
-        time.sleep(5)  # Sleep extra for ssl cert generation
-        config_str = get_nginx_config_from_container(nginx_proxy_container[0])
-        config = HttpBlock.parse(config_str)
-
-        servers_for_host: List[ServerBlock] = [s for s in config.servers if virtual_host in s.server_names]
+        config_str = ""
+        servers_for_host: List[ServerBlock] = []
+        for _ in range(3):
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                config_str = get_nginx_config_from_container(nginx_proxy_container[0])
+                config = HttpBlock.parse(config_str)
+                servers_for_host = [s for s in config.servers if virtual_host in s.server_names]
+                if len(servers_for_host) == 2:
+                    break
+                time.sleep(0.5)
+            if len(servers_for_host) == 2:
+                break
 
         assert (
             len(servers_for_host) == 2
@@ -577,21 +585,32 @@ def test_proxy_full_redirect_to_https_target_integration(
 
     backend = start_backend(docker_client, test_network, env, backend_type=backend_type, sleep=False)
     try:
-        redirect_server = None
-        for _ in range(25):
-            config_str = get_nginx_config_from_container(nginx_proxy_container[0])
-            config = HttpBlock.parse(config_str)
-            redirect_server = next((s for s in config.servers if source_host in s.server_names), None)
-            if redirect_server is not None:
-                redirect_loc = next((loc for loc in redirect_server.locations if loc.path == "/"), None)
-                if redirect_loc and redirect_loc.return_code == f"301 https://{target_host}$request_uri":
+        config_str = ""
+        target_servers = []
+        source_servers = []
+        for _ in range(3):
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                config_str = get_nginx_config_from_container(nginx_proxy_container[0])
+                config = HttpBlock.parse(config_str)
+                target_servers = [s for s in config.servers if target_host in s.server_names]
+                source_servers = [s for s in config.servers if source_host in s.server_names]
+                redirect_loc = (
+                    next((loc for loc in source_servers[0].locations if loc.path == "/"), None)
+                    if len(source_servers) == 1
+                    else None
+                )
+                if (
+                    any("443" in s.listen for s in target_servers)
+                    and len(source_servers) == 1
+                    and redirect_loc
+                    and redirect_loc.return_code == f"301 https://{target_host}$request_uri"
+                ):
                     break
-            time.sleep(1)
-
-        config_str = get_nginx_config_from_container(nginx_proxy_container[0])
-        config = HttpBlock.parse(config_str)
-        target_servers = [s for s in config.servers if target_host in s.server_names]
-        source_servers = [s for s in config.servers if source_host in s.server_names]
+                time.sleep(0.5)
+            else:
+                continue
+            break
 
         assert any("443" in s.listen for s in target_servers), f"HTTPS target server not found. Config:\n{config_str}"
         assert len(source_servers) == 1, f"Expected one redirect source server. Config:\n{config_str}"
