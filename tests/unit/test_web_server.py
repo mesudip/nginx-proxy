@@ -184,6 +184,45 @@ def test_register_static_sites_adds_default_ssl_domains(web_server):
     assert host.locations["/"].backends[0].path == "vhosts_template/errors"
 
 
+def test_register_static_sites_generates_missing_default_ssl_selfsigned_files(web_server):
+    hostname = "*.static-ssl-test.example.com"
+    certs_dir = web_server.config.get("ssl_certs_dir") or os.path.join(web_server.config["ssl_dir"], "certs")
+    keys_dir = web_server.config.get("ssl_key_dir") or os.path.join(web_server.config["ssl_dir"], "private")
+    cert_path = os.path.join(certs_dir, f"{hostname}.selfsigned.crt")
+    key_path = os.path.join(keys_dir, f"{hostname}.selfsigned.key")
+    os.makedirs(certs_dir, exist_ok=True)
+    os.makedirs(keys_dir, exist_ok=True)
+    for file_path in (cert_path, key_path):
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
+    web_server.config["default_ssl_domains"] = [hostname]
+
+    def set_ssl_file(hosts, update_watch_domains=True):
+        for rendered_host in hosts:
+            rendered_host.ssl_file = f"{rendered_host.hostname}.selfsigned"
+
+    def fake_openssl(command, **kwargs):
+        with open(command[command.index("-out") + 1], "w") as cert_file:
+            cert_file.write("cert")
+        with open(command[command.index("-keyout") + 1], "w") as key_file:
+            key_file.write("key")
+        return MagicMock(returncode=0)
+
+    web_server.ssl_processor.process_ssl_certificates.side_effect = set_ssl_file
+    with (
+        patch("nginx_proxy.WebServer.pre_processors.process_static_sites") as process_static_sites,
+        patch("nginx_proxy.WebServer.subprocess.run", side_effect=fake_openssl) as openssl_run,
+    ):
+        process_static_sites.return_value = ProxyConfigData()
+        web_server._register_static_sites()
+        web_server._do_reload(forced=True)
+
+    openssl_run.assert_called_once()
+    assert os.path.exists(cert_path)
+    assert os.path.exists(key_path)
+
+
 def test_register_static_sites_keeps_scanned_static_site_over_default_ssl_domain(web_server):
     web_server.config["default_ssl_domains"] = ["*.xyz.com"]
 

@@ -496,21 +496,28 @@ class WebServer:
         self._register_static_sites()
 
     def _register_static_sites(self):
+        candidate_config_data = copy.deepcopy(self.config_data)
+        self._add_static_sites_to_config(candidate_config_data)
+        if self._validate_config_data(candidate_config_data):
+            self.config_data = candidate_config_data
+
+    def _add_static_sites_to_config(self, config_data: ProxyConfigData):
         static_hosts = pre_processors.process_static_sites(self.config.get("static_site_root", "/static"))
         for host in static_hosts.host_list():
-            self._register_static_host(host)
+            self._register_static_host(host, config_data)
 
         default_ssl_hosts = pre_processors.process_default_ssl_domains(
             self.config.get("default_ssl_domains", []),
             os.path.join(self.config["vhosts_template_dir"], "errors"),
         )
         for host in default_ssl_hosts.host_list():
-            self._register_static_host(host)
+            self._register_static_host(host, config_data)
 
-    def _register_static_host(self, host: Host):
-        existing_host = self.config_data.getHost(host.hostname, host.port)
+    def _register_static_host(self, host: Host, config_data: ProxyConfigData | None = None):
+        target_config_data = config_data if config_data is not None else self.config_data
+        existing_host = target_config_data.getHost(host.hostname, host.port)
         if existing_host is None:
-            self.config_data.add_host(host)
+            target_config_data.add_host(host)
             return
 
         if "/" in existing_host.locations:
@@ -524,7 +531,7 @@ class WebServer:
             )
             return
 
-        self.config_data.add_host(host)
+        target_config_data.add_host(host)
 
     @staticmethod
     def _location_has_static_site(location) -> bool:

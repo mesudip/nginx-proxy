@@ -3,7 +3,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 from nginx_proxy.DockerEventListener import RescanAndReload
-from nginx_proxy.NginxProxyApp import NginxProxyApp
+from nginx_proxy.NginxProxyApp import NginxProxyApp, _detect_nginx_resolvers
 
 
 @patch("docker.from_env")
@@ -38,6 +38,63 @@ def test_load_config_from_env(mock_docker_client, mock_from_env):
             assert config["swarm_docker_host"] == "tcp://swarm:2375"
             assert config["static_site_root"] == "/static"
             assert config["default_ssl_domains"] == ["*.xyz.com", "*.example.com"]
+
+
+def test_detect_nginx_resolvers_reads_resolv_conf(tmp_path):
+    resolv_conf = tmp_path / "resolv.conf"
+    resolv_conf.write_text(
+        """
+# comment
+search example.com
+nameserver 127.0.0.11
+nameserver 10.0.0.2
+""".lstrip()
+    )
+
+    with patch.dict(os.environ, {}, clear=True):
+        assert _detect_nginx_resolvers(str(resolv_conf)) == ["127.0.0.11", "10.0.0.2"]
+
+
+def test_detect_nginx_resolvers_prefers_env_override(tmp_path):
+    resolv_conf = tmp_path / "resolv.conf"
+    resolv_conf.write_text("nameserver 127.0.0.11\n")
+
+    with patch.dict(os.environ, {"NGINX_RESOLVER": "10.0.0.2, 10.0.0.3"}):
+        assert _detect_nginx_resolvers(str(resolv_conf)) == ["10.0.0.2", "10.0.0.3"]
+
+
+def test_certapi_url_rejects_unsupported_scheme():
+    with patch.dict(os.environ, {"CERTAPI_URL": "ftp://certapi.example.com"}):
+        with pytest.raises(SystemExit):
+            NginxProxyApp()
+
+
+@pytest.mark.parametrize(
+    "certapi_url,expected_scheme,expected_port",
+    [
+        ("http://certapi.example.com", "http", 80),
+        ("https://certapi.example.com", "https", 443),
+        ("http://certapi.example.com:8080", "http", 8080),
+        ("https://certapi.example.com:8443", "https", 8443),
+    ],
+)
+@patch("nginx_proxy.NginxProxyApp.render_nginx_conf")
+@patch("os.path.exists", return_value=False)
+@patch("docker.from_env")
+def test_certapi_url_accepts_http_and_https(
+    mock_from_env,
+    mock_exists,
+    mock_render,
+    certapi_url,
+    expected_scheme,
+    expected_port,
+):
+    with patch.dict(os.environ, {"CERTAPI_URL": certapi_url}):
+        app = NginxProxyApp()
+
+    assert app.config["certapi"]["scheme"] == expected_scheme
+    assert app.config["certapi"]["port"] == expected_port
+    assert app.config["certapi"]["endpoint"] == f"certapi.example.com:{expected_port}"
 
 
 @patch("docker.from_env")

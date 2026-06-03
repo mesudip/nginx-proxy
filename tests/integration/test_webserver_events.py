@@ -25,6 +25,53 @@ pattern = re.compile(r"^http://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:80")
 START_GRACE_SECONDS = 2
 
 
+def test_certapi_unresolvable_hostname_does_not_crash_nginx_startup(
+    docker_client,
+    test_network,
+    swarm_mode,
+):
+    image_name = "mesudip/nginx-proxy:test"
+    container_name = f"nginx-proxy-certapi-unresolved-{swarm_mode}-{uuid.uuid4().hex[:8]}"
+    container = None
+
+    docker_client.images.build(path=".", tag=image_name, rm=True)
+
+    try:
+        container = docker_client.containers.run(
+            image_name,
+            detach=True,
+            volumes={
+                "/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "ro"},
+                "nginx-test-dhparam": {"bind": "/etc/nginx/dhparam", "mode": "rw"},
+                "nginx-test-ssl": {"bind": "/etc/ssl", "mode": "rw"},
+            },
+            network=test_network.name,
+            name=container_name,
+            environment={
+                "CERTAPI_URL": "https://nonresolving-domain",
+                "LETSENCRYPT_API": "https://acme-staging-v02.api.letsencrypt.org/directory",
+                "VHOSTS_TEMPLATE_DIR": "/app/vhosts_template",
+                "CHALLENGE_DIR": "/etc/nginx/acme-challenges",
+                "DOCKER_SWARM": swarm_mode,
+                "BACKEND_START_GRACE_SECONDS": "2",
+            },
+            restart_policy={"Name": "no"},
+        )
+
+        time.sleep(5)
+        container.reload()
+        logs = container.logs(stdout=True, stderr=True).decode("utf-8", errors="replace")
+
+        assert container.status == "running", logs
+        assert "host not found in upstream" not in logs
+    finally:
+        if container:
+            print("=========================== Container Logs Start ===========================")
+            print(container.logs(stdout=True, stderr=True).decode("utf-8", errors="replace"))
+            print("=========================== Container Logs End ===========================")
+            container.remove(force=True)
+
+
 def _http_healthcheck() -> Healthcheck:
     return Healthcheck(
         test="node -e \"require('http').get('http://127.0.0.1:8080', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))\"",
