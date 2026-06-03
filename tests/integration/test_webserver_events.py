@@ -247,14 +247,25 @@ def test_startup_ignores_existing_backend_with_nginx_rejected_virtual_host_confi
 
 
 def test_container_start_grace_delays_config_update(
-    nginx_proxy_container,
     docker_client,
     test_network,
+    docker_host_ip,
+    swarm_mode,
 ):
+    grace_seconds = 10
     virtual_host = f"container.grace-{uuid.uuid4().hex[:6]}.example.com"
-    before_config = get_nginx_config_from_container(nginx_proxy_container[0])
+    proxy_container = None
     backend = None
     try:
+        proxy_container, _, _ = start_nginx_proxy_container(
+            docker_client,
+            test_network,
+            docker_host_ip,
+            swarm_mode,
+            f"nginx-proxy-grace-{swarm_mode}-{uuid.uuid4().hex[:8]}",
+            backend_start_grace_seconds=str(grace_seconds),
+        )
+
         backend = start_backend(
             docker_client,
             test_network,
@@ -262,15 +273,19 @@ def test_container_start_grace_delays_config_update(
             backend_type="container",
             sleep=False,
         )
+        backend_started_at = time.monotonic()
 
-        time.sleep(START_GRACE_SECONDS / 2)
-        within_grace_config = get_nginx_config_from_container(nginx_proxy_container[0])
-        assert within_grace_config == before_config
+        time.sleep(max(0, 5 - (time.monotonic() - backend_started_at)))
+        expect_server_not_present_integration(proxy_container, virtual_host, timeout=1)
 
-        expect_server_up_integration(nginx_proxy_container[0], virtual_host, timeout=20)
-        after_grace_config = get_nginx_config_from_container(nginx_proxy_container[0])
-        assert after_grace_config != before_config
+        time.sleep(max(0, 12 - (time.monotonic() - backend_started_at)))
+        expect_server_up_integration(proxy_container, virtual_host, timeout=3)
     finally:
+        if proxy_container:
+            print("=========================== Container Logs Start ===========================")
+            print(proxy_container.logs().decode("utf-8"))
+            print("=========================== Container Logs End ===========================")
+            proxy_container.remove(force=True)
         if backend:
             stop_backend(backend)
 
