@@ -1,0 +1,70 @@
+##
+## To use this compose file
+##  set nginx label on all the nodes
+## and set certapi label on the node so that
+## the volume data can be reused. 
+##      docker node update your-node --label-add nginx=true
+##      docker node update your-node --label-add certapi=true
+services:
+  proxy:
+    image: mesudip/nginx-proxy:v3
+    environment:
+      DOCKER_SWARM: prefer-local
+      CERTAPI_URL: http://certapi:8080
+      CERTAPI_BATCH_DOMAINS: "true"
+
+    ports:
+      - target: 80
+        published: 80
+        protocol: tcp
+        mode: host
+      - target: 443
+        published: 443
+        protocol: tcp
+        mode: host
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - nginx_data:/etc/nginx
+      - nginx_logs:/var/log/nginx
+    networks:
+      - frontend
+    deploy:
+      mode: global
+      placement:
+        constraints:
+          - node.labels.nginx == true
+      update_config:
+        order: stop-first
+
+  certapi:
+    image: ghcr.io/mesudip/certapi:latest
+    #environment:
+      # CLOUDFLARE_API_TOKEN: "your-token"
+    volumes:
+      - certapi_db:/app/db
+      - acme_challenges:/app/acme-challenges
+    networks:
+      - frontend
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.certapi == true
+      update_config: 
+        order: stop-first
+
+volumes:
+  nginx_data:
+  nginx_logs:
+  certapi_db:
+  acme_challenges:
+
+networks:
+  frontend:
+    external: true
+    name: frontend

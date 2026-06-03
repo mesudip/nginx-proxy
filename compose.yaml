@@ -1,0 +1,27 @@
+networks:
+  frontend:
+    attachable: true # or set external if already created.
+
+services:
+  proxy:
+    image: mesudip/nginx-proxy:v3
+    environment:
+      DOCKER_SWARM: ignore
+      #CLOUDFLARE_API_KEY_org1: some-api-key
+      #CLOUDFLARE_API_KEY_org2: some-api-key
+      #DEFAULT_SSL_DOMAINS: "*.xyz.com,*.dev.xyz.com,*.another-domain.com"
+    ports:
+      - 80:80
+      - 443:443
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - nginx_data:/etc/nginx
+      - nginx_logs:/var/log/nginx
+
+volumes:
+  nginx_data:
+  nginx_logs:
