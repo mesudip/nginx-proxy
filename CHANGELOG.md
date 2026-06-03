@@ -1,5 +1,72 @@
 # Changelog
 
+## v3.2.0
+
+### Features
+- **Static Site Hosting**: Added support for serving static sites directly from `nginx-proxy`.
+    - Added `STATIC_SITE_ROOT` for scanning domain directories.
+    - Serves files from `$STATIC_SITE_ROOT/$domain/current`.
+    - Supports release-style symlink swaps while rejecting symlinks that resolve outside the static root.
+    - Allows container routes on more specific paths to coexist with static site roots.
+- **Built-In Lost Page Domains**: Added `DEFAULT_SSL_DOMAINS` for serving the bundled lost page over HTTPS for configured domains and wildcard domains.
+- **Docker Swarm Prefer-Local Mode**: Added `DOCKER_SWARM=prefer-local`.
+    - Routes to healthy local Swarm task containers first.
+    - Keeps the Swarm service VIP as a backup upstream when local tasks are unavailable.
+- **Backend Startup Handling**: Added `BACKEND_START_GRACE_SECONDS` to delay registration of containers without Docker healthchecks.
+- **Reload Command**: Added a `reload` helper command to rescan Docker state and reload nginx configuration.
+- **Nginx Resolver Configuration**: Added `NGINX_RESOLVER` support for runtime DNS lookups, especially when proxying ACME challenges to `CERTAPI_URL`.
+
+### Fixes
+- **Event Processing**: Reworked Docker event handling around a dispatcher queue to make container, service, network, health, reload, and delayed activation events more consistent.
+- **Swarm Reliability**: Improved local and Swarm backend selection, service update handling, and retry behavior for delayed service events.
+- **Nginx Configuration**:
+    - Improved duplicate and wildcard host handling.
+    - Fixed handling of `=` in injected nginx directives.
+    - Added conflict resolution for scalar nginx location directives such as `client_max_body_size` and proxy timeout settings.
+    - Improved per-backend configuration validation.
+- **Static SSL**: Fixed fallback certificate handling for static SSL domains during reloads.
+- **Static Site Safety**: Added validation for static root paths, domain directory names, and symlink targets.
+- **Error Handling**: Improved handling of invalid nginx stderr output.
+- **Redirects**: Fixed full proxy redirect handling.
+
+### CI/CD
+- Upgraded base image versions.
+- Improved GitHub Actions test behavior, including single test runs per SHA.
+- Fixed workflow warnings and timing-sensitive tests.
+
+---
+
+## v3.1.2
+
+### Fixes
+- **Certificate Renewal**: Delegated certificate renewal behavior to `certapi` and improved renewal architecture.
+- **SSL Callbacks**: Fixed SSL renewal callback handling.
+- **Dependencies**: Upgraded `certapi` to `1.1.9`.
+- **Cleanup**: Removed unused blacklist helper code.
+
+---
+
+## v3.1.1
+
+### Fixes
+- **Wildcard Certificates**: Avoided preferring stale wildcard certificates.
+
+### CI/CD
+- Added package publishing setup for Python package releases.
+
+---
+
+## v3.1.0
+
+### Features
+- **HTTPS Redirects**: Added HTTPS auto-redirect support.
+- **HTTP and HTTPS Serving**: Added support for serving HTTP and HTTPS for the same host configuration.
+
+### Fixes
+- **Regression Tests**: Fixed failing regression tests.
+
+---
+
 ## v3.0.1
 
 ### Fixes
