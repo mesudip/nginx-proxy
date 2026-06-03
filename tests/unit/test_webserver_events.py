@@ -36,6 +36,7 @@ def get_test_config(enable_ipv6: bool = False) -> NginxProxyAppConfig:
         enable_ipv6=enable_ipv6,
         docker_swarm="ignore",
         swarm_docker_host=None,
+        default_ssl_domains=[],
     )
 
 
@@ -119,15 +120,16 @@ def expect_server_not_present(nginx: DummyNginx, server_name: str):
         ), f"Server for {server_name} should not be present. All servers:\n{all_servers_str}"
 
 
-def expect_servers(nginx: DummyNginx, server_name: str, count: int, timeout: float = 2):
-    deadline = time.monotonic() + timeout
+def expect_servers(nginx: DummyNginx, server_name: str, count: int, attempts: int = 3, interval: float = 5):
     servers = []
-    while time.monotonic() < deadline:
-        config = HttpBlock.parse(nginx.current_config)
-        servers = [s for s in config.servers if server_name in s.server_names]
-        if len(servers) == count:
-            return servers
-        time.sleep(0.05)
+    for _ in range(attempts):
+        deadline = time.monotonic() + interval
+        while time.monotonic() < deadline:
+            config = HttpBlock.parse(nginx.current_config)
+            servers = [s for s in config.servers if server_name in s.server_names]
+            if len(servers) == count:
+                return servers
+            time.sleep(0.05)
 
     config = HttpBlock.parse(nginx.current_config)
     all_servers_str = "\n".join([str(s) for s in config.servers])

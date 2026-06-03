@@ -87,11 +87,14 @@ Control the default behavior of `nginx-proxy`:
 | `ENABLE_IPV6` | `false` | Enable IPv6 support on nginx. |
 | `DOCKER_SWARM` | `ignore` | Controls Docker Swarm discovery. Supported values are `ignore`, `exclude`, `enable`, `prefer-local`, and `strict`; see [Docker Swarm Support](#docker-swarm-support-preview). |
 | `SWARM_DOCKER_HOST` | - | URL of the Swarm manager socket (e.g., `tcp://manager:2375`). |
-| `CERTAPI_URL` | - | External Certificate API URL. |
+| `CERTAPI_URL` | - | External Certificate API URL. Must start with `http://` or `https://`. |
 | `CERTAPI_BATCH_DOMAINS` | `true` | When using `CERTAPI_URL`, request safe domain batching (`batch_domains=true`) to avoid recursive domain-order errors. |
+| `NGINX_RESOLVER` | `/etc/resolv.conf` nameservers | Resolver used by nginx for runtime DNS lookups when proxying ACME challenges to `CERTAPI_URL`. When no resolver is detected or configured, nginx renders the literal `CERTAPI_URL` in `proxy_pass` so startup fails visibly if that host cannot be resolved. Set this explicitly if automatic resolver detection is not correct for your network mode. |
 | `CHALLENGE_DIR` | `/etc/nginx/challenges/` | Base directory for acme challenge store, when requesting certificates with acme. `.well-known/acme-challenge` folder lives inside this.|
 | `CLOUDFLARE_API_KEY_KEY*` | - | Cloudflare api keys to issue DNS certificates.|
 | `BACKEND_START_GRACE_SECONDS` | `10` | Delay registering containers without a Docker healthcheck so crashing backends dont' result reload|
+| `STATIC_SITE_ROOT` | `/static` | Directory scanned for static sites. Each domain is served from `$STATIC_SITE_ROOT/$domain/current`. |
+| `DEFAULT_SSL_DOMAINS` | - | Comma-separated HTTPS domains, including wildcards like `*.example.com`, served by the built-in lost page. |
 
 
 ## Virtual Hosts
@@ -137,6 +140,16 @@ Proxy to external hosts, (not in Docker) using `STATIC_VIRTUAL_HOST`. The contai
 Format: `STATIC_VIRTUAL_HOST=domain.com->http://192.168.0.1:8080`.
 
 **Note** Be aware that if domain as target, nginx will crash if DNS resolution fails.
+
+### Static Sites
+Serve static files directly from `nginx-proxy` by placing domain directories under `STATIC_SITE_ROOT`. `STATIC_SITE_ROOT` defaults to `/static`.
+
+Files are served from `$STATIC_SITE_ROOT/$domain/current`. For example, `/static/example.com/current` hosts `https://example.com`.
+`STATIC_SITE_ROOT` may contain only letters, numbers, `/`, `.`, `_`, and `-`; paths with spaces or other special characters are rejected and all static sites are ignored.
+
+`current` can be a symlink to an active release directory inside `STATIC_SITE_ROOT`, which allows versioned deploys by switching the symlink and issuing a reload/HUP. Symlinks that resolve outside `STATIC_SITE_ROOT` are ignored. Static site locations also render `disable_symlinks on from=$document_root;` so symlinks inside the served document root cannot expose files outside the site. Static site directories are scanned only during a full reload. Invalid domain directory names are ignored with a warning.
+
+Static sites are mounted at `/`. Container-backed proxy locations can still be configured on more specific paths such as `/api` or `/admin`. If a container configures `/` for the same domain, that container route overrides the static site root and `nginx-proxy` logs a warning.
 
 ## Docker Swarm Support [Preview]
 
@@ -209,6 +222,15 @@ docker run -d \
     ...
     mesudip/nginx-proxy
 ```
+
+### Built-In Lost Page Domains
+Set `DEFAULT_SSL_DOMAINS` to serve the bundled lost page from `vhosts_template/errors/index.html` for HTTPS domains that are not backed by a container.
+
+```bash
+-e DEFAULT_SSL_DOMAINS="*.example.com,*.example.net"
+```
+
+These domains are rendered as normal hosted HTTPS sites, not as nginx default servers. If a container later configures the same domain and `/` route, the container route overrides the built-in lost page.
 
 ### Custom Certificates
 Mount your own certificates:

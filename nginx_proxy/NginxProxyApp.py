@@ -22,6 +22,7 @@ class CertApiConfig(TypedDict):
     host: str | None
     scheme: str
     port: int
+    endpoint: str
 
 
 class NginxProxyAppConfig(TypedDict):
@@ -43,10 +44,35 @@ class NginxProxyAppConfig(TypedDict):
     docker_swarm: str
     swarm_docker_host: str | None
     backend_start_grace_seconds: float
+    static_site_root: str
+    default_ssl_domains: list[str]
+    nginx_resolvers: list[str]
 
 
 def _strip_end(s: str, char="/") -> str:
     return s[:-1] if s.endswith(char) else s
+
+
+def _split_resolver_override(value: str) -> list[str]:
+    return [resolver for resolver in re.split(r"[\s,]+", value.strip()) if resolver]
+
+
+def _detect_nginx_resolvers(resolv_conf_path: str = "/etc/resolv.conf") -> list[str]:
+    override = os.getenv("NGINX_RESOLVER", "").strip()
+    if override:
+        return _split_resolver_override(override)
+
+    resolvers = []
+    try:
+        with open(resolv_conf_path) as resolv_conf:
+            for line in resolv_conf:
+                parts = line.strip().split()
+                if len(parts) >= 2 and parts[0] == "nameserver":
+                    resolvers.append(parts[1])
+    except OSError as e:
+        print(f"[WARN] Could not read {resolv_conf_path} for nginx resolver detection: {e}", file=sys.stderr)
+
+    return resolvers
 
 
 class NginxProxyApp:
@@ -69,11 +95,24 @@ class NginxProxyApp:
 
         if certapi_url:
             parsed = urlparse(certapi_url)
+            if parsed.scheme not in ("http", "https"):
+                print("[ERROR] CERTAPI_URL must start with http:// or https://", file=sys.stderr)
+                sys.exit(1)
+            if not parsed.hostname:
+                print("[ERROR] CERTAPI_URL must include a hostname", file=sys.stderr)
+                sys.exit(1)
             port = parsed.port
             if port is None:
                 port = 443 if parsed.scheme == "https" else 80
 
-            certapi = {"url": certapi_url, "host": parsed.hostname, "scheme": parsed.scheme, "port": port}
+            endpoint_host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+            certapi = {
+                "url": certapi_url,
+                "host": parsed.hostname,
+                "scheme": parsed.scheme,
+                "port": port,
+                "endpoint": f"{endpoint_host}:{port}",
+            }
 
         wellknown_path = os.getenv("WELLKNOWN_PATH", "/.well-known/acme-challenge/").strip()
         # Ensure wellknown_path starts with / and ends with /
@@ -85,6 +124,9 @@ class NginxProxyApp:
         ssl_dir = _strip_end(os.getenv("SSL_DIR", "/etc/ssl").strip())
         ssl_certs_dir = os.getenv("SSL_CERTS_DIR", ssl_dir + "/certs").strip()
         ssl_key_dir = os.getenv("SSL_KEY_DIR", ssl_dir + "/private").strip()
+        default_ssl_domains = [
+            domain.strip() for domain in os.getenv("DEFAULT_SSL_DOMAINS", "").split(",") if domain.strip()
+        ]
 
         return NginxProxyAppConfig(
             cert_renew_threshold_days=int(os.getenv("CERT_RENEW_THRESHOLD_DAYS", "30").strip()),
@@ -104,6 +146,9 @@ class NginxProxyApp:
             docker_swarm=os.getenv("DOCKER_SWARM", "ignore").strip().lower(),
             swarm_docker_host=os.getenv("SWARM_DOCKER_HOST", "").strip() or None,
             backend_start_grace_seconds=float(os.getenv("BACKEND_START_GRACE_SECONDS", "10").strip()),
+            static_site_root=_strip_end(os.getenv("STATIC_SITE_ROOT", "").strip() or "/static"),
+            default_ssl_domains=default_ssl_domains,
+            nginx_resolvers=_detect_nginx_resolvers(),
         )
 
     def _setup_nginx_conf(self):

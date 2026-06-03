@@ -70,6 +70,38 @@ def test_listen_for_container_events(web_server, docker_client):
         t.join(timeout=0.1)
 
 
+def test_listen_start_log_includes_swarm_mode(web_server, docker_client):
+    web_server.config = {"docker_swarm": "prefer-local"}
+    docker_client.api.base_url = "http+docker://localhost"
+    docker_client.events.return_value = iter([])
+    listener = DockerEventListener(web_server, docker_client, docker_client)
+
+    with patch("builtins.print") as mock_print:
+        listener._listen(docker_client)
+
+    mock_print.assert_any_call(
+        "Starting Docker event listener loop for client http+docker://localhost with DOCKER_SWARM=prefer-local"
+    )
+
+
+def test_dispatcher_survives_keyboard_interrupt_from_command(web_server, docker_client):
+    listener = DockerEventListener(web_server, docker_client, docker_client)
+    processed_after_interrupt = threading.Event()
+
+    def interrupting_command():
+        raise KeyboardInterrupt("test interrupt")
+
+    listener.start_dispatcher()
+    try:
+        listener.enqueue(interrupting_command)
+        listener.enqueue(processed_after_interrupt.set)
+
+        assert processed_after_interrupt.wait(timeout=2)
+        assert listener.is_dispatcher_running()
+    finally:
+        listener.stop_dispatcher()
+
+
 def test_process_service_event_update(web_server: WebServer, docker_client, swarm_client):
     listener = DockerEventListener(web_server, docker_client, swarm_client)
     service_id = "service1"

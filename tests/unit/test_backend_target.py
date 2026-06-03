@@ -123,6 +123,23 @@ class TestVirtualHostProcessorWithBackendTarget:
         assert len(hosts) == 1
         assert hosts[0].hostname == "int.test"
 
+    def test_process_virtual_hosts_logs_swarm_task_backend_as_container(self, capsys):
+        bt = BackendTarget(
+            id="swarm-task-container-id",
+            name="service.1.task-id",
+            env={"VIRTUAL_HOST": "task.test"},
+            labels={"com.docker.swarm.service.id": "service-id"},
+            network_settings={"int-net": {"NetworkID": "int-net-id", "IPAddress": "10.0.0.99"}},
+            backend_type="container",
+        )
+
+        config_data = process_virtual_hosts(bt, {"int-net-id"})
+
+        assert len(list(config_data.host_list())) == 1
+        output = capsys.readouterr().out
+        assert "Container Id: swarm-task-" in output
+        assert "Service Id:" not in output
+
     def test_process_virtual_hosts_preserves_service_backend_type(self):
         bt = BackendTarget(
             id="service-id",
@@ -139,7 +156,7 @@ class TestVirtualHostProcessorWithBackendTarget:
         backend = hosts[0].locations["/"].backends[0]
         assert backend.type == "service"
 
-    def test_duplicate_injected_directives_are_deduplicated(self):
+    def test_duplicate_injected_directives_choose_largest_body_size_and_warn(self, capsys):
         known_networks = {"shared-net-id"}
 
         backends = [
@@ -171,7 +188,183 @@ class TestVirtualHostProcessorWithBackendTarget:
         time.sleep(1)  # Allow any async processing (if any) to complete
         host = aggregated.getHost("dup.example.com")
         injections = host.locations["/"].extras.get("injected", [])
-        assert injections.count("client_max_body_size 200M") == 1
+        output = capsys.readouterr().out
+        assert "client_max_body_size 400M" in injections
+        assert "client_max_body_size 200M" not in injections
+        assert injections.count("client_max_body_size 400M") == 1
+        assert "proxy_read_timeout 100" in injections
+        assert "key=client_max_body_size" in output
+        assert "existing_backend=dup-one" in output
+        assert "incoming_backend=dup-three" in output
+        assert "chosen_value=400M" in output
+
+    def test_zero_client_max_body_size_wins_as_unlimited(self, capsys):
+        known_networks = {"shared-net-id"}
+        backends = [
+            BackendTarget(
+                id="limited",
+                name="limited",
+                env={"VIRTUAL_HOST": "unlimited.example.com; client_max_body_size 200M"},
+                network_settings={"shared": {"NetworkID": "shared-net-id", "IPAddress": "10.0.0.11"}},
+            ),
+            BackendTarget(
+                id="unlimited",
+                name="unlimited",
+                env={"VIRTUAL_HOST": "unlimited.example.com; client_max_body_size 0"},
+                network_settings={"shared": {"NetworkID": "shared-net-id", "IPAddress": "10.0.0.12"}},
+            ),
+        ]
+
+        aggregated = ProxyConfigData()
+        for backend in backends:
+            config = process_virtual_hosts(backend, known_networks)
+            for host in config.host_list():
+                aggregated.add_host(host)
+
+        host = aggregated.getHost("unlimited.example.com")
+        injections = host.locations["/"].extras.get("injected", [])
+        output = capsys.readouterr().out
+        assert "client_max_body_size 0" in injections
+        assert "client_max_body_size 200M" not in injections
+        assert "key=client_max_body_size" in output
+        assert "chosen_value=0" in output
+
+    def test_same_value_duplicate_injected_directives_dedupe_without_warning(self, capsys):
+        known_networks = {"shared-net-id"}
+        backends = [
+            BackendTarget(
+                id="same-one",
+                name="same-one",
+                env={"VIRTUAL_HOST": "same.example.com; client_max_body_size 200M;"},
+                network_settings={"shared": {"NetworkID": "shared-net-id", "IPAddress": "10.0.0.11"}},
+            ),
+            BackendTarget(
+                id="same-two",
+                name="same-two",
+                env={"VIRTUAL_HOST": "same.example.com; client_max_body_size 200M;"},
+                network_settings={"shared": {"NetworkID": "shared-net-id", "IPAddress": "10.0.0.12"}},
+            ),
+        ]
+
+        aggregated = ProxyConfigData()
+        for backend in backends:
+            config = process_virtual_hosts(backend, known_networks)
+            for host in config.host_list():
+                aggregated.add_host(host)
+
+        host = aggregated.getHost("same.example.com")
+        injections = host.locations["/"].extras.get("injected", [])
+        output = capsys.readouterr().out
+        assert injections == ["client_max_body_size 200M"]
+        assert "Conflicting nginx location directive" not in output
+
+    def test_duplicate_proxy_timeouts_choose_largest_value(self, capsys):
+        known_networks = {"shared-net-id"}
+        backends = [
+            BackendTarget(
+                id="timeout-one",
+                name="timeout-one",
+                env={"VIRTUAL_HOST": "timeout.example.com; proxy_read_timeout 120s; proxy_send_timeout 1m"},
+                network_settings={"shared": {"NetworkID": "shared-net-id", "IPAddress": "10.0.0.11"}},
+            ),
+            BackendTarget(
+                id="timeout-two",
+                name="timeout-two",
+                env={
+                    "VIRTUAL_HOST": (
+                        "timeout.example.com; proxy_read_timeout 300s; "
+                        "proxy_send_timeout 30s; proxy_connect_timeout 1m"
+                    )
+                },
+                network_settings={"shared": {"NetworkID": "shared-net-id", "IPAddress": "10.0.0.12"}},
+            ),
+            BackendTarget(
+                id="timeout-three",
+                name="timeout-three",
+                env={"VIRTUAL_HOST": "timeout.example.com; proxy_read_timeout 3000s; proxy_connect_timeout 2m"},
+                network_settings={"shared": {"NetworkID": "shared-net-id", "IPAddress": "10.0.0.13"}},
+            ),
+        ]
+
+        aggregated = ProxyConfigData()
+        for backend in backends:
+            config = process_virtual_hosts(backend, known_networks)
+            for host in config.host_list():
+                aggregated.add_host(host)
+
+        host = aggregated.getHost("timeout.example.com")
+        injections = host.locations["/"].extras.get("injected", [])
+        output = capsys.readouterr().out
+        assert "proxy_read_timeout 3000s" in injections
+        assert "proxy_read_timeout 120s" not in injections
+        assert "proxy_read_timeout 300s" not in injections
+        assert "proxy_send_timeout 1m" in injections
+        assert "proxy_send_timeout 30s" not in injections
+        assert "proxy_connect_timeout 2m" in injections
+        assert "proxy_connect_timeout 1m" not in injections
+        assert "key=proxy_read_timeout" in output
+        assert "key=proxy_send_timeout" in output
+        assert "key=proxy_connect_timeout" in output
+
+    def test_unknown_duplicate_injected_directives_are_preserved_without_warning(self, capsys):
+        known_networks = {"shared-net-id"}
+        backends = [
+            BackendTarget(
+                id="custom-one",
+                name="custom-one",
+                env={"VIRTUAL_HOST": "custom.example.com; custom_directive first"},
+                network_settings={"shared": {"NetworkID": "shared-net-id", "IPAddress": "10.0.0.11"}},
+            ),
+            BackendTarget(
+                id="custom-two",
+                name="custom-two",
+                env={"VIRTUAL_HOST": "custom.example.com; custom_directive second"},
+                network_settings={"shared": {"NetworkID": "shared-net-id", "IPAddress": "10.0.0.12"}},
+            ),
+        ]
+
+        aggregated = ProxyConfigData()
+        for backend in backends:
+            config = process_virtual_hosts(backend, known_networks)
+            for host in config.host_list():
+                aggregated.add_host(host)
+
+        host = aggregated.getHost("custom.example.com")
+        injections = host.locations["/"].extras.get("injected", [])
+        output = capsys.readouterr().out
+        assert "custom_directive first" in injections
+        assert "custom_directive second" in injections
+        assert "key=custom_directive" not in output
+
+    def test_repeatable_injected_directives_are_preserved(self, capsys):
+        known_networks = {"shared-net-id"}
+        backends = [
+            BackendTarget(
+                id="header-one",
+                name="header-one",
+                env={"VIRTUAL_HOST": "headers.example.com; proxy_set_header X-One one"},
+                network_settings={"shared": {"NetworkID": "shared-net-id", "IPAddress": "10.0.0.11"}},
+            ),
+            BackendTarget(
+                id="header-two",
+                name="header-two",
+                env={"VIRTUAL_HOST": "headers.example.com; proxy_set_header X-Two two"},
+                network_settings={"shared": {"NetworkID": "shared-net-id", "IPAddress": "10.0.0.12"}},
+            ),
+        ]
+
+        aggregated = ProxyConfigData()
+        for backend in backends:
+            config = process_virtual_hosts(backend, known_networks)
+            for host in config.host_list():
+                aggregated.add_host(host)
+
+        host = aggregated.getHost("headers.example.com")
+        injections = host.locations["/"].extras.get("injected", [])
+        output = capsys.readouterr().out
+        assert "proxy_set_header X-One one" in injections
+        assert "proxy_set_header X-Two two" in injections
+        assert "key=proxy_set_header" not in output
 
     def test_process_virtual_hosts_no_virtual_host(self):
         bt = BackendTarget(
@@ -208,6 +401,22 @@ class TestVirtualHostProcessorWithBackendTarget:
 
         config_data = process_virtual_hosts(bt, known_networks)
         assert len(list(config_data.host_list())) == 0
+
+    def test_process_virtual_hosts_logs_service_vip_not_ready_for_blank_service_ip(self, capsys):
+        bt = BackendTarget(
+            id="service-blank-ip-id",
+            name="service-blank-ip-test",
+            env={"VIRTUAL_HOST": "blank-service-ip.test"},
+            network_settings={"my-net": {"NetworkID": "my-net-id", "IPAddress": ""}},
+            backend_type="service",
+        )
+
+        config_data = process_virtual_hosts(bt, {"my-net-id"})
+
+        assert len(list(config_data.host_list())) == 0
+        output = capsys.readouterr().out
+        assert "Service VIP not ready" in output
+        assert "Unreachable Network" not in output
 
     def test_process_virtual_hosts_uses_next_network_when_first_ip_blank(self):
         bt = BackendTarget(
@@ -330,11 +539,11 @@ class TestVirtualHostProcessorWithBackendTarget:
         assert extras["client_max_body_size"] == "2g"
         assert extras["proxy_read_timeout"] == "120"
 
-    def test_parse_host_entry_with_whitespace_before_equals_uses_whitespace_syntax(self):
+    def test_parse_host_entry_with_spaced_equals_extra_syntax(self):
         h, loc, c, extras = _parse_host_entry("example.com; client_max_body_size = 2g; proxy_read_timeout = 120")
         assert h.hostname == "example.com"
-        assert extras["client_max_body_size"] == "= 2g"
-        assert extras["proxy_read_timeout"] == "= 120"
+        assert extras["client_max_body_size"] == "2g"
+        assert extras["proxy_read_timeout"] == "120"
 
     def test_parse_host_entry_preserves_equals_after_whitespace_splitter(self):
         h, loc, c, extras = _parse_host_entry("example.com; proxy_set_header Cookie=session=a=b")
@@ -366,7 +575,7 @@ class TestVirtualHostProcessorWithBackendTarget:
         assert host is not None
         injections_before = host.locations["/"].extras.get("injected", [])
         assert "client_max_body_size 2g" in injections_before
-        assert "client_max_body_size 5m" in injections_before
+        assert "client_max_body_size 5m" not in injections_before
 
         removed, _ = aggregated.remove_backend("bad-backend")
         assert removed

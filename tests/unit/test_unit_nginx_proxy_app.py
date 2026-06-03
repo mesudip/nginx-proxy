@@ -2,8 +2,10 @@ import os
 import pytest
 from unittest.mock import patch, MagicMock
 
+from jinja2 import Template
+
 from nginx_proxy.DockerEventListener import RescanAndReload
-from nginx_proxy.NginxProxyApp import NginxProxyApp
+from nginx_proxy.NginxProxyApp import NginxProxyApp, _detect_nginx_resolvers
 
 
 @patch("docker.from_env")
@@ -21,6 +23,7 @@ def test_load_config_from_env(mock_docker_client, mock_from_env):
             "ENABLE_IPV6": "true",
             "DOCKER_SWARM": "strict",
             "SWARM_DOCKER_HOST": "tcp://swarm:2375",
+            "DEFAULT_SSL_DOMAINS": "*.xyz.com, *.example.com",
         },
     ):
         with patch("sys.exit"):
@@ -35,6 +38,104 @@ def test_load_config_from_env(mock_docker_client, mock_from_env):
             assert config["enable_ipv6"] is True
             assert config["docker_swarm"] == "strict"
             assert config["swarm_docker_host"] == "tcp://swarm:2375"
+            assert config["static_site_root"] == "/static"
+            assert config["default_ssl_domains"] == ["*.xyz.com", "*.example.com"]
+
+
+def test_detect_nginx_resolvers_reads_resolv_conf(tmp_path):
+    resolv_conf = tmp_path / "resolv.conf"
+    resolv_conf.write_text(
+        """
+# comment
+search example.com
+nameserver 127.0.0.11
+nameserver 10.0.0.2
+""".lstrip()
+    )
+
+    with patch.dict(os.environ, {}, clear=True):
+        assert _detect_nginx_resolvers(str(resolv_conf)) == ["127.0.0.11", "10.0.0.2"]
+
+
+def test_detect_nginx_resolvers_prefers_env_override(tmp_path):
+    resolv_conf = tmp_path / "resolv.conf"
+    resolv_conf.write_text("nameserver 127.0.0.11\n")
+
+    with patch.dict(os.environ, {"NGINX_RESOLVER": "10.0.0.2, 10.0.0.3"}):
+        assert _detect_nginx_resolvers(str(resolv_conf)) == ["10.0.0.2", "10.0.0.3"]
+
+
+def test_certapi_url_rejects_unsupported_scheme():
+    with patch.dict(os.environ, {"CERTAPI_URL": "ftp://certapi.example.com"}):
+        with pytest.raises(SystemExit):
+            NginxProxyApp()
+
+
+@pytest.mark.parametrize(
+    "certapi_url,expected_scheme,expected_port",
+    [
+        ("http://certapi.example.com", "http", 80),
+        ("https://certapi.example.com", "https", 443),
+        ("http://certapi.example.com:8080", "http", 8080),
+        ("https://certapi.example.com:8443", "https", 8443),
+    ],
+)
+@patch("nginx_proxy.NginxProxyApp.render_nginx_conf")
+@patch("os.path.exists", return_value=False)
+@patch("docker.from_env")
+def test_certapi_url_accepts_http_and_https(
+    mock_from_env,
+    mock_exists,
+    mock_render,
+    certapi_url,
+    expected_scheme,
+    expected_port,
+):
+    with patch.dict(os.environ, {"CERTAPI_URL": certapi_url}):
+        app = NginxProxyApp()
+
+    assert app.config["certapi"]["scheme"] == expected_scheme
+    assert app.config["certapi"]["port"] == expected_port
+    assert app.config["certapi"]["endpoint"] == f"certapi.example.com:{expected_port}"
+
+
+def _render_default_server_certapi_location(nginx_resolvers):
+    with open("vhosts_template/default.conf.jinja2") as template_file:
+        return Template(template_file.read()).render(
+            virtual_servers=[],
+            upstreams=[],
+            config={
+                "certapi": {
+                    "url": "https://certapi.example.com:8443",
+                    "host": "certapi.example.com",
+                    "scheme": "https",
+                    "port": 8443,
+                    "endpoint": "certapi.example.com:8443",
+                },
+                "nginx_resolvers": nginx_resolvers,
+                "client_max_body_size": "1m",
+                "default_server": True,
+                "enable_ipv6": False,
+                "wellknown_path": "/.well-known/acme-challenge/",
+                "challenge_dir": "/etc/nginx/challenges/",
+                "vhosts_template_dir": "/app/vhosts_template",
+            },
+        )
+
+
+def test_certapi_challenge_proxy_uses_runtime_resolver_when_configured():
+    rendered = _render_default_server_certapi_location(["127.0.0.11"])
+
+    assert "set $certapi_endpoint certapi.example.com:8443;" in rendered
+    assert "proxy_pass https://$certapi_endpoint;" in rendered
+    assert "proxy_pass https://certapi.example.com:8443;" not in rendered
+
+
+def test_certapi_challenge_proxy_uses_literal_url_without_runtime_resolver():
+    rendered = _render_default_server_certapi_location([])
+
+    assert "set $certapi_endpoint" not in rendered
+    assert "proxy_pass https://certapi.example.com:8443;" in rendered
 
 
 @patch("docker.from_env")

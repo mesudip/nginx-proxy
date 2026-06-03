@@ -1,5 +1,6 @@
 import copy
 import os
+import subprocess
 import sys
 from datetime import datetime, timezone
 from typing import Callable, List, TYPE_CHECKING
@@ -119,17 +120,20 @@ class WebServer:
 
         return hosts + redirect_hosts
 
-    def _do_reload(self, forced=False) -> bool:
-        """
-        Creates a new configuration based on current state and signals nginx to reload.
-        This is called whenever there's change in container or network state.
-        :return:
-        """
-        # print("web_server._do_reload(forced="+str(forced)+")")
-        self.redirect_processor.process_redirection(self.config_data)
+    def _render_config(
+        self,
+        config_data: ProxyConfigData | None = None,
+        update_ssl_watch_domains: bool = True,
+        dry_run: bool = False,
+        dry_run_auth_files: List[str] | None = None,
+    ) -> str:
+        render_config_data = copy.deepcopy(config_data if config_data is not None else self.config_data)
+        render_config = copy.deepcopy(self.config)
+        self.redirect_processor.process_redirection(render_config_data)
+
         hosts: List[Host] = []
         has_default = False
-        for host_data in self.config_data.host_list():
+        for host_data in render_config_data.host_list():
             host = copy.deepcopy(host_data)
             host.is_down = host_data.isempty()
             if "default_server" in host.extras:
@@ -137,24 +141,115 @@ class WebServer:
                     del host.extras["default_server"]
                 else:
                     has_default = True
-            for i, location in enumerate(host.locations.values()):
+            for location in host.locations.values():
                 location.container = list(location.backends)[0]
             hosts.append(host)
 
         upstreams = self.upstream_processor.process(
-            hosts, prefer_local=self.config.get("docker_swarm") == "prefer-local"
+            hosts, prefer_local=render_config.get("docker_swarm") == "prefer-local"
         )
-        self.basic_auth_processor.process_basic_auth(hosts)
-        self.ssl_processor.process_ssl_certificates(hosts)
+        self.basic_auth_processor.process_basic_auth(hosts, dry_run=dry_run, created_files=dry_run_auth_files)
+        self.ssl_processor.process_ssl_certificates(hosts, update_watch_domains=update_ssl_watch_domains)
+        if dry_run:
+            self._ensure_selfsigned_certificate_files(hosts)
         hosts = self._ensure_https_redirects(hosts)
-        self.config["default_server"] = not has_default
+        render_config["default_server"] = not has_default
+        if not dry_run:
+            self.config["default_server"] = render_config["default_server"]
 
-        output = self.template.render(
+        return self.template.render(
             virtual_servers=hosts,
             upstreams=upstreams,
-            config=self.config,
+            config=render_config,
         )
-        response = self.nginx.update_config(output, force=forced)
+
+    def _validate_config_data(self, config_data: ProxyConfigData, backend: BackendTarget | None = None) -> bool:
+        dry_run_auth_files: List[str] = []
+        output = self._render_config(
+            config_data,
+            update_ssl_watch_domains=False,
+            dry_run=True,
+            dry_run_auth_files=dry_run_auth_files,
+        )
+        validation = self.nginx.validate_config(output)
+        if isinstance(validation, tuple):
+            valid, error = validation
+        else:
+            valid, error = bool(validation), None
+
+        if valid:
+            return True
+
+        self._cleanup_dry_run_auth_files(dry_run_auth_files)
+
+        if backend is not None:
+            print(
+                "WARN: Ignoring backend update because generated nginx config failed validation "
+                f"type={backend.type} id={backend.id[:12]} name={backend.name}",
+                file=sys.stderr,
+            )
+        else:
+            print("WARN: Generated nginx config failed validation", file=sys.stderr)
+        return False
+
+    def _cleanup_dry_run_auth_files(self, file_paths: List[str]) -> None:
+        for file_path in file_paths:
+            try:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                folder_path = os.path.dirname(file_path)
+                if os.path.isdir(folder_path) and not os.listdir(folder_path):
+                    os.rmdir(folder_path)
+            except OSError as e:
+                print(f"WARN: Could not clean up dry-run basic auth file {file_path}: {e}", file=sys.stderr)
+
+    def _ensure_selfsigned_certificate_files(self, hosts: List[Host]) -> None:
+        certs_dir = self.config.get("ssl_certs_dir") or os.path.join(self.config["ssl_dir"], "certs")
+        keys_dir = self.config.get("ssl_key_dir") or os.path.join(self.config["ssl_dir"], "private")
+        os.makedirs(certs_dir, exist_ok=True)
+        os.makedirs(keys_dir, exist_ok=True)
+
+        for host in hosts:
+            ssl_file = getattr(host, "ssl_file", None)
+            if not host.secured or not ssl_file or not str(ssl_file).endswith(".selfsigned"):
+                continue
+
+            cert_path = os.path.join(certs_dir, ssl_file + ".crt")
+            key_path = os.path.join(keys_dir, ssl_file + ".key")
+            if os.path.exists(cert_path) and os.path.exists(key_path):
+                continue
+
+            subprocess.run(
+                [
+                    "openssl",
+                    "req",
+                    "-x509",
+                    "-nodes",
+                    "-newkey",
+                    "rsa:2048",
+                    "-days",
+                    "30",
+                    "-subj",
+                    f"/CN={host.hostname}",
+                    "-keyout",
+                    key_path,
+                    "-out",
+                    cert_path,
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+
+    def _do_reload(self, forced=False, validate=True) -> bool:
+        """
+        Creates a new configuration based on current state and signals nginx to reload.
+        This is called whenever there's change in container or network state.
+        :return:
+        """
+        # print("web_server._do_reload(forced="+str(forced)+")")
+        output = self._render_config(self.config_data, update_ssl_watch_domains=True)
+        response = self.nginx.update_config(output, force=forced, validate=validate)
         return response
 
     def learn_yourself(self):
@@ -194,7 +289,7 @@ class WebServer:
             self.networks[network.id] = default_network
             self.networks[default_network] = network.id
 
-    def register_backend(self, backend: BackendTarget):
+    def register_backend(self, backend: BackendTarget, config_data: ProxyConfigData | None = None):
         """
         Find the details about container and register it and return True.
         If it's not configured with desired settings or is not accessible, return False
@@ -209,8 +304,10 @@ class WebServer:
             pre_processors.process_basic_auth(backend, environments, hosts.config_map)
             pre_processors.process_redirection(backend, environments, hosts.config_map)
             hosts.print()
+            target_config_data = config_data if config_data is not None else self.config_data
             for h in hosts.host_list():
-                self.config_data.add_host(h)
+                self._remove_static_root_if_overridden(target_config_data, h)
+                target_config_data.add_host(h)
         return len(hosts) > 0
 
     # removes container from the maintained list.
@@ -218,6 +315,7 @@ class WebServer:
     def remove_backend(self, container_id: str):
         deleted, deleted_domain = self._remove_backend_without_reload(container_id)
         if deleted:
+            self._register_static_sites()
             service_id = deleted.labels.get("com.docker.swarm.service.id")
             has_service_id = isinstance(service_id, str) and bool(service_id)
             is_service = deleted.type == "service" or has_service_id
@@ -234,13 +332,13 @@ class WebServer:
     def _remove_backend_without_reload(self, container_id: str):
         return self.config_data.remove_backend(container_id)
 
-    def reload(self, immediate=False, force=False) -> bool:
+    def reload(self, immediate=False, force=False, validate=True) -> bool:
         """
         Schedules or performs a reload of the Nginx configuration.
         Returns True if a reload was initiated or scheduled.
         """
 
-        return self.throttler.throttle(lambda: self._do_reload(force), immediate=immediate or force)
+        return self.throttler.throttle(lambda: self._do_reload(force, validate=validate), immediate=immediate or force)
 
     def enqueue_reload(self, force=False) -> bool:
         if self._reload_dispatcher is None:
@@ -313,24 +411,29 @@ class WebServer:
             except Exception as e:
                 print(f"Error processing connect for container {container}: {e}", file=sys.stderr)
 
-    def update_backend(self, backend: BackendTarget, replace_existing: bool = False):
+    def update_backend(self, backend: BackendTarget, replace_existing: bool = False, reload: bool = True):
         """
         Rescan the backend to detect changes. And update nginx configuration if necessary.
         :param backend: BackendTarget object
         :return: true if state change affected the nginx configuration else false
         """
         try:
-            existing_backend = self.config_data.has_backend(backend.id)
+            candidate_config_data = copy.deepcopy(self.config_data)
+            existing_backend = candidate_config_data.has_backend(backend.id)
             if existing_backend and backend.type != "service" and not replace_existing:
                 return False
 
             removed = None
             if existing_backend:
-                removed, _ = self._remove_backend_without_reload(backend.id)
+                removed, _ = candidate_config_data.remove_backend(backend.id)
 
-            registered = self.register_backend(backend)
+            registered = self.register_backend(backend, candidate_config_data)
             if registered or removed:
-                self.reload()
+                if not self._validate_config_data(candidate_config_data, backend):
+                    return False
+                self.config_data = candidate_config_data
+                if reload:
+                    self.reload(validate=False)
                 return True
         except requests.exceptions.HTTPError as e:
             pass
@@ -342,8 +445,7 @@ class WebServer:
         Previously this only did containers, but now it's a full rescan for consistency.
         """
         swarm_mode = self.config.get("docker_swarm", "ignore")
-        # Clear previous state to ensure we don't leak dead containers/services
-        self.config_data.clear()
+        backends: List[BackendTarget] = []
 
         # 1. Register local containers (unless in strict swarm mode)
         if swarm_mode != "strict" and self.client is not None:
@@ -358,7 +460,7 @@ class WebServer:
                     if not self._should_register_container_now(container, bypass_start_grace=bypass_start_grace):
                         continue
                     backend = BackendTarget.from_container(container)
-                    self.register_backend(backend)
+                    backends.append(backend)
             except (KeyboardInterrupt, SystemExit):
                 raise
             except Exception as e:
@@ -377,7 +479,7 @@ class WebServer:
                     services = self.swarm_client.services.list()
                     for service in services:
                         backend = BackendTarget.from_service(service)
-                        self.register_backend(backend)
+                        backends.append(backend)
                 elif node_state == "active":
                     # If node is active but not manager, we can't list services on this client.
                     # However, if we have a remote swarm_client, it might be a manager.
@@ -387,6 +489,78 @@ class WebServer:
                 raise
             except Exception as e:
                 print(f"Error scanning services: {e}", file=sys.stderr)
+
+        self.config_data = ProxyConfigData()
+        for backend in backends:
+            self.update_backend(backend, replace_existing=True, reload=False)
+        self._register_static_sites()
+
+    def _register_static_sites(self):
+        candidate_config_data = copy.deepcopy(self.config_data)
+        self._add_static_sites_to_config(candidate_config_data)
+        if self._validate_config_data(candidate_config_data):
+            self.config_data = candidate_config_data
+
+    def _add_static_sites_to_config(self, config_data: ProxyConfigData):
+        static_hosts = pre_processors.process_static_sites(self.config.get("static_site_root", "/static"))
+        for host in static_hosts.host_list():
+            self._register_static_host(host, config_data)
+
+        default_ssl_hosts = pre_processors.process_default_ssl_domains(
+            self.config.get("default_ssl_domains", []),
+            os.path.join(self.config["vhosts_template_dir"], "errors"),
+        )
+        for host in default_ssl_hosts.host_list():
+            self._register_static_host(host, config_data)
+
+    def _register_static_host(self, host: Host, config_data: ProxyConfigData | None = None):
+        target_config_data = config_data if config_data is not None else self.config_data
+        existing_host = target_config_data.getHost(host.hostname, host.port)
+        if existing_host is None:
+            target_config_data.add_host(host)
+            return
+
+        if "/" in existing_host.locations:
+            if self._location_has_static_site(existing_host.locations["/"]):
+                return
+            print(
+                "[static-site] WARNING: Static site root skipped for "
+                f"{host.hostname}:{host.port}. Existing / location overrides "
+                f"{host.locations['/'].backends[0].path}",
+                file=sys.stderr,
+            )
+            return
+
+        target_config_data.add_host(host)
+
+    @staticmethod
+    def _location_has_static_site(location) -> bool:
+        return any(backend.type == "static_site" for backend in location.backends)
+
+    def _remove_static_root_if_overridden(self, config_data: ProxyConfigData, incoming_host: Host) -> None:
+        incoming_root = incoming_host.locations.get("/")
+        if incoming_root is None or self._location_has_static_site(incoming_root):
+            return
+
+        existing_host = config_data.getHost(incoming_host.hostname, incoming_host.port)
+        if existing_host is None:
+            return
+
+        existing_root = existing_host.locations.get("/")
+        if existing_root is None or not self._location_has_static_site(existing_root):
+            return
+
+        static_backends = [backend for backend in existing_root.backends if backend.type == "static_site"]
+        static_paths = ", ".join(backend.path for backend in static_backends)
+        print(
+            "[static-site] WARNING: Container route overrides static site root "
+            f"{incoming_host.hostname}:{incoming_host.port}/ ({static_paths})",
+            file=sys.stderr,
+        )
+        for backend in static_backends:
+            config_data.backends.discard(backend.id)
+            existing_host.container_set.discard(backend.id)
+        del existing_host.locations["/"]
 
     def rescan_services(self):
         """

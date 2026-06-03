@@ -28,10 +28,8 @@ http {
 
     gzip  on;
 
-    {% if certapi %}
-    upstream certapi_upstream {
-        server {{ certapi.host }}:{{ certapi.port }};
-    }
+    {% if certapi and nginx_resolvers %}
+    resolver {{ nginx_resolvers | join(' ') }} valid=30s ipv6=off;
     {% endif %}
 
     # If we receive X-Forwarded-Proto, pass it through; otherwise, pass along the

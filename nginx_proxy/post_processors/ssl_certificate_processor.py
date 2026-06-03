@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Tuple
 
 from certapi.client import RenewalManager
+from certapi.crypto import Key, Certificate
 from nginx.Nginx import Nginx
 from nginx_proxy import WebServer
 from nginx_proxy.Host import Host
@@ -49,8 +50,19 @@ class SslCertificateProcessor:
             return
         self.server.enqueue_reload(force=True)
 
-    def is_certificate_fresh(self, domain: str, threshold_seconds: float | None = None) -> bool:
+    def _find_certificate_for_domain(self, domain: str) -> None | Tuple[str, Key, List[Certificate]]:
+        if hasattr(self.key_store, "find_key_and_cert_covering_domain"):
+            result = self.key_store.find_key_and_cert_covering_domain(domain)
+            if isinstance(result, tuple) and len(result) == 4:
+                matched_domain, _cert_id, key, certs = result
+                return (matched_domain, key, certs)
         result = self.key_store.find_key_and_cert_by_domain(domain)
+        if result is None:
+            return None
+        return (domain, result[1], result[2])
+
+    def is_certificate_fresh(self, domain: str, threshold_seconds: float | None = None) -> bool:
+        result = self._find_certificate_for_domain(domain)
         if result is None:
             return False
 
@@ -60,7 +72,7 @@ class SslCertificateProcessor:
         return (expiry - datetime.now(timezone.utc)).total_seconds() > threshold
 
     def has_certificate(self, domain: str) -> bool:
-        return self.key_store.find_key_and_cert_by_domain(domain) is not None
+        return self._find_certificate_for_domain(domain) is not None
 
     def _prepare_host_for_ssl(self, host: Host):
         """Sets SSL redirect and port if applicable."""
@@ -78,16 +90,22 @@ class SslCertificateProcessor:
         return not self._has_fresh_wildcard_certificate(host.hostname)
 
     def _select_ssl_file(self, host: Host) -> str:
-        if self.has_certificate(host.hostname):
-            return host.hostname
+        if not host.hostname.startswith("*."):
+            wildcard = self.wildcard_domain_name(host.hostname)
+            if wildcard is not None and self.is_certificate_fresh(wildcard):
+                return wildcard
+
+        result = self._find_certificate_for_domain(host.hostname)
+        if result is not None:
+            return result[0]
 
         wildcard = self.wildcard_domain_name(host.hostname)
-        if wildcard is not None and self.is_certificate_fresh(wildcard):
+        if wildcard is not None and self.has_certificate(wildcard):
             return wildcard
 
         return host.hostname + ".selfsigned"
 
-    def process_ssl_certificates(self, hosts: List[Host]):
+    def process_ssl_certificates(self, hosts: List[Host], update_watch_domains: bool = True):
         if not hosts:
             return
 
@@ -99,7 +117,8 @@ class SslCertificateProcessor:
             self._prepare_host_for_ssl(host)
 
         secured_domains = sorted({host.hostname for host in secured_hosts})
-        self.renewal_manager.update_watch_domains(secured_domains)
+        if update_watch_domains:
+            self.renewal_manager.update_watch_domains(secured_domains)
 
         for host in secured_hosts:
             host.ssl_file = self._select_ssl_file(host)

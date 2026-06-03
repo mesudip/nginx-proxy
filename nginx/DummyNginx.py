@@ -34,6 +34,9 @@ class DummyNginx:
         """
         return True
 
+    def validate_config(self, config_str):
+        return True, None
+
     def verify_domain(self, domain):
         return False
 
@@ -52,7 +55,7 @@ class DummyNginx:
         self.current_config = config_str
         return True
 
-    def update_config(self, config_str, force=False) -> bool:
+    def update_config(self, config_str, force=False, validate=True) -> bool:
         """
         Change the nginx configuration.
         :param config_str: string containing configuration to be written into config file

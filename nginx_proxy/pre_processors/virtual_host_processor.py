@@ -37,9 +37,6 @@ def _validate_external_host(host: Host):
 
 
 def _backend_log_identity(backend: BackendTarget) -> str:
-    service_id = backend.labels.get("com.docker.swarm.service.id")
-    if isinstance(service_id, str) and service_id:
-        return "Service Id: " + service_id[:12]
     if backend.type == "service":
         return "Service Id: " + backend.id[:12]
     return f"{backend.type:>9}".title() + " Id: " + backend.id[:12]
@@ -49,10 +46,13 @@ def _parse_extra_directive(raw_directive: str):
     directive = raw_directive.strip()
     if not directive:
         return None, None
+    assignment_match = re.fullmatch(r"([^\s=]+)\s*=\s*(.+)", directive)
+    if assignment_match is not None:
+        return assignment_match.group(1), assignment_match.group(2).strip()
     equal_index = directive.find("=")
     whitespace_match = re.search(r"\s", directive)
     if whitespace_match is not None and (equal_index == -1 or whitespace_match.start() < equal_index):
-        key, value = re.split(r"\s+", directive, 1)
+        key, value = re.split(r"\s+", directive, maxsplit=1)
         key = key.strip()
         value = value.strip()
         return (key, value if value else None) if key else (None, None)
@@ -114,8 +114,9 @@ def process_virtual_hosts(backend: BackendTarget, known_networks: set) -> ProxyC
             sep="\t",
         )
     except UnreachableNetwork as e:
+        log_label = "Service VIP not ready" if e.vip_not_ready else "Unreachable Network"
         print(
-            "Unreachable Network   ",
+            f"{log_label:<22}",
             _backend_log_identity(backend),
             backend.name,
             "networks: " + ", ".join(list(e.network_names)),
@@ -205,7 +206,12 @@ def host_generator(backend: BackendTarget, known_networks: set = {}):
 
     if not found_ip:
         # If checking against known networks failed or no common network
-        raise UnreachableNetwork(target_base.networks)
+        has_known_network = any(network in known_networks for network in target_base.networks)
+        raise UnreachableNetwork(
+            target_base.networks,
+            backend_type=backend.type,
+            vip_not_ready=backend.type == "service" and has_known_network,
+        )
 
     for host_config in static_hosts:
         host, location, container_data, extras = _parse_host_entry(host_config)

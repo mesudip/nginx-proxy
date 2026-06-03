@@ -3,12 +3,11 @@ import docker
 import time
 import re
 import uuid
-import requests
 from typing import List
 
 from docker.types import Healthcheck
 from nginx.NginxConf import HttpBlock, NginxConfig, ServerBlock
-from tests.helpers.docker_utils import start_backend, stop_backend
+from tests.helpers.docker_utils import start_backend, start_nginx_proxy_container, stop_backend
 from tests.helpers import (
     get_nginx_config_from_container,
     expect_server_down_integration,
@@ -24,6 +23,54 @@ pytestmark = pytest.mark.swarm_mode("enable")
 # Example: http://172.18.0.2:80
 pattern = re.compile(r"^http://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:80")
 START_GRACE_SECONDS = 2
+
+
+def test_certapi_unresolvable_hostname_does_not_crash_nginx_startup(
+    docker_client,
+    test_network,
+    swarm_mode,
+):
+    image_name = "mesudip/nginx-proxy:test"
+    container_name = f"nginx-proxy-certapi-unresolved-{swarm_mode}-{uuid.uuid4().hex[:8]}"
+    container = None
+
+    docker_client.images.build(path=".", tag=image_name, rm=True)
+
+    try:
+        container = docker_client.containers.run(
+            image_name,
+            detach=True,
+            volumes={
+                "/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "ro"},
+                "nginx-test-dhparam": {"bind": "/etc/nginx/dhparam", "mode": "rw"},
+                "nginx-test-ssl": {"bind": "/etc/ssl", "mode": "rw"},
+            },
+            network=test_network.name,
+            name=container_name,
+            environment={
+                "CERTAPI_URL": "https://nonresolving-domain",
+                "LETSENCRYPT_API": "https://acme-staging-v02.api.letsencrypt.org/directory",
+                "VHOSTS_TEMPLATE_DIR": "/app/vhosts_template",
+                "CHALLENGE_DIR": "/etc/nginx/acme-challenges",
+                "DOCKER_SWARM": swarm_mode,
+                "BACKEND_START_GRACE_SECONDS": "2",
+            },
+            restart_policy={"Name": "no"},
+        )
+
+        time.sleep(10)
+        container.reload()
+        logs = container.logs(stdout=True, stderr=True).decode("utf-8", errors="replace")
+
+        assert container.status == "running", logs
+        assert "host not found in upstream" not in logs
+        assert "Nginx is alive" in logs
+    finally:
+        if container:
+            print("=========================== Container Logs Start ===========================")
+            print(container.logs(stdout=True, stderr=True).decode("utf-8", errors="replace"))
+            print("=========================== Container Logs End ===========================")
+            container.remove(force=True)
 
 
 def _http_healthcheck() -> Healthcheck:
@@ -109,15 +156,164 @@ def test_webserver_add_container_integration(
             stop_backend(backend)
 
 
-def test_container_start_grace_delays_config_update(
+def test_new_basic_auth_backend_is_accepted_after_candidate_validation(
     nginx_proxy_container,
     docker_client,
     test_network,
 ):
-    virtual_host = f"container.grace-{uuid.uuid4().hex[:6]}.example.com"
-    before_config = get_nginx_config_from_container(nginx_proxy_container[0])
+    virtual_host = f"basic-auth-{uuid.uuid4().hex[:6]}.example.com"
     backend = None
     try:
+        backend = start_backend(
+            docker_client,
+            test_network,
+            {
+                "VIRTUAL_HOST": virtual_host,
+                "PROXY_BASIC_AUTH": "testuser:testpassword",
+            },
+            sleep=False,
+        )
+
+        expect_server_up_integration(nginx_proxy_container[0], virtual_host, timeout=20)
+        result, output = nginx_proxy_container[0].exec_run(f"test -s /etc/nginx/basic_auth/{virtual_host}/_")
+        assert result == 0, output.decode("utf-8")
+    finally:
+        if backend:
+            stop_backend(backend)
+
+
+@pytest.mark.parametrize("backend_type", ["container", "service"])
+def test_invalid_backend_config_is_ignored_and_does_not_poison_future_updates_integration(
+    nginx_proxy_container,
+    docker_client,
+    test_network,
+    backend_type,
+):
+    good_host_1 = f"{backend_type}.valid-before-{uuid.uuid4().hex[:6]}.example.com"
+    bad_host = f"{backend_type}.invalid-{uuid.uuid4().hex[:6]}.example.com"
+    good_host_2 = f"{backend_type}.valid-after-{uuid.uuid4().hex[:6]}.example.com"
+
+    good_backend_1 = None
+    bad_backend = None
+    good_backend_2 = None
+    try:
+        good_backend_1 = start_backend(
+            docker_client,
+            test_network,
+            {"VIRTUAL_HOST": good_host_1},
+            backend_type=backend_type,
+            sleep=False,
+        )
+        expect_server_up_integration(nginx_proxy_container[0], good_host_1, timeout=20)
+
+        bad_backend = start_backend(
+            docker_client,
+            test_network,
+            {"VIRTUAL_HOST": f"{bad_host}; invalid_nginx_directive value"},
+            backend_type=backend_type,
+            sleep=False,
+        )
+        expect_server_not_present_integration(nginx_proxy_container[0], bad_host, timeout=15)
+        expect_server_up_integration(nginx_proxy_container[0], good_host_1, timeout=5)
+
+        good_backend_2 = start_backend(
+            docker_client,
+            test_network,
+            {"VIRTUAL_HOST": good_host_2},
+            backend_type=backend_type,
+            sleep=False,
+        )
+        expect_server_up_integration(nginx_proxy_container[0], good_host_2, timeout=20)
+        expect_server_up_integration(nginx_proxy_container[0], good_host_1, timeout=5)
+        expect_server_not_present_integration(nginx_proxy_container[0], bad_host, timeout=5)
+
+        result, output = nginx_proxy_container[0].exec_run("nginx -t")
+        assert result == 0, output.decode("utf-8")
+    finally:
+        for backend in (good_backend_1, bad_backend, good_backend_2):
+            if backend:
+                stop_backend(backend)
+
+
+def test_startup_ignores_existing_backend_with_nginx_rejected_virtual_host_config_integration(
+    docker_client,
+    test_network,
+    docker_host_ip,
+    swarm_mode,
+):
+    good_host = f"startup-valid-{uuid.uuid4().hex[:6]}.example.com"
+    bad_host = f"startup-invalid-{uuid.uuid4().hex[:6]}.example.com"
+
+    good_backend = None
+    bad_backend = None
+    proxy_container = None
+    try:
+        good_backend = start_backend(
+            docker_client,
+            test_network,
+            {"VIRTUAL_HOST": good_host, "VIRTUAL_PORT": "8080"},
+            backend_type="container",
+            sleep=False,
+        )
+        bad_backend = start_backend(
+            docker_client,
+            test_network,
+            {
+                "VIRTUAL_HOST": f"https://{bad_host};unknown_key -1;",
+                "VIRTUAL_PORT": "8080",
+            },
+            backend_type="container",
+            sleep=False,
+        )
+
+        proxy_container, _, _ = start_nginx_proxy_container(
+            docker_client,
+            test_network,
+            docker_host_ip,
+            swarm_mode,
+            f"nginx-proxy-startup-invalid-{swarm_mode}-{uuid.uuid4().hex[:8]}",
+            backend_start_grace_seconds="2",
+        )
+
+        expect_server_up_integration(proxy_container, good_host, timeout=20)
+        expect_server_not_present_integration(proxy_container, bad_host, timeout=10)
+
+        result, output = proxy_container.exec_run("nginx -t")
+        assert result == 0, output.decode("utf-8")
+
+        logs = proxy_container.logs().decode("utf-8")
+        assert "unknown_key" in logs
+    finally:
+        if proxy_container:
+            print("=========================== Container Logs Start ===========================")
+            print(proxy_container.logs().decode("utf-8"))
+            print("=========================== Container Logs End ===========================")
+            proxy_container.remove(force=True)
+        for backend in (good_backend, bad_backend):
+            if backend:
+                stop_backend(backend)
+
+
+def test_container_start_grace_delays_config_update(
+    docker_client,
+    test_network,
+    docker_host_ip,
+    swarm_mode,
+):
+    grace_seconds = 10
+    virtual_host = f"container.grace-{uuid.uuid4().hex[:6]}.example.com"
+    proxy_container = None
+    backend = None
+    try:
+        proxy_container, _, _ = start_nginx_proxy_container(
+            docker_client,
+            test_network,
+            docker_host_ip,
+            swarm_mode,
+            f"nginx-proxy-grace-{swarm_mode}-{uuid.uuid4().hex[:8]}",
+            backend_start_grace_seconds=str(grace_seconds),
+        )
+
         backend = start_backend(
             docker_client,
             test_network,
@@ -125,15 +321,19 @@ def test_container_start_grace_delays_config_update(
             backend_type="container",
             sleep=False,
         )
+        backend_started_at = time.monotonic()
 
-        time.sleep(START_GRACE_SECONDS / 2)
-        within_grace_config = get_nginx_config_from_container(nginx_proxy_container[0])
-        assert within_grace_config == before_config
+        time.sleep(max(0, 5 - (time.monotonic() - backend_started_at)))
+        expect_server_not_present_integration(proxy_container, virtual_host, timeout=1)
 
-        expect_server_up_integration(nginx_proxy_container[0], virtual_host, timeout=20)
-        after_grace_config = get_nginx_config_from_container(nginx_proxy_container[0])
-        assert after_grace_config != before_config
+        time.sleep(max(0, 12 - (time.monotonic() - backend_started_at)))
+        expect_server_up_integration(proxy_container, virtual_host, timeout=3)
     finally:
+        if proxy_container:
+            print("=========================== Container Logs Start ===========================")
+            print(proxy_container.logs().decode("utf-8"))
+            print("=========================== Container Logs End ===========================")
+            proxy_container.remove(force=True)
         if backend:
             stop_backend(backend)
 
@@ -327,11 +527,19 @@ def test_webserver_add_container_with_ssl_integration(
 
     backend = start_backend(docker_client, test_network, env, backend_type=backend_type)
     try:
-        time.sleep(5)  # Sleep extra for ssl cert generation
-        config_str = get_nginx_config_from_container(nginx_proxy_container[0])
-        config = HttpBlock.parse(config_str)
-
-        servers_for_host: List[ServerBlock] = [s for s in config.servers if virtual_host in s.server_names]
+        config_str = ""
+        servers_for_host: List[ServerBlock] = []
+        for _ in range(3):
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                config_str = get_nginx_config_from_container(nginx_proxy_container[0])
+                config = HttpBlock.parse(config_str)
+                servers_for_host = [s for s in config.servers if virtual_host in s.server_names]
+                if len(servers_for_host) == 2:
+                    break
+                time.sleep(0.5)
+            if len(servers_for_host) == 2:
+                break
 
         assert (
             len(servers_for_host) == 2
@@ -377,21 +585,32 @@ def test_proxy_full_redirect_to_https_target_integration(
 
     backend = start_backend(docker_client, test_network, env, backend_type=backend_type, sleep=False)
     try:
-        redirect_server = None
-        for _ in range(25):
-            config_str = get_nginx_config_from_container(nginx_proxy_container[0])
-            config = HttpBlock.parse(config_str)
-            redirect_server = next((s for s in config.servers if source_host in s.server_names), None)
-            if redirect_server is not None:
-                redirect_loc = next((loc for loc in redirect_server.locations if loc.path == "/"), None)
-                if redirect_loc and redirect_loc.return_code == f"301 https://{target_host}$request_uri":
+        config_str = ""
+        target_servers = []
+        source_servers = []
+        for _ in range(3):
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                config_str = get_nginx_config_from_container(nginx_proxy_container[0])
+                config = HttpBlock.parse(config_str)
+                target_servers = [s for s in config.servers if target_host in s.server_names]
+                source_servers = [s for s in config.servers if source_host in s.server_names]
+                redirect_loc = (
+                    next((loc for loc in source_servers[0].locations if loc.path == "/"), None)
+                    if len(source_servers) == 1
+                    else None
+                )
+                if (
+                    any("443" in s.listen for s in target_servers)
+                    and len(source_servers) == 1
+                    and redirect_loc
+                    and redirect_loc.return_code == f"301 https://{target_host}$request_uri"
+                ):
                     break
-            time.sleep(1)
-
-        config_str = get_nginx_config_from_container(nginx_proxy_container[0])
-        config = HttpBlock.parse(config_str)
-        target_servers = [s for s in config.servers if target_host in s.server_names]
-        source_servers = [s for s in config.servers if source_host in s.server_names]
+                time.sleep(0.5)
+            else:
+                continue
+            break
 
         assert any("443" in s.listen for s in target_servers), f"HTTPS target server not found. Config:\n{config_str}"
         assert len(source_servers) == 1, f"Expected one redirect source server. Config:\n{config_str}"

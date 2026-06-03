@@ -1,9 +1,11 @@
 import pytest
+import os
 from unittest.mock import MagicMock, patch, mock_open
 from datetime import datetime, timedelta, timezone
 
 from nginx_proxy.BackendTarget import BackendTarget
 from nginx_proxy.DockerEventListener import Reload
+from nginx_proxy.Host import Host
 from nginx_proxy.ProxyConfigData import ProxyConfigData
 from nginx_proxy.WebServer import WebServer
 
@@ -119,6 +121,175 @@ def _backend_target(backend_id, hostname, address, port=80, backend_type="contai
     )
 
 
+def _static_site_config(hostname="example.com", path="/static/example.com/current"):
+    config_data = ProxyConfigData()
+    host = Host(hostname, 443, scheme={"https"})
+    host.add_container(
+        "/",
+        BackendTarget(
+            id=f"static-site:{hostname}",
+            name=hostname,
+            path=path,
+            backend_type="static_site",
+        ),
+    )
+    config_data.add_host(host)
+    return config_data
+
+
+def _secured_config(hostname, password):
+    config_data = ProxyConfigData()
+    host = Host(hostname, 80)
+    host.add_container(
+        "/",
+        BackendTarget(id=f"backend-{hostname}", address="172.18.0.2", port=80, path="", backend_type="container"),
+    )
+    host.update_extras_content("security", {"user": password})
+    config_data.add_host(host)
+    return config_data
+
+
+def test_register_static_sites_merges_root_with_existing_path_proxy(web_server):
+    hostname = "mixed.example.com"
+    existing_host = Host(hostname, 443, scheme={"https"})
+    existing_host.add_container(
+        "/api",
+        BackendTarget(id="api", address="172.18.0.2", port=8080, path="", backend_type="container"),
+    )
+    web_server.config_data = ProxyConfigData()
+    web_server.config_data.add_host(existing_host)
+
+    with patch("nginx_proxy.WebServer.pre_processors.process_static_sites") as process_static_sites:
+        process_static_sites.return_value = _static_site_config(hostname)
+        web_server._register_static_sites()
+
+    host = web_server.config_data.getHost(hostname, 443)
+    assert "/api" in host.locations
+    assert "/" in host.locations
+    assert host.locations["/"].backends[0].type == "static_site"
+
+
+def test_register_static_sites_adds_default_ssl_domains(web_server):
+    web_server.config["default_ssl_domains"] = ["*.xyz.com"]
+
+    with patch("nginx_proxy.WebServer.pre_processors.process_static_sites") as process_static_sites:
+        process_static_sites.return_value = ProxyConfigData()
+        web_server._register_static_sites()
+
+    host = web_server.config_data.getHost("*.xyz.com", 443)
+    assert host is not None
+    assert host.secured is True
+    assert "default_server" not in host.extras
+    assert host.locations["/"].backends[0].type == "static_site"
+    assert host.locations["/"].backends[0].path == "vhosts_template/errors"
+
+
+def test_register_static_sites_generates_missing_default_ssl_selfsigned_files(web_server):
+    hostname = "*.static-ssl-test.example.com"
+    certs_dir = web_server.config.get("ssl_certs_dir") or os.path.join(web_server.config["ssl_dir"], "certs")
+    keys_dir = web_server.config.get("ssl_key_dir") or os.path.join(web_server.config["ssl_dir"], "private")
+    cert_path = os.path.join(certs_dir, f"{hostname}.selfsigned.crt")
+    key_path = os.path.join(keys_dir, f"{hostname}.selfsigned.key")
+    os.makedirs(certs_dir, exist_ok=True)
+    os.makedirs(keys_dir, exist_ok=True)
+    for file_path in (cert_path, key_path):
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
+    web_server.config["default_ssl_domains"] = [hostname]
+
+    def set_ssl_file(hosts, update_watch_domains=True):
+        for rendered_host in hosts:
+            rendered_host.ssl_file = f"{rendered_host.hostname}.selfsigned"
+
+    def fake_openssl(command, **kwargs):
+        with open(command[command.index("-out") + 1], "w") as cert_file:
+            cert_file.write("cert")
+        with open(command[command.index("-keyout") + 1], "w") as key_file:
+            key_file.write("key")
+        return MagicMock(returncode=0)
+
+    web_server.ssl_processor.process_ssl_certificates.side_effect = set_ssl_file
+    with (
+        patch("nginx_proxy.WebServer.pre_processors.process_static_sites") as process_static_sites,
+        patch("nginx_proxy.WebServer.subprocess.run", side_effect=fake_openssl) as openssl_run,
+    ):
+        process_static_sites.return_value = ProxyConfigData()
+        web_server._register_static_sites()
+        web_server._do_reload(forced=True)
+
+    openssl_run.assert_called_once()
+    assert os.path.exists(cert_path)
+    assert os.path.exists(key_path)
+
+
+def test_register_static_sites_keeps_scanned_static_site_over_default_ssl_domain(web_server):
+    web_server.config["default_ssl_domains"] = ["*.xyz.com"]
+
+    with patch("nginx_proxy.WebServer.pre_processors.process_static_sites") as process_static_sites:
+        process_static_sites.return_value = _static_site_config("*.xyz.com", "/static/*.xyz.com/current")
+        web_server._register_static_sites()
+
+    host = web_server.config_data.getHost("*.xyz.com", 443)
+    assert len(host.locations["/"].backends) == 1
+    assert host.locations["/"].backends[0].path == "/static/*.xyz.com/current"
+
+
+def test_register_static_sites_warns_when_existing_root_overrides_static(web_server, capsys):
+    hostname = "root-proxy.example.com"
+    existing_host = Host(hostname, 443, scheme={"https"})
+    existing_host.add_container(
+        "/",
+        BackendTarget(id="root", address="172.18.0.2", port=8080, path="", backend_type="container"),
+    )
+    web_server.config_data = ProxyConfigData()
+    web_server.config_data.add_host(existing_host)
+
+    with patch("nginx_proxy.WebServer.pre_processors.process_static_sites") as process_static_sites:
+        process_static_sites.return_value = _static_site_config(hostname)
+        web_server._register_static_sites()
+
+    host = web_server.config_data.getHost(hostname, 443)
+    assert len(host.locations["/"].backends) == 1
+    assert host.locations["/"].backends[0].type == "container"
+    assert "WARNING: Static site root skipped" in capsys.readouterr().err
+
+
+def test_register_backend_root_warns_and_overrides_existing_static_site(web_server, capsys):
+    hostname = "container-root.example.com"
+    web_server.networks = {"frontend": "frontend-id", "frontend-id": "frontend"}
+    web_server.config_data = _static_site_config(hostname)
+    backend = _backend_target("container1", f"https://{hostname} -> :8080", "172.18.0.2", port=8080)
+
+    registered = web_server.register_backend(backend)
+
+    host = web_server.config_data.getHost(hostname, 443)
+    assert registered is True
+    assert len(host.locations["/"].backends) == 1
+    assert host.locations["/"].backends[0].type == "container"
+    assert "WARNING: Container route overrides static site root" in capsys.readouterr().err
+
+
+def test_remove_backend_restores_overridden_static_site_root(web_server):
+    hostname = "container-root.example.com"
+    web_server.networks = {"frontend": "frontend-id", "frontend-id": "frontend"}
+    web_server.config_data = _static_site_config(hostname)
+    backend = _backend_target("container1", f"https://{hostname} -> :8080", "172.18.0.2", port=8080)
+    web_server.register_backend(backend)
+
+    with (
+        patch("nginx_proxy.WebServer.pre_processors.process_static_sites") as process_static_sites,
+        patch.object(web_server.throttler, "throttle") as mock_throttle,
+    ):
+        process_static_sites.return_value = _static_site_config(hostname)
+        web_server.remove_backend("container1")
+
+    host = web_server.config_data.getHost(hostname, 443)
+    assert len(host.locations["/"].backends) == 1
+    assert host.locations["/"].backends[0].type == "static_site"
+    mock_throttle.assert_called_once()
+
+
 def test_update_backend_ignores_existing_container_backend(web_server):
     web_server.networks = {"frontend": "frontend-id", "frontend-id": "frontend"}
     web_server.config_data = ProxyConfigData()
@@ -192,6 +363,89 @@ def test_update_backend_removes_existing_service_when_updated_config_is_invalid(
     assert web_server.config_data.getHost("old.example.com").isempty()
     assert not web_server.config_data.has_backend("service1")
     mock_throttle.assert_called_once()
+
+
+def test_update_backend_ignores_candidate_when_nginx_validation_fails(web_server):
+    web_server.networks = {"frontend": "frontend-id", "frontend-id": "frontend"}
+    web_server.config_data = ProxyConfigData()
+    existing = _backend_target("service1", "old.example.com", "10.0.0.2", backend_type="service")
+    updated = _backend_target("service1", "new.example.com", "10.0.0.3", backend_type="service")
+    web_server.register_backend(existing)
+    web_server.nginx.validate_config.return_value = (False, "duplicate directive")
+
+    with patch.object(web_server.throttler, "throttle") as mock_throttle:
+        changed = web_server.update_backend(updated)
+
+    assert changed is False
+    assert web_server.config_data.getHost("old.example.com") is not None
+    assert web_server.config_data.getHost("new.example.com") is None
+    assert web_server.config_data.has_backend("service1")
+    mock_throttle.assert_not_called()
+
+
+def test_validation_does_not_overwrite_live_basic_auth_file(web_server):
+    hostname = "auth.example.com"
+    auth_file = web_server.basic_auth_processor.generate_htpasswd_file(hostname, "_", {"user": "old-password"})
+    with open(auth_file) as file:
+        original_auth = file.read()
+    web_server.nginx.validate_config.return_value = (False, "invalid config")
+
+    valid = web_server._validate_config_data(_secured_config(hostname, "new-password"))
+
+    assert valid is False
+    with open(auth_file) as file:
+        assert file.read() == original_auth
+
+
+def test_validation_does_not_mutate_default_server_config(web_server):
+    web_server.config["default_server"] = True
+    candidate = ProxyConfigData()
+    host = Host("candidate-default.example.com", 80)
+    host.add_container(
+        "/",
+        BackendTarget(id="backend-default", address="172.18.0.2", port=80, path="", backend_type="container"),
+    )
+    host.update_extras_content("default_server", "default_server")
+    candidate.add_host(host)
+    web_server.nginx.validate_config.return_value = (False, "invalid config")
+
+    valid = web_server._validate_config_data(candidate)
+
+    assert valid is False
+    assert web_server.config["default_server"] is True
+
+
+def test_validation_prepares_missing_selfsigned_certificate_files(web_server, tmpdir):
+    hostname = "candidate-ssl.example.com"
+    certs_dir = str(tmpdir.mkdir("certs"))
+    keys_dir = str(tmpdir.mkdir("private"))
+    web_server.config["ssl_certs_dir"] = certs_dir
+    web_server.config["ssl_key_dir"] = keys_dir
+    web_server.nginx.validate_config.return_value = (True, None)
+
+    candidate = ProxyConfigData()
+    host = Host(hostname, 443, scheme={"https"})
+    host.add_container(
+        "/",
+        BackendTarget(id="backend-ssl", address="172.18.0.2", port=80, path="", backend_type="container"),
+    )
+    candidate.add_host(host)
+
+    def set_ssl_file(hosts, update_watch_domains=True):
+        for rendered_host in hosts:
+            rendered_host.ssl_file = f"{rendered_host.hostname}.selfsigned"
+
+    web_server.ssl_processor.process_ssl_certificates.side_effect = set_ssl_file
+
+    with patch("nginx_proxy.WebServer.subprocess.run") as mock_run:
+        valid = web_server._validate_config_data(candidate)
+
+    assert valid is True
+    mock_run.assert_called_once()
+    command = mock_run.call_args.args[0]
+    assert command[0] == "openssl"
+    assert command[command.index("-out") + 1] == os.path.join(certs_dir, f"{hostname}.selfsigned.crt")
+    assert command[command.index("-keyout") + 1] == os.path.join(keys_dir, f"{hostname}.selfsigned.key")
 
 
 def test_rescan_and_reload(web_server):
