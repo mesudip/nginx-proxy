@@ -13,6 +13,9 @@ def _parse_injected_directive(raw_directive: str):
     directive = str(raw_directive).strip()
     if not directive:
         return None, None
+    assignment_match = re.fullmatch(r"([^\s=]+)\s*=\s*(.+)", directive)
+    if assignment_match is not None:
+        return assignment_match.group(1), assignment_match.group(2).strip()
     equal_index = directive.find("=")
     whitespace_match = re.search(r"\s", directive)
     if whitespace_match is not None and (equal_index == -1 or whitespace_match.start() < equal_index):
