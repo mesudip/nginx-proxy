@@ -160,7 +160,7 @@ Docker Swarm discovery is controlled by the `DOCKER_SWARM` environment variable 
 
 | `DOCKER_SWARM` value | Local containers | Swarm services | Use case |
 | :--- | :--- | :--- | :--- |
-| `ignore` | Included | Not discovered | Default Docker-only behavior. Swarm task containers are treated like standalone containers if they are visible on the local Docker socket. |
+| `ignore` | Included | Not discovered | **Default** Docker-only behavior. Swarm task containers are treated like standalone containers if they are visible on the local Docker socket. |
 | `exclude` | Included | Not discovered | Docker-only discovery while explicitly ignoring containers that belong to Swarm services. |
 | `enable` | Included | Included | Mixed mode. Use this when `nginx-proxy` should route both standalone containers and Swarm services. |
 | `prefer-local` | Included | Included | Mixed Swarm mode that prefers healthy local task containers and keeps the service VIP as a fallback. |

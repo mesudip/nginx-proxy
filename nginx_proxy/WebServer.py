@@ -69,6 +69,7 @@ class WebServer:
             update_threshold_days=self.config["cert_renew_threshold_days"],
         )
         self.basic_auth_processor = post_processors.BasicAuthProcessor(self.config["conf_dir"] + "/basic_auth")
+        self.proxy_header_processor = post_processors.ProxyHeaderProcessor()
         self.redirect_processor = post_processors.RedirectProcessor()
         self.upstream_processor = post_processors.UpstreamProcessor()
 
@@ -148,6 +149,7 @@ class WebServer:
         upstreams = self.upstream_processor.process(
             hosts, prefer_local=render_config.get("docker_swarm") == "prefer-local"
         )
+        self.proxy_header_processor.process(hosts)
         self.basic_auth_processor.process_basic_auth(hosts, dry_run=dry_run, created_files=dry_run_auth_files)
         self.ssl_processor.process_ssl_certificates(hosts, update_watch_domains=update_ssl_watch_domains)
         if dry_run:
