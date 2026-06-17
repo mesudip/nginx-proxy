@@ -72,3 +72,15 @@ jobs:
           tags: mesudip/nginx-proxy:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Build and push for dev branch
+        if: github.ref == 'refs/heads/dev'
+        uses: docker/build-push-action@v7
+        with:
+          file: Dockerfile
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: mesudip/nginx-proxy:dev
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
