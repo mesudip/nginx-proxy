@@ -25,7 +25,7 @@ class UpstreamProcessor:
                     else:
                         upstream_id = (
                             host.hostname.strip()
-                            + "_"
+                            + "-"
                             + hashlib.sha1(str(backend_key).encode("utf-8")).hexdigest()[:12]
                         )
                         sticky_value = None

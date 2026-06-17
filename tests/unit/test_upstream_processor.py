@@ -170,3 +170,16 @@ def test_backup_service_vip_is_rendered_in_upstream():
     assert "server  10.0.0.5:80 backup;" in rendered
     assert "# container: container1" in rendered
     assert "# service: service1" in rendered
+
+
+def test_upstream_id_uses_hyphen_separator():
+    host = Host("example.com", 80)
+    host.add_container("/", _backend("container1", "172.18.0.2", "container"))
+    host.add_container("/", _backend("container2", "172.18.0.3", "container"))
+
+    upstreams = UpstreamProcessor().process([host])
+
+    assert len(upstreams) == 1
+    upstream_id = upstreams[0]["id"]
+    assert upstream_id.startswith("example.com-")
+    assert "example.com_" not in upstream_id
