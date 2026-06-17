@@ -31,7 +31,7 @@ class ProxyHeaderProcessor:
                     continue
 
                 overridden_headers = self._overridden_proxy_header_names(location.extras.get("injected", []))
-                needs_reinsertion = bool(overridden_headers) or (location.websocket and not location.http)
+                needs_reinsertion = bool(overridden_headers) or location.websocket
                 if not needs_reinsertion:
                     continue
 
