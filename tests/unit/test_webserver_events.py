@@ -536,6 +536,33 @@ def test_webserver_ssl_respects_explicit_http_root(docker_client: DockerTestClie
     assert f"http://{container_ip}:8080" in http_root.proxy_pass
 
 
+def test_application_well_known_route_coexists_with_acme_location(docker_client: DockerTestClient, nginx: DummyNginx):
+    hostname = "well-known.example.com"
+    env = {
+        "VIRTUAL_HOST": f"http://{hostname}/.well-known -> :8080/.well-known",
+        "VIRTUAL_PORT": "8080",
+    }
+
+    container = docker_client.containers.run(
+        "nginx:alpine",
+        name="well_known_container",
+        environment=env,
+        network="frontend",
+    )
+
+    time.sleep(0.2)
+    server = expect_server_up(nginx, hostname)
+    acme_location = next((l for l in server.locations if l.path == "/.well-known/acme-challenge/"), None)
+    app_location = next((l for l in server.locations if l.path == "/.well-known"), None)
+
+    assert acme_location is not None
+    assert acme_location.alias == "./.run_data/acme-challenges/"
+
+    assert app_location is not None
+    container_ip = container.attrs["NetworkSettings"]["Networks"]["frontend"]["IPAddress"]
+    assert f"http://{container_ip}:8080/.well-known" in app_location.proxy_pass
+
+
 def test_webserver_add_two_containers_with_same_virtual_host(docker_client: DockerTestClient, nginx: DummyNginx):
     hostname = "two-containers.example.com"
     env = {"VIRTUAL_HOST": hostname}

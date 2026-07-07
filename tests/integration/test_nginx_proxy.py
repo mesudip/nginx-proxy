@@ -105,9 +105,11 @@ def test_rescan_during_start_grace_registers_running_backend(tmp_path):
     "virtual_host_path, request_path, container_received_path",
     [
         ("", "/", "/"),
+        ("", "/.well-known/apple-app-site-association", "/.well-known/apple-app-site-association"),
         ("/", "", "/"),
         ("/ -> /", "", "/"),
         (" -> /", "", "/"),
+        ("/.well-known -> /.well-known", "/.well-known/apple-app-site-association", "/.well-known/apple-app-site-association"),
         ("/api ", "/api", "/api"),
         ("/api/ ", "/api", "/api/"),  # This is weird case.
         ("/api/ -> /", "/api", "/"),
