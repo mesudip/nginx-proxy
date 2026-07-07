@@ -45,6 +45,21 @@ def test_proxy_set_header_injection_sets_reinsert_flag_and_preserves_other_defau
     assert ("Proxy", '""') in location.reinserted_proxy_set_headers
 
 
+def test_proxy_set_header_injection_accepts_non_list_iterables():
+    host = Host("example.com", 80)
+    backend = _backend("custom-iterable")
+    host.add_container("/", backend)
+    location = host.locations["/"]
+    location.container = backend
+    location.update_extras({"injected": ("proxy_set_header Host custom.example",)})
+
+    ProxyHeaderProcessor().process([host])
+
+    assert location.reinsert_global_config is True
+    assert ("Host", "$http_host") not in location.reinserted_proxy_set_headers
+    assert ("X-Real-IP", "$remote_addr") in location.reinserted_proxy_set_headers
+
+
 def test_websocket_only_location_sets_reinsert_flag():
     host = Host("example.com", 80)
     backend = _backend("ws-only")

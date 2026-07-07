@@ -48,7 +48,7 @@ class ProxyHeaderProcessor:
     def _overridden_proxy_header_names(self, injected: Iterable[str] | str | None) -> set[str]:
         if injected is None:
             return set()
-        directives = injected if isinstance(injected, list) else [injected]
+        directives = [injected] if isinstance(injected, str) else injected
         overridden = set()
         for directive in directives:
             match = self._HEADER_PATTERN.match(str(directive).strip())
