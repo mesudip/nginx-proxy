@@ -197,11 +197,23 @@ Redirect traffic from one domain to another.
 ```
 
 ### Sticky Sessions
-Enable session affinity (sticky sessions) for load balancing.
-Set `NGINX_STICKY_SESSION` on the **backend container**.
-- `true` or `ip_hash` – enable `ip_hash` balancing.
-- `false` – disable stickiness (round-robin).
-- Any other string – injected verbatim (e.g., `hash $cookie_sessionid consistent`).
+Set `NGINX_STICKY_SESSION` on every backend for a route that has multiple backends.
+
+- `true` or `ip_hash` enables simple client-IP affinity:
+  ```bash
+  docker run -e VIRTUAL_HOST=app.example.com -e NGINX_STICKY_SESSION=true ...
+  ```
+- `false` disables affinity and uses round-robin balancing.
+- An advanced value is inserted as an Nginx upstream directive. For application-managed
+  cookies, use `hash $cookie_sessionid consistent`; the application must set the
+  `sessionid` cookie. In Compose, escape the variable as
+  `NGINX_STICKY_SESSION: "hash $$cookie_sessionid consistent"`.
+
+All backends for the route must use the same value. `ip_hash` uses the client address
+seen by Nginx, so clients behind the same NAT or proxy may share an affinity target.
+In `prefer-local` mode, sticky balancing across multiple local tasks omits the
+incompatible service-VIP backup. Docker events restore VIP routing when local tasks
+disappear.
 
 ## SSL Support
 `nginx-proxy` automatically requests and renews Let's Encrypt certificates.

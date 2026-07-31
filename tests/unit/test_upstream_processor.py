@@ -1,3 +1,4 @@
+import pytest
 from jinja2 import Template
 
 from nginx_proxy.BackendTarget import BackendTarget
@@ -5,14 +6,14 @@ from nginx_proxy.Host import Host
 from nginx_proxy.post_processors.upstream_processor import UpstreamProcessor
 
 
-def _backend(id, address, backend_type, port=80, labels=None):
+def _backend(id, address, backend_type, port=80, labels=None, env=None):
     return BackendTarget(
         id=id,
         address=address,
         port=port,
         path="",
         name=id,
-        env={},
+        env=env or {},
         labels=labels or {},
         backend_type=backend_type,
     )
@@ -183,3 +184,81 @@ def test_upstream_id_uses_hyphen_separator():
     upstream_id = upstreams[0]["id"]
     assert upstream_id.startswith("example.com-")
     assert "example.com_" not in upstream_id
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (None, None),
+        ("false", None),
+        (" FALSE ", None),
+        ("true", "ip_hash"),
+        (" TRUE ", "ip_hash"),
+        ("ip_hash", "ip_hash"),
+        ("hash $cookie_sessionid consistent", "hash $cookie_sessionid consistent"),
+    ],
+)
+def test_sticky_session_value(value, expected):
+    env = {} if value is None else {"NGINX_STICKY_SESSION": value}
+
+    assert UpstreamProcessor._sticky_value([_backend("one", "172.18.0.2", "container", env=env)]) == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "expected_directive"),
+    [
+        ("true", "ip_hash;"),
+        ("ip_hash", "ip_hash;"),
+        ("hash $cookie_sessionid consistent", "hash $cookie_sessionid consistent;"),
+        ("false", None),
+    ],
+)
+def test_sticky_session_is_rendered_in_upstream(value, expected_directive):
+    host = Host("sticky.example.com", 80)
+    env = {"NGINX_STICKY_SESSION": value}
+    host.add_container("/", _backend("one", "172.18.0.2", "container", env=env))
+    host.add_container("/", _backend("two", "172.18.0.3", "container", env=env))
+
+    upstreams = UpstreamProcessor().process([host])
+
+    with open("vhosts_template/default.conf.jinja2") as template_file:
+        rendered = Template(template_file.read()).render(
+            virtual_servers=[],
+            upstreams=upstreams,
+            config={"client_max_body_size": "1m", "default_server": False},
+        )
+
+    if expected_directive is None:
+        assert "ip_hash;" not in rendered
+        assert "hash $cookie_sessionid consistent;" not in rendered
+    else:
+        assert expected_directive in rendered
+
+
+def test_prefer_local_sticky_session_uses_local_primaries_without_vip_backup():
+    host = Host("sticky.example.com", 80)
+    env = {"NGINX_STICKY_SESSION": "true"}
+    labels = {"com.docker.swarm.service.id": "service1"}
+    host.add_container("/", _backend("task1", "172.18.0.2", "container", labels=labels, env=env))
+    host.add_container("/", _backend("task2", "172.18.0.3", "container", labels=labels, env=env))
+    host.add_container("/", _backend("service1", "10.0.0.5", "service", env=env))
+
+    upstream = UpstreamProcessor().process([host], prefer_local=True)[0]
+
+    assert upstream["sticky"] == "ip_hash"
+    assert [backend.id for backend in upstream["containers"]] == ["task1", "task2"]
+    assert all(not backend.backup for backend in upstream["containers"])
+
+
+def test_prefer_local_single_primary_keeps_vip_backup_without_sticky_session():
+    host = Host("sticky.example.com", 80)
+    env = {"NGINX_STICKY_SESSION": "true"}
+    labels = {"com.docker.swarm.service.id": "service1"}
+    host.add_container("/", _backend("task1", "172.18.0.2", "container", labels=labels, env=env))
+    host.add_container("/", _backend("service1", "10.0.0.5", "service", env=env))
+
+    upstream = UpstreamProcessor().process([host], prefer_local=True)[0]
+
+    assert upstream["sticky"] is None
+    assert [backend.id for backend in upstream["containers"]] == ["task1", "service1"]
+    assert upstream["containers"][1].backup is True
