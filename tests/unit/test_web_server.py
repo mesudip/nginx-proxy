@@ -632,3 +632,17 @@ def test_rescan_prefer_local_keeps_health_gate_for_swarm_task(web_server):
         web_server.rescan_all_container(bypass_start_grace=True)
 
     mock_register.assert_not_called()
+
+
+def test_do_reload_forces_nginx_reload_only_when_certificate_files_changed(web_server):
+    web_server.ssl_processor.pop_certificate_changes.return_value = False
+    web_server._do_reload(forced=False)
+    assert web_server.nginx.update_config.call_args.kwargs["force"] is False
+
+    web_server.ssl_processor.pop_certificate_changes.return_value = True
+    web_server._do_reload(forced=False)
+    assert web_server.nginx.update_config.call_args.kwargs["force"] is True
+
+    web_server.ssl_processor.pop_certificate_changes.return_value = False
+    web_server._do_reload(forced=True)
+    assert web_server.nginx.update_config.call_args.kwargs["force"] is True

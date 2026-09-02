@@ -173,3 +173,74 @@ def test_start_without_certificates_reports_nothing_to_watch(capsys):
     assert "[SSL Refresh Thread] Looks like there are no ssl certificates, sleeping until there's one" in (
         capsys.readouterr().out
     )
+
+
+def test_renewal_callback_queues_only_one_reload_until_it_has_run(capsys):
+    now = datetime.now(timezone.utc)
+    processor, _ = _build_processor({"api.example.com": now + timedelta(days=40)})
+    hosts = [Host("api.example.com", 443, {"https"})]
+
+    # The renewal worker ticks once a second while a renewal pass is in flight.
+    for _ in range(5):
+        processor.ssl_renewal_callback()
+
+    processor.server.enqueue_reload.assert_called_once_with(force=True)
+    assert capsys.readouterr().out.count("Renewal due, requesting forced nginx reload") == 1
+
+    # The queued reload runs and refreshes the watch set, after which a new renewal may queue again.
+    processor.process_ssl_certificates(hosts)
+    processor.ssl_renewal_callback()
+    assert processor.server.enqueue_reload.call_count == 2
+
+
+def test_renewal_callback_pending_flag_is_released_when_enqueue_fails():
+    now = datetime.now(timezone.utc)
+    processor, _ = _build_processor({"api.example.com": now + timedelta(days=40)})
+    processor.server.enqueue_reload.side_effect = [RuntimeError("queue closed"), True]
+
+    try:
+        processor.ssl_renewal_callback()
+    except RuntimeError:
+        pass
+    processor.ssl_renewal_callback()
+
+    assert processor.server.enqueue_reload.call_count == 2
+
+
+def test_certificate_change_is_flagged_once_when_a_used_file_gets_a_new_expiry(capsys):
+    now = datetime.now(timezone.utc)
+    expiries = {"api.example.com": now + timedelta(days=20), "*.example.org": now + timedelta(days=50)}
+    processor, _ = _build_processor(expiries)
+    hosts = [Host("api.example.com", 443, {"https"}), Host("www.example.org", 443, {"https"})]
+
+    processor.process_ssl_certificates(hosts)
+    assert processor.pop_certificate_changes() is False  # first sight of the files is not a change
+
+    processor.process_ssl_certificates(hosts)
+    assert processor.pop_certificate_changes() is False  # nothing renewed
+
+    expiries["api.example.com"] = now + timedelta(days=89)  # renewal replaced the file on disk
+    processor.process_ssl_certificates(hosts)
+    out = capsys.readouterr().out
+    assert "Certificates renewed on disk, nginx reload required: api.example.com" in out
+    assert processor.pop_certificate_changes() is True
+    assert processor.pop_certificate_changes() is False  # consumed
+
+
+def test_new_or_dry_run_files_do_not_flag_a_certificate_change():
+    now = datetime.now(timezone.utc)
+    expiries = {"api.example.com": now + timedelta(days=60)}
+    processor, _ = _build_processor(expiries)
+    processor.process_ssl_certificates([Host("api.example.com", 443, {"https"})])
+    processor.pop_certificate_changes()
+
+    # A domain appearing for the first time changes the rendered config anyway, so no force needed.
+    expiries["new.example.com"] = now + timedelta(days=60)
+    hosts = [Host("api.example.com", 443, {"https"}), Host("new.example.com", 443, {"https"})]
+    processor.process_ssl_certificates(hosts)
+    assert processor.pop_certificate_changes() is False
+
+    # Dry runs never touch the tracking state.
+    expiries["api.example.com"] = now + timedelta(days=89)
+    processor.process_ssl_certificates(hosts, update_watch_domains=False)
+    assert processor.pop_certificate_changes() is False

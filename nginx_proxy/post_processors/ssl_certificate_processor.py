@@ -1,3 +1,4 @@
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
 
@@ -39,6 +40,14 @@ class SslCertificateProcessor:
         )
         self._status_rows: List[Tuple[str, str, Optional[datetime]]] = []
         self._last_logged_status: Optional[Tuple] = None
+        # The renewal worker may invoke the callback repeatedly (once a second) while a renewal pass is
+        # still in flight on the reload thread. Only one forced reload is queued until that reload has run.
+        self._renewal_reload_lock = threading.Lock()
+        self._renewal_reload_pending = False
+        # Expiry of every certificate file seen in the last pass, used to detect files replaced by a
+        # renewal so that nginx is reloaded even when the rendered configuration text is unchanged.
+        self._known_file_expiry: dict = {}
+        self._certificates_changed = False
 
         if start_ssl_thread:
             self.start()
@@ -54,10 +63,21 @@ class SslCertificateProcessor:
         self._log_next_check()
 
     def ssl_renewal_callback(self):
-        print("[SSL] Renewal callback triggered")
         if self.server is None:
             return
-        self.server.enqueue_reload(force=True)
+        with self._renewal_reload_lock:
+            if self._renewal_reload_pending:
+                return
+            self._renewal_reload_pending = True
+        print("[SSL Refresh Thread] Renewal due, requesting forced nginx reload")
+        try:
+            # Forced on purpose: a renewal replaces certificate file contents, not paths, so the rendered
+            # config is byte-identical and a plain reload would be skipped by the config diff.
+            self.server.enqueue_reload(force=True)
+        except Exception:
+            with self._renewal_reload_lock:
+                self._renewal_reload_pending = False
+            raise
 
     def _find_certificate_for_domain(self, domain: str) -> None | Tuple[str, Key, List[Certificate]]:
         if hasattr(self.key_store, "find_key_and_cert_covering_domain"):
@@ -127,13 +147,38 @@ class SslCertificateProcessor:
 
         secured_domains = sorted({host.hostname for host in secured_hosts})
         if update_watch_domains:
-            self.renewal_manager.update_watch_domains(secured_domains)
+            try:
+                self.renewal_manager.update_watch_domains(secured_domains)
+            finally:
+                with self._renewal_reload_lock:
+                    self._renewal_reload_pending = False
 
         for host in secured_hosts:
             host.ssl_file = self._select_ssl_file(host)
 
         if update_watch_domains:
             self.log_certificate_status(secured_hosts)
+            self._detect_certificate_changes()
+
+    def _detect_certificate_changes(self):
+        """Flag a forced reload when a certificate file already in use now carries a different expiry."""
+        current = {}
+        for _domain, ssl_file, expiry in self._status_rows:
+            if ssl_file and expiry is not None:
+                current[ssl_file] = expiry
+        changed = [f for f, e in current.items() if f in self._known_file_expiry and self._known_file_expiry[f] != e]
+        if changed:
+            print(
+                f"[SSL Refresh Thread] Certificates renewed on disk, nginx reload required: {', '.join(sorted(changed))}"
+            )
+            self._certificates_changed = True
+        self._known_file_expiry = current
+
+    def pop_certificate_changes(self) -> bool:
+        """Return True once if certificate files changed since the last call, then reset."""
+        changed = self._certificates_changed
+        self._certificates_changed = False
+        return changed
 
     # ------------------------------------------------------------------
     # Status logging
