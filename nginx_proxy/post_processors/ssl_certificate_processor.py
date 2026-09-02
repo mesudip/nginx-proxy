@@ -1,5 +1,5 @@
-from datetime import datetime, timezone
-from typing import List, Tuple
+from datetime import datetime, timedelta, timezone
+from typing import List, Optional, Tuple
 
 from certapi.client import RenewalManager
 from certapi.crypto import Key, Certificate
@@ -37,12 +37,21 @@ class SslCertificateProcessor:
             renew_threshold_days=max(1, int(self.update_threshold_secs // (24 * 3600))),
             batch_domains=self.certapi_batch_domains,
         )
+        self._status_rows: List[Tuple[str, str, Optional[datetime]]] = []
+        self._last_logged_status: Optional[Tuple] = None
 
         if start_ssl_thread:
             self.start()
 
     def start(self):
         self.renewal_manager.start()
+        backend = f"certapi {self.certapi_url}" if self.use_certapi_server else "local ACME"
+        print(
+            f"[SSL Refresh Thread] Started with backend={backend}, "
+            f"renew threshold {self._format_duration(self.update_threshold_secs)}, "
+            f"watching {len(self._status_rows)} domains"
+        )
+        self._log_next_check()
 
     def ssl_renewal_callback(self):
         print("[SSL] Renewal callback triggered")
@@ -122,6 +131,134 @@ class SslCertificateProcessor:
 
         for host in secured_hosts:
             host.ssl_file = self._select_ssl_file(host)
+
+        if update_watch_domains:
+            self.log_certificate_status(secured_hosts)
+
+    # ------------------------------------------------------------------
+    # Status logging
+    # ------------------------------------------------------------------
+
+    def _certificate_expiry(self, cert_name: str) -> Optional[datetime]:
+        try:
+            result = self.key_store.find_key_and_cert_by_cert_id(cert_name)
+        except Exception:
+            return None
+        if not isinstance(result, (tuple, list)) or len(result) < 2:
+            return None
+        certs = result[1]
+        if not isinstance(certs, (list, tuple)) or not certs:
+            return None
+        expiry = getattr(certs[0], "not_valid_after_utc", None)
+        return expiry if isinstance(expiry, datetime) else None
+
+    def _collect_status_rows(self, hosts: List[Host]) -> List[Tuple[str, str, Optional[datetime]]]:
+        rows = {}
+        for host in hosts:
+            if host.hostname in rows:
+                continue
+            ssl_file = host.ssl_file or ""
+            rows[host.hostname] = (host.hostname, ssl_file, self._certificate_expiry(ssl_file) if ssl_file else None)
+        return [rows[name] for name in sorted(rows)]
+
+    @staticmethod
+    def _format_duration(seconds: float) -> str:
+        """Human friendly duration: '30 days', '5 hours' or '29 minutes'."""
+        seconds = max(0, int(seconds))
+        days, rem = divmod(seconds, 24 * 3600)
+        if days:
+            return f"{days} day{'s' if days != 1 else ''}"
+        hours, rem = divmod(rem, 3600)
+        if hours:
+            return f"{hours} hour{'s' if hours != 1 else ''}"
+        minutes = max(1, rem // 60)
+        return f"{minutes} minute{'s' if minutes != 1 else ''}"
+
+    @staticmethod
+    def _format_remaining(delta: timedelta) -> str:
+        """'75 days, 17:00:58' style: no microseconds, zero padded time so columns line up."""
+        total = int(delta.total_seconds())
+        days, rem = divmod(total, 24 * 3600)
+        hours, rem = divmod(rem, 3600)
+        minutes, seconds = divmod(rem, 60)
+        prefix = f"{days} day{'s' if days != 1 else ''}, " if days else ""
+        return f"{prefix}{hours:02}:{minutes:02}:{seconds:02}"
+
+    def _row_text(self, hostname: str, ssl_file: str, expiry: Optional[datetime], now: datetime) -> str:
+        if not ssl_file or expiry is None:
+            return "no certificate"
+        if expiry <= now:
+            text = f"EXPIRED {self._format_remaining(now - expiry)} ago"
+        else:
+            text = self._format_remaining(expiry - now)
+        if ssl_file != hostname:
+            text += f" ({ssl_file})"
+        return text
+
+    def _next_check(self, now: datetime) -> Optional[Tuple[float, str, datetime]]:
+        """Return (seconds_until_check, domain, expiry) for the earliest real certificate, or None."""
+        candidates = [
+            (expiry, domain)
+            for domain, ssl_file, expiry in self._status_rows
+            if expiry is not None and not ssl_file.endswith(".selfsigned") and expiry > now
+        ]
+        if not candidates:
+            return None
+        expiry, domain = min(candidates)
+        threshold = getattr(self.renewal_manager, "update_threshold_secs", None)
+        if not isinstance(threshold, (int, float)):
+            threshold = self.update_threshold_secs
+        slack = getattr(self.renewal_manager, "sleep_slack_seconds", None)
+        if not isinstance(slack, (int, float)):
+            slack = 300
+        max_sleep = getattr(self.renewal_manager, "max_sleep_seconds", None)
+        if not isinstance(max_sleep, (int, float)):
+            max_sleep = 32 * 24 * 3600
+        wait = (expiry - now).total_seconds() - threshold
+        wait = min(wait + slack, max_sleep) if wait > 0 else 0
+        return wait, domain, expiry
+
+    def _log_next_check(self, now: Optional[datetime] = None):
+        now = now or datetime.now(timezone.utc)
+        next_check = self._next_check(now)
+        if next_check is None:
+            print("[SSL Refresh Thread] Looks like there are no ssl certificates, sleeping until there's one")
+            return
+        wait, domain, expiry = next_check
+        if wait <= 0:
+            print(
+                f"[SSL Refresh Thread] Looks like we need to refresh certificates that are about to expire "
+                f"({domain} expires in {self._format_remaining(expiry - now)})"
+            )
+        else:
+            print(
+                f"[SSL Refresh Thread] All the certificates are up to date sleeping for {self._format_duration(wait)}."
+            )
+
+    def log_certificate_status(self, hosts: List[Host], force: bool = False):
+        """
+        Print the watched domains with the time left on the certificate each one serves, followed by
+        when the renewal thread will check again. Printed only when something changed unless forced.
+        """
+        try:
+            now = datetime.now(timezone.utc)
+            self._status_rows = self._collect_status_rows(hosts)
+            snapshot = tuple((d, f, e.isoformat() if e else None) for d, f, e in self._status_rows)
+            if not force and snapshot == self._last_logged_status:
+                return
+            self._last_logged_status = snapshot
+
+            real_rows = [row for row in self._status_rows if not row[1].endswith(".selfsigned")]
+            self_signed = [row[0] for row in self._status_rows if row[1].endswith(".selfsigned")]
+            print("[SSL Refresh Thread] SSL certificate status:")
+            max_size = max([len(d) for d, _, _ in real_rows] + [0])
+            for domain, ssl_file, expiry in real_rows:
+                print(f"  {domain:<{max_size + 2}} - {self._row_text(domain, ssl_file, expiry, now)}")
+            self._log_next_check(now)
+            if self_signed:
+                print(f"[SSL Refresh Thread] Selfsigned: {', '.join(self_signed)}")
+        except Exception as e:  # logging must never break a reload
+            print(f"[SSL Refresh Thread] Could not render certificate status: {e.__class__.__name__}: {e}")
 
     def wildcard_domain_name(self, domain, wild_char="*"):
         slices = domain.split(".")
