@@ -148,7 +148,7 @@ def test_dry_run_does_not_log_status(capsys):
     assert "SSL certificate status" not in capsys.readouterr().out
 
 
-def test_start_announces_thread_and_next_check(capsys):
+def test_start_announces_thread_without_repeating_next_check(capsys):
     now = datetime.now(timezone.utc)
     processor, renewal = _build_processor({"api.example.com": now + timedelta(days=40)})
     processor.process_ssl_certificates([Host("api.example.com", 443, {"https"})])
@@ -162,7 +162,7 @@ def test_start_announces_thread_and_next_check(capsys):
         "[SSL Refresh Thread] Started with backend=certapi https://certapi.example.com, "
         "renew threshold 30 days, watching 1 domains"
     ) in out
-    assert "[SSL Refresh Thread] All the certificates are up to date sleeping for 10 days." in out
+    assert "All the certificates are up to date" not in out
 
 
 def test_start_without_certificates_reports_nothing_to_watch(capsys):
@@ -170,9 +170,7 @@ def test_start_without_certificates_reports_nothing_to_watch(capsys):
 
     processor.start()
 
-    assert "[SSL Refresh Thread] Looks like there are no ssl certificates, sleeping until there's one" in (
-        capsys.readouterr().out
-    )
+    assert "watching 0 domains" in capsys.readouterr().out
 
 
 def test_renewal_callback_queues_only_one_reload_until_it_has_run(capsys):

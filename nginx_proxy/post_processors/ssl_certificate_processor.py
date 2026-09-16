@@ -60,7 +60,6 @@ class SslCertificateProcessor:
             f"renew threshold {self._format_duration(self.update_threshold_secs)}, "
             f"watching {len(self._status_rows)} domains"
         )
-        self._log_next_check()
 
     def ssl_renewal_callback(self):
         if self.server is None:

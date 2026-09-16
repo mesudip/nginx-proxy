@@ -1,6 +1,11 @@
 from typing import Union, Dict
 
 
+def short_id(identifier: object, length: int = 12) -> str:
+    """Return the compact form used when identifiers are written to logs."""
+    return str(identifier)[:length]
+
+
 def split_url(
     entry_string: str, default_scheme=None, default_port=None, default_location=None
 ) -> Dict[str, Union[str, int]]:

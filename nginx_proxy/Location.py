@@ -2,6 +2,7 @@ import re
 from typing import Dict, Any, List, Union
 
 from .BackendTarget import BackendTarget
+from .utils import short_id
 
 
 _BODY_SIZE_DIRECTIVES = {"client_max_body_size"}
@@ -187,8 +188,8 @@ class Location:
             "[WARN] Conflicting nginx location directive "
             f"location={self.name if self.name else '/'} "
             f"key={key} "
-            f"existing_backend={existing['backend_id']} existing_value={existing['value']} "
-            f"incoming_backend={incoming_backend_id} incoming_value={incoming_value} "
+            f"existing_backend={short_id(existing['backend_id'])} existing_value={existing['value']} "
+            f"incoming_backend={short_id(incoming_backend_id)} incoming_value={incoming_value} "
             f"chosen_value={chosen_value}"
         )
 
