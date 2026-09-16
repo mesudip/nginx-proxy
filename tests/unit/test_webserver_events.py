@@ -586,7 +586,7 @@ def test_webserver_add_two_containers_with_same_virtual_host(docker_client: Dock
 
     # Verify server block uses upstream
     server = expect_server_up(nginx, hostname)
-    assert f"http://{hostname}" in next(l.proxy_pass for l in server.locations if l.path == "/")
+    assert next(l.proxy_pass for l in server.locations if l.path == "/") == f"http://{upstream.parameters}"
 
 
 def test_webserver_restart_container_extras_do_not_duplicate_servers(
