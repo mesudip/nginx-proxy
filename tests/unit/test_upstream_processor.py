@@ -173,7 +173,7 @@ def test_backup_service_vip_is_rendered_in_upstream():
     assert "# service: service1" in rendered
 
 
-def test_upstream_id_uses_hyphen_separator():
+def test_upstream_id_is_hash_prefixed_and_hyphen_separated():
     host = Host("example.com", 80)
     host.add_container("/", _backend("container1", "172.18.0.2", "container"))
     host.add_container("/", _backend("container2", "172.18.0.3", "container"))
@@ -182,8 +182,15 @@ def test_upstream_id_uses_hyphen_separator():
 
     assert len(upstreams) == 1
     upstream_id = upstreams[0]["id"]
-    assert upstream_id.startswith("example.com-")
-    assert "example.com_" not in upstream_id
+    # The hostname goes last so that a Host header leaked through nginx's
+    # $proxy_host fallback cannot be mistaken for a real subdomain.
+    assert upstream_id.endswith("-example.com")
+    assert not upstream_id.startswith("example.com")
+    assert "_" not in upstream_id
+
+    prefix = upstream_id[: -len("-example.com")]
+    assert len(prefix) == 12
+    assert all(c in "0123456789abcdef" for c in prefix)
 
 
 @pytest.mark.parametrize(

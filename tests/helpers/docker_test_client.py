@@ -534,13 +534,17 @@ class MockServiceCollection:
                 "Spec": {
                     "Name": name,
                     "Labels": kwargs.get("labels", {}),
-                    "TaskTemplate": {"ContainerSpec": {"Image": image, "Env": env}},
+                    "TaskTemplate": {
+                        "ContainerSpec": {"Image": image, "Env": env},
+                        "Networks": [],
+                    },
                 },
                 "Endpoint": {"VirtualIPs": [], "Ports": []},  # Add ports if needed
             }
 
             # Handle networks
-            # In real swarm, service gets VIPs for each network
+            # In real swarm the spec records the attachments and the endpoint
+            # gets a VIP per network, so record both.
             for net_name in networks:
                 # resolving net name to ID might be needed if strings passed
                 try:
@@ -553,6 +557,8 @@ class MockServiceCollection:
                         net = self.client.networks.get(net_name.get("Target"))
                     else:
                         continue
+
+                svc.attrs["Spec"]["TaskTemplate"]["Networks"].append({"Target": net.id})
 
                 ip = str(net._next_ip)
                 net._next_ip += 1

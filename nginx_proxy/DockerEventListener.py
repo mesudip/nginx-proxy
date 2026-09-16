@@ -11,6 +11,7 @@ from typing import Any
 import docker
 
 from nginx_proxy.BackendTarget import BackendTarget
+from nginx_proxy.pre_processors.virtual_host_processor import host_config_values
 from nginx_proxy.WebServer import WebServer
 
 
@@ -306,10 +307,31 @@ class DockerEventListener:
         try:
             service = self.swarm_client.services.get(service_id)
             backend = BackendTarget.from_service(service)
-            if not self._service_backend_has_reachable_vip(backend) and self._retry_service_event(
-                service_id, action, attempt, "has no reachable VIP"
-            ):
-                return
+
+            has_dynamic_hosts = self._backend_has_host_config(backend, "VIRTUAL_HOST")
+            has_static_hosts = self._backend_has_host_config(backend, "STATIC_VIRTUAL_HOST")
+            network_state = self._service_backend_network_state(backend)
+
+            # Only VIRTUAL_HOST routes resolve to the service VIP; STATIC_VIRTUAL_HOST
+            # names its own destination, so static-only and unconfigured services can be
+            # processed straight away. "unreachable" is not retried either: a service on a
+            # network nginx-proxy is not attached to recovers through rescan_and_reload()
+            # when nginx-proxy joins that network, not through a retry here.
+            if has_dynamic_hosts and network_state == "pending":
+                # Static routes in a mixed configuration do not depend on the
+                # pending VIP and should become available immediately.
+                if has_static_hosts:
+                    self.web_server.update_backend(backend)
+                if self._retry_service_event(
+                    service_id,
+                    action,
+                    attempt,
+                    "has no reachable VIP",
+                    service_name=backend.name,
+                ):
+                    return
+                if has_static_hosts:
+                    return
             self.web_server.update_backend(backend)
         except docker.errors.NotFound:
             if not self._retry_service_event(service_id, action, attempt, "not found"):
@@ -319,11 +341,19 @@ class DockerEventListener:
         except Exception as e:
             print(f"Error processing service event {action} for {service_id}: {e}", file=sys.stderr)
 
-    def _retry_service_event(self, service_id: str, action: str, attempt: int, reason: str) -> bool:
+    def _retry_service_event(
+        self,
+        service_id: str,
+        action: str,
+        attempt: int,
+        reason: str,
+        service_name: str | None = None,
+    ) -> bool:
         if attempt >= SERVICE_EVENT_MAX_ATTEMPTS:
             return False
+        service_identity = f"{service_id} ({service_name})" if service_name else service_id
         print(
-            f"WARN: Service {service_id} {reason}; retrying in {SERVICE_EVENT_RETRY_DELAY_SECONDS}s",
+            f"WARN: Service {service_identity} {reason}; retrying in {SERVICE_EVENT_RETRY_DELAY_SECONDS}s",
             file=sys.stderr,
         )
         self._schedule_service_processing(
@@ -334,12 +364,23 @@ class DockerEventListener:
         )
         return True
 
-    def _service_backend_has_reachable_vip(self, backend: BackendTarget) -> bool:
+    @staticmethod
+    def _backend_has_host_config(backend: BackendTarget, prefix: str) -> bool:
+        # Shares host_config_values with the virtual host processor so that both
+        # agree on which backends have a configured route.
+        return bool(host_config_values(backend.env, prefix))
+
+    def _service_backend_network_state(self, backend: BackendTarget) -> str:
         known_networks = set(self.web_server.networks.keys())
+        has_shared_network = False
         for detail in backend.network_settings.values():
-            if detail.get("NetworkID") in known_networks and detail.get("IPAddress"):
-                return True
-        return False
+            if detail.get("NetworkID") not in known_networks:
+                continue
+            has_shared_network = True
+            address = detail.get("IPAddress")
+            if isinstance(address, str) and address.strip():
+                return "reachable"
+        return "pending" if has_shared_network else "unreachable"
 
     def _process_container_event(self, action, event):
         container_id = event.get("Actor", {}).get("ID") or event.get("id")

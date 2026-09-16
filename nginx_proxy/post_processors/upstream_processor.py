@@ -35,10 +35,14 @@ class UpstreamProcessor:
                     if backend_key in global_upstreams:
                         location.upstream = global_upstreams[backend_key]["id"]
                     else:
+                        # Hash first, hostname last. nginx's built-in fallback is
+                        # `proxy_set_header Host $proxy_host`, which renders as this name,
+                        # so a leading hash makes a leaked Host header obviously not a real
+                        # hostname instead of a plausible-looking subdomain.
                         upstream_id = (
-                            host.hostname.strip()
+                            hashlib.sha1(str(backend_key).encode("utf-8")).hexdigest()[:12]
                             + "-"
-                            + hashlib.sha1(str(backend_key).encode("utf-8")).hexdigest()[:12]
+                            + host.hostname.strip()
                         )
 
                         global_upstreams[backend_key] = {

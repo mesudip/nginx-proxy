@@ -66,18 +66,32 @@ class ConfigParser:
         param_name = None
         param_value = None
         buf = ""
+        quote = None
+        escaped = False
         block = Block(name, parameters, [])
         while self.i < self.length:
-            if self.config[self.i] == "\n":  # multiline value
+            char = self.config[self.i]
+            if quote is not None:
+                buf += char
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == quote:
+                    quote = None
+            elif char in ('"', "'"):
+                quote = char
+                buf += char
+            elif char == "\n":  # multiline value
                 if buf and param_name:
                     buf += " "  # Treat newline as space
-            elif self.config[self.i] == " ":
+            elif char == " ":
                 if not param_name and buf.strip():
                     param_name = buf.strip()
                     buf = ""
                 elif buf:
-                    buf += self.config[self.i]
-            elif self.config[self.i] == ";":
+                    buf += char
+            elif char == ";":
                 current_value = " ".join(buf.split())
                 if current_value.startswith("'") and current_value.endswith("'"):
                     current_value = current_value[1:-1]
@@ -93,7 +107,7 @@ class ConfigParser:
                 param_name = None
                 param_value = None
                 buf = ""
-            elif self.config[self.i] == "{":
+            elif char == "{":
                 self.i += 1
                 if not param_name:
                     param_name = buf.strip()
@@ -103,14 +117,14 @@ class ConfigParser:
                 param_name = None
                 param_value = None
                 buf = ""
-            elif self.config[self.i] == "}":
+            elif char == "}":
                 self.i += 1
                 return block
-            elif self.config[self.i] == "#":  # skip comments
+            elif char == "#":  # skip comments
                 while self.i < self.length and self.config[self.i] != "\n":
                     self.i += 1
             else:
-                buf += self.config[self.i]
+                buf += char
             self.i += 1
         return block
 

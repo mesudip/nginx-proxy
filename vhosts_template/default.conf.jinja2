@@ -45,7 +45,8 @@ server{
         auth_basic "Basic Auth Enabled";
         auth_basic_user_file {{ server.extras.security_file }};{% endif %} {% for location in server.locations.values() %}
         location {{ location.name if location.name else '/'}} { {% for injection in location.extras.injected %}
-            {{ injection }};{% endfor %} {% if location.extras.security %}
+            {{ injection }};{% endfor %}{% if location.extras.vhost_config %}
+{{ location.extras.vhost_config | indent(12, first=True) }}{% endif %} {% if location.extras.security %}
             auth_basic "Basic Auth Enabled";
             auth_basic_user_file {{ location.extras.security_file }};{% endif %} {% if location.container.type == "static_site" %}
             root {{ location.container.path }};
@@ -54,7 +55,8 @@ server{
             proxy_pass {{ location.container.scheme }}://{{ location.upstream }}{{location.container.path}};    # {{ location.container.type }}: {{ location.container.id[:12] }}{% else %}
             proxy_pass {{location.container.scheme }}://{{ location.container.address }}:{{ location.container.port }}{{ location.container.path }};  # {{ location.container.type }}: {{ location.container.id[:12] }}{% endif %}{% if location.name != '/' %}
             proxy_redirect $scheme://$http_host{{ location.container.path if location.container.path else '/' }} $scheme://$http_host{{location.name}};{% endif %} {% if location.reinsert_global_config %}{% for header_name, header_value in location.reinserted_proxy_set_headers %}
-            proxy_set_header {{ header_name }} {{ header_value }};{% endfor %}{% endif %}{% if location.websocket and not location.http %}
+            proxy_set_header {{ header_name }} {{ header_value }};{% endfor %}{% for header_name, header_value in location.reinserted_add_headers %}
+            add_header {{ header_name }} {{ header_value }};{% endfor %}{% endif %}{% if location.websocket and not location.http %}
             proxy_http_version 1.1;
             proxy_read_timeout  1h;
             proxy_send_timeout 1h;{% endif %}

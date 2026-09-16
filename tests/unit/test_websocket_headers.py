@@ -103,3 +103,27 @@ def test_location_with_lowercase_host_override_is_treated_case_insensitively():
 
     assert any(header.lower() == "host" and value == "custom.example" for header, value in headers)
     assert not any(header == "Host" and value == "$http_host" for header, value in headers)
+
+
+def test_location_with_injected_add_header_keeps_hsts():
+    location = _render_location(
+        container_name="add_header_container",
+        hostname="add-header.example.com",
+        virtual_host="add-header.example.com; add_header X-Frame-Options SAMEORIGIN",
+    )
+    headers = dict(location.add_headers)
+
+    assert headers["X-Frame-Options"] == "SAMEORIGIN"
+    assert headers["Strict-Transport-Security"] == '"max-age=31536000" always'
+    # add_header inherits independently, so nothing needed reinserting here.
+    assert location.proxy_set_headers == []
+
+
+def test_location_without_injected_add_header_inherits_hsts():
+    location = _render_location(
+        container_name="no_add_header_container",
+        hostname="no-add-header.example.com",
+        virtual_host="no-add-header.example.com",
+    )
+
+    assert location.add_headers == []

@@ -86,6 +86,7 @@ class Location:
         self.extras: Dict[str, Any] = {}
         self.reinsert_global_config: bool = False
         self.reinserted_proxy_set_headers: list[tuple[str, str]] = []
+        self.reinserted_add_headers: list[tuple[str, str]] = []
 
     def update_extras(self, extras: Dict[str, Any]):
         for x in extras:
