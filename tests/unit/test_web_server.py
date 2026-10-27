@@ -169,6 +169,31 @@ def test_register_static_sites_merges_root_with_existing_path_proxy(web_server):
     assert host.locations["/"].backends[0].type == "static_site"
 
 
+def test_register_static_sites_skips_only_the_site_that_fails_validation(web_server, capsys):
+    sites = ProxyConfigData()
+    for hostname in ("a.example.com", "bad.example.com", "c.example.com"):
+        sites.add_host(_static_site_config(hostname).getHost(hostname, 443))
+    web_server.config_data = ProxyConfigData()
+    web_server.config["default_ssl_domains"] = ["default.example.com"]
+    # nginx rejects any config that contains the broken site, e.g. a typo in its nginx_vhost.conf
+    web_server.nginx.validate_config.side_effect = lambda output: ("bad.example.com" not in output, "unknown directive")
+
+    def render(config_data, **kwargs):
+        return " ".join(host.hostname for host in config_data.host_list())
+
+    with (
+        patch("nginx_proxy.WebServer.pre_processors.process_static_sites", return_value=sites),
+        patch.object(web_server, "_render_config", side_effect=render),
+    ):
+        web_server._register_static_sites()
+
+    registered = {host.hostname for host in web_server.config_data.host_list()}
+    assert registered == {"a.example.com", "c.example.com", "default.example.com"}
+    assert "Ignoring static site bad.example.com because generated nginx config failed validation" in (
+        capsys.readouterr().err
+    )
+
+
 def test_register_static_sites_adds_default_ssl_domains(web_server):
     web_server.config["default_ssl_domains"] = ["*.xyz.com"]
 

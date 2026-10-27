@@ -88,7 +88,7 @@ Control the default behavior of `nginx-proxy`:
 | `DOCKER_SWARM` | `ignore` | Controls Docker Swarm discovery. Supported values are `ignore`, `exclude`, `enable`, `prefer-local`, and `strict`; see [Docker Swarm Support](#docker-swarm-support-preview). |
 | `SWARM_DOCKER_HOST` | - | URL of the Swarm manager socket (e.g., `tcp://manager:2375`). |
 | `CERTAPI_URL` | - | External Certificate API origin, e.g. `http://certapi:8080` or `https://certapi.example.com`. Paths, query strings, fragments, and embedded credentials are not supported. |
-| `CERTAPI_BATCH_DOMAINS` | `true` | When using `CERTAPI_URL`, request safe domain batching (`batch_domains=true`) to avoid recursive domain-order errors. |
+| `CERTAPI_BATCH_DOMAINS` | `true` | Split certificate requests into safe batches, for `getssl` and for automatic issuance and renewal, with local ACME or `CERTAPI_URL`. With `false`, all due domains go into one certificate. |
 | `NGINX_RESOLVER` | `/etc/resolv.conf` nameservers | Resolver used by nginx for runtime DNS lookups when proxying ACME challenges to `CERTAPI_URL`. When no resolver is detected or configured, nginx renders the literal `CERTAPI_URL` in `proxy_pass` so startup fails visibly if that host cannot be resolved. Set this explicitly if automatic resolver detection is not correct for your network mode. |
 | `CHALLENGE_DIR` | `/etc/nginx/challenges/` | Base directory for acme challenge store, when requesting certificates with acme. `.well-known/acme-challenge` folder lives inside this.|
 | `CLOUDFLARE_API_KEY_KEY*` | - | Cloudflare api keys to issue DNS certificates.|
@@ -150,6 +150,8 @@ Files are served from `$STATIC_SITE_ROOT/$domain/current`. For example, `/static
 `STATIC_SITE_ROOT` may contain only letters, numbers, `/`, `.`, `_`, and `-`; paths with spaces or other special characters are rejected and all static sites are ignored.
 
 `current` can be a symlink to an active release directory inside `STATIC_SITE_ROOT`, which allows versioned deploys by switching the symlink and issuing a reload/HUP. Symlinks that resolve outside `STATIC_SITE_ROOT` are ignored. Static site locations also render `disable_symlinks on from=$document_root;` so symlinks inside the served document root cannot expose files outside the site. Static site directories are scanned only during a full reload. Invalid domain directory names are ignored with a warning.
+
+An optional `nginx_vhost.conf` beside `current` (`$STATIC_SITE_ROOT/$domain/nginx_vhost.conf`) adds nginx directives to the site's `location /`, for example `expires 1h;`. It is included as written, so treat it like the proxy's own nginx configuration. Each static site is validated on its own: a site whose generated config fails `nginx -t` is skipped with a warning naming it, and the others are still served.
 
 Static sites are mounted at `/`. Container-backed proxy locations can still be configured on more specific paths such as `/api` or `/admin`. If a container configures `/` for the same domain, that container route overrides the static site root and `nginx-proxy` logs a warning.
 
@@ -223,7 +225,7 @@ disappear.
 2. Map `/etc/nginx/ssl` and `/etc/nginx/challenges`.
 3. Set `VIRTUAL_HOST` to start with `https://` in your containers.
 
-nginx never waits for certificates. On startup and on every reload it serves every host with the certificate already on disk, expired and self-signed ones included. An https host with no certificate at all is left out until one is obtained. Issuance and renewal run on a background thread and nginx is reloaded again once the new certificate files are in place.
+nginx never waits for certificates. On startup and on every reload it serves every host with the certificate already on disk, expired ones included, and a new host is served self-signed while its certificate is requested. A host with neither is left out until one exists. Issuance and renewal run on a background thread and nginx is reloaded again once the new certificate files are in place.
 
 ### Wildcard Certificates With Cloudflare DNS
 To issue wildcard certificates (e.g., `*.example.com`) or avoid exposing port 80, you can use DNS challenges via Cloudflare.

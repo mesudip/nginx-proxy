@@ -1,3 +1,4 @@
+import re
 import pytest
 from jinja2 import Template
 
@@ -184,8 +185,9 @@ def test_upstream_id_is_hash_prefixed_and_hyphen_separated():
     upstream_id = upstreams[0]["id"]
     # The hostname goes last so that a Host header leaked through nginx's
     # $proxy_host fallback cannot be mistaken for a real subdomain.
-    assert upstream_id.endswith("-example.com")
-    assert not upstream_id.startswith("example.com")
+    hash_part, separator, hostname_part = upstream_id.partition("-")
+    assert re.fullmatch(r"[0-9a-f]{12}", hash_part) and separator == "-"
+    assert hostname_part == "example.com"
     assert "_" not in upstream_id
 
     prefix = upstream_id[: -len("-example.com")]

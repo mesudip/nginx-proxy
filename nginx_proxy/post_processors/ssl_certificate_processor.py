@@ -84,9 +84,8 @@ class SslCertificateProcessor:
     def _request_renewal_pass(self, domains: Optional[List[str]] = None):
         with self._renewal_lock:
             if domains is not None:
-                if domains == self._renewal_domains:
-                    # Unchanged set: certapi's own schedule signals the callback when something is due.
-                    return
+                # Republished on every render even when unchanged: certapi schedules no retry for a domain whose
+                # first issuance failed (it has no certificate yet), so later renders are what retry it.
                 self._renewal_domains = domains
             if self._renewal_domains is None:
                 return

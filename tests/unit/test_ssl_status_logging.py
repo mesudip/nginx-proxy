@@ -307,7 +307,7 @@ def test_removing_every_https_host_clears_the_renewal_watch_set(remaining_hosts)
     processor.shutdown()
 
 
-def test_unchanged_domain_set_does_not_queue_a_pass_and_a_pass_takes_one_snapshot():
+def test_every_render_queues_a_pass_and_a_pass_takes_one_snapshot():
     now = datetime.now(timezone.utc)
     processor, renewal = _build_processor({"api.example.com": now + timedelta(days=40)})
     hosts = [Host("api.example.com", 443, {"https"})]
@@ -315,18 +315,17 @@ def test_unchanged_domain_set_does_not_queue_a_pass_and_a_pass_takes_one_snapsho
     processor.start()
     _wait_for(lambda: renewal.update_watch_domains.call_count == 1)
 
-    # Renders with the same https domains (every Docker event) leave the schedule to certapi.
+    # Renders with the same https domains still republish the set, so certapi can retry failed domains.
     processor.process_ssl_certificates(hosts)
-    processor.process_ssl_certificates(hosts)
-    time.sleep(0.05)
-    assert renewal.update_watch_domains.call_count == 1
+    _wait_for(lambda: renewal.update_watch_domains.call_count == 2)
 
     # A pass reuses the previous pass's result instead of sweeping the domains before and after.
     with patch.object(processor, "_certificate_snapshot", wraps=processor._certificate_snapshot) as snapshot:
         processor.ssl_renewal_callback()
-        _wait_for(lambda: renewal.update_watch_domains.call_count == 2)
+        _wait_for(lambda: renewal.update_watch_domains.call_count == 3)
         _wait_for(lambda: snapshot.call_count == 2)
     assert [c.args[0] for c in snapshot.call_args_list] == [[], ["api.example.com"]]
+    processor.server.enqueue_reload.assert_not_called()
     processor.shutdown()
 
 

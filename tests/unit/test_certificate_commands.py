@@ -201,6 +201,11 @@ def test_local_force_bypasses_reachability_but_default_checks_it(tmp_path):
         "http://certapi?x=1",
         "http://certapi#fragment",
         "http://user@certapi",
+        "http://certapi?x=",
+        "http://cert api:8080",
+        "http://certapi;x:8080",
+        "http://cert{api}",
+        "http://-certapi",
     ],
 )
 def test_all_commands_reject_invalid_certapi_urls(monkeypatch, env, url):
@@ -217,10 +222,17 @@ def test_all_commands_reject_invalid_certapi_urls(monkeypatch, env, url):
         ("http://certapi:8080/", "certapi:8080"),
         ("https://certapi", "certapi:443"),
         ("http://[::1]:8080/", "[::1]:8080"),
+        ("http://certapi:8080?", "certapi:8080"),
+        ("http://certapi:8080#", "certapi:8080"),
+        ("http://certapi:8080/?#", "certapi:8080"),
+        ("http://certapi_certapi:8080", "certapi_certapi:8080"),
+        ("http://10.0.0.5:8080", "10.0.0.5:8080"),
     ],
 )
 def test_certapi_url_normalization(url, endpoint):
-    assert load_certapi_config(url)["endpoint"] == endpoint
+    config = load_certapi_config(url)
+    assert config["endpoint"] == endpoint
+    assert config["url"] == config["url"].rstrip("/?#")  # rendered as-is into proxy_pass
 
 
 def test_whitespace_certapi_url_selects_local_backend(monkeypatch, tmp_path):
