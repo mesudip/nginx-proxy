@@ -45,7 +45,9 @@ class WebServer:
         self.throttler = Throttler(self.reload_interval)
         NginxClass = DummyNginx if self.config["dummy_nginx"] else Nginx
         self.nginx: Nginx | DummyNginx = NginxClass(
-            self.config["conf_dir"] + "/conf.d/nginx-proxy.conf", self.config["challenge_dir"]
+            self.config["conf_dir"] + "/conf.d/nginx-proxy.conf",
+            self.config["challenge_dir"],
+            **({"create_challenge_dir": not self.config.get("certapi")} if NginxClass is Nginx else {}),
         )
         self.config_data = ProxyConfigData()
         self._reload_dispatcher: Callable | None = None
@@ -69,6 +71,7 @@ class WebServer:
             update_threshold_days=self.config["cert_renew_threshold_days"],
         )
         self.basic_auth_processor = post_processors.BasicAuthProcessor(self.config["conf_dir"] + "/basic_auth")
+        self.proxy_header_processor = post_processors.ProxyHeaderProcessor()
         self.redirect_processor = post_processors.RedirectProcessor()
         self.upstream_processor = post_processors.UpstreamProcessor()
 
@@ -148,10 +151,15 @@ class WebServer:
         upstreams = self.upstream_processor.process(
             hosts, prefer_local=render_config.get("docker_swarm") == "prefer-local"
         )
+        self.proxy_header_processor.process(hosts)
         self.basic_auth_processor.process_basic_auth(hosts, dry_run=dry_run, created_files=dry_run_auth_files)
-        self.ssl_processor.process_ssl_certificates(hosts, update_watch_domains=update_ssl_watch_domains)
+        hosts = self.ssl_processor.process_ssl_certificates(
+            hosts, update_watch_domains=update_ssl_watch_domains, exclude_missing=not dry_run
+        )
         if dry_run:
             self._ensure_selfsigned_certificate_files(hosts)
+        # An excluded https host may have been the one carrying default_server.
+        has_default = any("default_server" in host.extras for host in hosts)
         hosts = self._ensure_https_redirects(hosts)
         render_config["default_server"] = not has_default
         if not dry_run:
@@ -163,7 +171,9 @@ class WebServer:
             config=render_config,
         )
 
-    def _validate_config_data(self, config_data: ProxyConfigData, backend: BackendTarget | None = None) -> bool:
+    def _validate_config_data(
+        self, config_data: ProxyConfigData, backend: BackendTarget | None = None, static_host: Host | None = None
+    ) -> bool:
         dry_run_auth_files: List[str] = []
         output = self._render_config(
             config_data,
@@ -186,6 +196,11 @@ class WebServer:
             print(
                 "WARN: Ignoring backend update because generated nginx config failed validation "
                 f"type={backend.type} id={backend.id[:12]} name={backend.name}",
+                file=sys.stderr,
+            )
+        elif static_host is not None:
+            print(
+                f"WARN: Ignoring static site {static_host.hostname} because generated nginx config failed validation",
                 file=sys.stderr,
             )
         else:
@@ -249,6 +264,10 @@ class WebServer:
         """
         # print("web_server._do_reload(forced="+str(forced)+")")
         output = self._render_config(self.config_data, update_ssl_watch_domains=True)
+        # Backstop for certificate files replaced outside the renewal thread (getssl, hand-copied certs):
+        # the file contents changed but the rendered text did not.
+        if self.ssl_processor.pop_certificate_changes():
+            forced = True
         response = self.nginx.update_config(output, force=forced, validate=validate)
         return response
 
@@ -496,22 +515,20 @@ class WebServer:
         self._register_static_sites()
 
     def _register_static_sites(self):
-        candidate_config_data = copy.deepcopy(self.config_data)
-        self._add_static_sites_to_config(candidate_config_data)
-        if self._validate_config_data(candidate_config_data):
-            self.config_data = candidate_config_data
+        # Validated one site at a time, like backends, so one broken site does not keep the others out.
+        for host in self._static_hosts():
+            candidate_config_data = copy.deepcopy(self.config_data)
+            self._register_static_host(host, candidate_config_data)
+            if self._validate_config_data(candidate_config_data, static_host=host):
+                self.config_data = candidate_config_data
 
-    def _add_static_sites_to_config(self, config_data: ProxyConfigData):
+    def _static_hosts(self) -> List[Host]:
         static_hosts = pre_processors.process_static_sites(self.config.get("static_site_root", "/static"))
-        for host in static_hosts.host_list():
-            self._register_static_host(host, config_data)
-
         default_ssl_hosts = pre_processors.process_default_ssl_domains(
             self.config.get("default_ssl_domains", []),
             os.path.join(self.config["vhosts_template_dir"], "errors"),
         )
-        for host in default_ssl_hosts.host_list():
-            self._register_static_host(host, config_data)
+        return list(static_hosts.host_list()) + list(default_ssl_hosts.host_list())
 
     def _register_static_host(self, host: Host, config_data: ProxyConfigData | None = None):
         target_config_data = config_data if config_data is not None else self.config_data

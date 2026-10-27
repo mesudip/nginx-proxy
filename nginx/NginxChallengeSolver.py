@@ -14,4 +14,9 @@ class NginxChallengeSolver(FilesystemChallengeSolver):
     def supports_domain(self, domain: str) -> bool:
         if "*" in domain:
             return False
+        return self.is_valid_hostname(domain)
+
+    def supports_domain_strict(self, domain: str) -> bool:
+        if not self.supports_domain(domain):
+            return False
         return self.nginx.verify_domain(domain)

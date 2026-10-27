@@ -1,9 +1,7 @@
 import difflib
 import os
 import pathlib
-import random
 import re
-import string
 import subprocess
 import sys
 import time
@@ -11,8 +9,7 @@ from os import path
 from typing import Union, Tuple
 import socket
 
-import requests
-
+from certapi import FilesystemChallengeSolver
 from nginx import Url
 
 
@@ -34,7 +31,7 @@ class Nginx:
     command_reload = ["nginx", "-s", "reload"]
     command_start = ["nginx"]
 
-    def __init__(self, config_file_path, challenge_dir="/etc/nginx/challenges/"):
+    def __init__(self, config_file_path, challenge_dir="/etc/nginx/challenges/", create_challenge_dir=True):
         self.challenge_dir = challenge_dir
         self.config_file_path = config_file_path
         if path.exists(config_file_path):
@@ -43,7 +40,7 @@ class Nginx:
         else:
             self.last_working_config = ""
         self.config_stack = [self.last_working_config]
-        if not os.path.exists(challenge_dir):
+        if create_challenge_dir and not os.path.exists(challenge_dir):
             pathlib.Path(self.challenge_dir).mkdir(parents=True)
 
     def start(self):
@@ -295,53 +292,10 @@ class Nginx:
             return result
 
     def verify_domain(self, _domain: list | str):
-        domain = [_domain] if type(_domain) is str else _domain
-        ## when not included, one invalid domain in a list of 100 will make all domains to be unverified due to nginx failing to start.
-        domain = [x for x in domain if Url.is_valid_hostname(x)]
-        success = []
-        while True:
-            r1 = "".join([random.choice(string.ascii_letters + string.digits) for _ in range(32)])
-            file = os.path.join(self.challenge_dir, r1)
-            if path.exists(file):
-                continue
-            r2 = "".join([random.choice(string.ascii_letters + string.digits) for _ in range(256)])
-            write_file(file, r2)
-            for d in domain:
-                try:
-                    url = "http://%s/.well-known/acme-challenge/%s" % (d, r1)
-                    response = requests.get(url, allow_redirects=False, timeout=3)
-                    if response.status_code == 200:
-                        if response.content.decode("utf-8") == r2:
-                            success.append(d)
-                            continue
-                    print(
-                        "[Error] ["
-                        + d
-                        + "] Not owned by this machine:"
-                        + "Status Code["
-                        + str(response.status_code)
-                        + "] -> "
-                        + url,
-                        file=sys.stderr,
-                    )
-                    continue
-                except requests.exceptions.RequestException as e:
-                    error = str(e)
-                    if error.find("Name does not resolve") > -1:
-                        print("[Error] [" + d + "] Domain Name could not be resolved", file=sys.stderr)
-                    elif error.find("Connection refused") > -1:
-                        print(
-                            "[Error] [" + d + "] Connection Refused! The port is filtered or not open.", file=sys.stderr
-                        )
-                    else:
-                        print("[ERROR] [" + d + "] Not owned by this machine : " + str(e))
-                    continue
-            os.remove(file)
-            break
-        if type(_domain) is str:
-            return len(success) > 0
-        else:
-            return success
+        domains = [_domain] if isinstance(_domain, str) else _domain
+        domains = [domain for domain in domains if Url.is_valid_hostname(domain)]
+        verified = FilesystemChallengeSolver(self.challenge_dir).verify_domain(domains)
+        return bool(verified) if isinstance(_domain, str) else verified
 
     def wait(self):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

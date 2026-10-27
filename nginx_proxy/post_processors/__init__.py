@@ -1,4 +1,5 @@
 from .basic_auth_processor import BasicAuthProcessor
+from .proxy_header_processor import ProxyHeaderProcessor
 from .redirect_processor import RedirectProcessor
 from .ssl_certificate_processor import SslCertificateProcessor
 from .upstream_processor import UpstreamProcessor

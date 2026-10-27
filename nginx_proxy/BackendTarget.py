@@ -68,7 +68,19 @@ class BackendTarget:
         endpoint = service.attrs.get("Endpoint", {})
         virtual_ips = endpoint.get("VirtualIPs", [])
 
+        # Keep the configured network attachments even while Docker has not
+        # populated Endpoint.VirtualIPs yet.  The event listener uses this to
+        # distinguish a pending VIP on a shared network from a service that is
+        # not connected to any network reachable by nginx-proxy.
         network_settings = {}
+        for network in task_template.get("Networks", []) or []:
+            if isinstance(network, str):
+                net_id = network
+            else:
+                net_id = network.get("Target") or network.get("NetworkID")
+            if net_id:
+                network_settings[net_id] = {"NetworkID": net_id, "IPAddress": ""}
+
         for vip in virtual_ips:
             net_id = vip.get("NetworkID")
             addr = vip.get("Addr", "").split("/")[0]  # Strip CIDR

@@ -40,19 +40,37 @@ def get_test_config() -> NginxProxyAppConfig:
     )
 
 
+def _wait_for(condition, timeout=2):
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, "timed out waiting for the renewal thread"
+        time.sleep(0.01)
+
+
+def _render_after_failed_issuance(webserver, hosts, error):
+    """Let a renewal pass fail the way the certificate backend does, then render the hosts again."""
+    processor = webserver.ssl_processor
+    with patch.object(processor.cert_manager, "obtain", side_effect=error):
+        processor.run_renewal_pass(sorted({host.hostname for host in hosts}))
+    return processor.process_ssl_certificates(hosts)
+
+
 @pytest.fixture()
 def docker_client():
     return DockerTestClient()
 
 
 @pytest.fixture()
-def webserver_for_error_tests(docker_client: DockerTestClient):
-    """Create a webserver instance for error testing without starting background threads"""
+def webserver_for_error_tests(docker_client: DockerTestClient, tmp_path):
+    """Create a webserver instance for error testing with its own certificate directory"""
     docker_client.networks.create("frontend")
 
     with patch("certapi.manager.acme_cert_manager.AcmeCertManager.setup") as mock_acme_setup:
         mock_acme_setup.return_value = None
         config = get_test_config()
+        # A shared directory keeps self-signed certificates from earlier runs, which hides missing ones.
+        config["ssl_dir"] = str(tmp_path / "ssl")
+        config["challenge_dir"] = str(tmp_path / "acme-challenges") + "/"
         webserver = WebServer(docker_client, config, nginx_update_throtle_sec=0.1)
         yield webserver
 
@@ -186,14 +204,12 @@ def webserver_for_error_tests(docker_client: DockerTestClient):
 def test_error_resilience(webserver_for_error_tests, error, hostname):
     """Test that various errors during certificate issuance don't crash the application and fallback to self-signed"""
     webserver = webserver_for_error_tests
+    hosts = [Host(hostname=hostname, port=443, scheme={"https"})]
 
-    with patch.object(webserver.ssl_processor.cert_manager, "obtain", side_effect=error):
-        hosts = [Host(hostname=hostname, port=443, scheme={"https"})]
+    _render_after_failed_issuance(webserver, hosts, error)
 
-        webserver.ssl_processor.process_ssl_certificates(hosts)
-
-        # Should fallback to self-signed
-        assert hosts[0].ssl_file == f"{hostname}.selfsigned"
+    # certapi answers the failure with a self-signed certificate, which the next render serves
+    assert hosts[0].ssl_file == f"{hostname}.selfsigned"
 
 
 # ============================================================================
@@ -275,14 +291,12 @@ def test_webserver_continues_after_errors(docker_client: DockerTestClient, error
 def test_fallback_to_selfsigned_on_failure(webserver_for_error_tests, error, hostname):
     """Test that system falls back to self-signed certificates on various failures"""
     webserver = webserver_for_error_tests
+    hosts = [Host(hostname=hostname, port=443, scheme={"https"})]
 
-    with patch.object(webserver.ssl_processor.cert_manager, "obtain", side_effect=error):
-        hosts = [Host(hostname=hostname, port=443, scheme={"https"})]
+    _render_after_failed_issuance(webserver, hosts, error)
 
-        webserver.ssl_processor.process_ssl_certificates(hosts)
-
-        # Should have self-signed certificate
-        assert hosts[0].ssl_file == f"{hostname}.selfsigned"
+    # Should have self-signed certificate
+    assert hosts[0].ssl_file == f"{hostname}.selfsigned"
 
 
 def test_failed_initial_request_delegates_fallback_to_renewal_manager(webserver_for_error_tests):
@@ -296,6 +310,7 @@ def test_failed_initial_request_delegates_fallback_to_renewal_manager(webserver_
         patch.object(processor.renewal_manager, "update_watch_domains") as mock_update_watch_domains,
     ):
         processor.process_ssl_certificates(hosts)
+        _wait_for(lambda: mock_update_watch_domains.called)
 
     mock_obtain.assert_not_called()
     mock_update_watch_domains.assert_any_call(["test-fallback-delegated.example.com"])
@@ -306,20 +321,18 @@ def test_multiple_simultaneous_cert_errors(webserver_for_error_tests):
     webserver = webserver_for_error_tests
 
     error = CertApiException("ACME failure", step="Test")
+    hosts = [
+        Host(hostname="test-multi-1.example.com", port=443, scheme={"https"}),
+        Host(hostname="test-multi-2.example.com", port=443, scheme={"https"}),
+        Host(hostname="test-multi-3.example.com", port=443, scheme={"https"}),
+    ]
 
-    with patch.object(webserver.ssl_processor.cert_manager, "obtain", side_effect=error):
-        hosts = [
-            Host(hostname="test-multi-1.example.com", port=443, scheme={"https"}),
-            Host(hostname="test-multi-2.example.com", port=443, scheme={"https"}),
-            Host(hostname="test-multi-3.example.com", port=443, scheme={"https"}),
-        ]
+    # Should not crash with multiple failures
+    _render_after_failed_issuance(webserver, hosts, error)
 
-        # Should not crash with multiple failures
-        webserver.ssl_processor.process_ssl_certificates(hosts)
-
-        # All should have self-signed certificates
-        for host in hosts:
-            assert host.ssl_file.endswith(".selfsigned")
+    # All should have self-signed certificates
+    for host in hosts:
+        assert host.ssl_file == f"{host.hostname}.selfsigned"
 
 
 def test_wildcard_cert_error_handling(webserver_for_error_tests):
@@ -327,16 +340,15 @@ def test_wildcard_cert_error_handling(webserver_for_error_tests):
     webserver = webserver_for_error_tests
 
     error = CertApiException("Wildcard cert failure", step="Test")
+    hosts = [Host(hostname="*.wildcard-test.example.com", port=443, scheme={"https"})]
 
-    with patch.object(webserver.ssl_processor.renewal_manager, "update_watch_domains") as mock_update_watch_domains:
-        hosts = [Host(hostname="*.wildcard-test.example.com", port=443, scheme={"https"})]
+    # Should not crash
+    _render_after_failed_issuance(webserver, hosts, error)
 
-        # Should not crash
-        webserver.ssl_processor.process_ssl_certificates(hosts)
-
-        # Should fallback to self-signed
-        assert hosts[0].ssl_file == "*.wildcard-test.example.com.selfsigned"
-        mock_update_watch_domains.assert_any_call(["*.wildcard-test.example.com"])
+    # Should fallback to self-signed, and the wildcard stays watched for renewal
+    assert hosts[0].ssl_file == "*.wildcard-test.example.com.selfsigned"
+    renewal_manager = webserver.ssl_processor.renewal_manager
+    _wait_for(lambda: "*.wildcard-test.example.com" in renewal_manager.get_state()["watched_domains"])
 
 
 def test_fresh_wildcard_cert_remains_preferred(webserver_for_error_tests):
@@ -357,6 +369,7 @@ def test_fresh_wildcard_cert_remains_preferred(webserver_for_error_tests):
         patch.object(webserver.ssl_processor.renewal_manager, "update_watch_domains") as mock_update_watch_domains,
     ):
         webserver.ssl_processor.process_ssl_certificates(hosts)
+        _wait_for(lambda: mock_update_watch_domains.called)
 
     assert hosts[0].ssl_file == "*.example.com"
     assert hosts[1].ssl_file == "*.example.com"
@@ -386,6 +399,7 @@ def test_fresh_wildcard_is_preferred_over_existing_specific_cert(webserver_for_e
         patch.object(webserver.ssl_processor.renewal_manager, "update_watch_domains") as mock_update_watch_domains,
     ):
         webserver.ssl_processor.process_ssl_certificates(hosts)
+        _wait_for(lambda: mock_update_watch_domains.called)
 
     assert hosts[0].ssl_file == wildcard
     assert hosts[1].ssl_file == wildcard
@@ -410,6 +424,7 @@ def test_wildcard_near_expiry_is_not_preferred(webserver_for_error_tests):
         patch.object(webserver.ssl_processor.renewal_manager, "update_watch_domains") as mock_update_watch_domains,
     ):
         webserver.ssl_processor.process_ssl_certificates(hosts)
+        _wait_for(lambda: mock_update_watch_domains.called)
 
     assert hosts[0].ssl_file == "*.example.com"
     assert hosts[1].ssl_file == "*.example.com"
@@ -456,6 +471,7 @@ def test_initial_failure_for_existing_cert_delegates_retry_to_renewal_manager(we
         patch.object(processor.renewal_manager, "update_watch_domains") as mock_update_watch_domains,
     ):
         processor.process_ssl_certificates([Host(hostname=hostname, port=443, scheme={"https"})])
+        _wait_for(lambda: mock_update_watch_domains.called)
 
     mock_obtain.assert_not_called()
     mock_update_watch_domains.assert_called_once_with([hostname])
@@ -481,6 +497,7 @@ def test_failed_wildcard_with_existing_cert_gets_concrete_individual_cert(webser
         patch.object(processor.renewal_manager, "update_watch_domains") as mock_update_watch_domains,
     ):
         webserver.ssl_processor.process_ssl_certificates(hosts)
+        _wait_for(lambda: mock_update_watch_domains.called)
 
     assert hosts[0].ssl_file == wildcard
     assert hosts[1].ssl_file == wildcard
@@ -515,7 +532,15 @@ def test_stale_wildcard_switches_to_specific_cert_after_successful_renewal(webse
     with (
         patch.object(processor.key_store, "find_key_and_cert_by_domain", side_effect=find_cert),
         patch.object(processor.renewal_manager, "update_watch_domains", side_effect=update_watch_domains),
+        patch.object(webserver, "enqueue_reload") as mock_enqueue_reload,
     ):
+        webserver.ssl_processor.process_ssl_certificates(hosts)
+        # nginx keeps the stale wildcard until the renewal thread has the specific certificate on disk.
+        assert hosts[0].ssl_file == wildcard
+        assert hosts[1].ssl_file == wildcard
+
+        _wait_for(lambda: mock_enqueue_reload.called)
+        mock_enqueue_reload.assert_called_once_with(force=True)
         webserver.ssl_processor.process_ssl_certificates(hosts)
 
     assert hosts[0].ssl_file == wildcard
@@ -544,6 +569,7 @@ def test_failed_wildcard_expiring_within_48h_triggers_individual_dependent_issua
         patch.object(processor.renewal_manager, "update_watch_domains") as mock_update_watch_domains,
     ):
         processor.process_ssl_certificates(hosts)
+        _wait_for(lambda: mock_update_watch_domains.called)
 
     assert hosts[0].ssl_file == wildcard
     assert hosts[1].ssl_file == wildcard

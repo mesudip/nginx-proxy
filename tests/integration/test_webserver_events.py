@@ -118,7 +118,10 @@ def test_webserver_initialization_integration(nginx_proxy_container: docker.mode
     # Check locations within the default server
     assert len(default_server.locations) >= 3  # At least 3 locations: acme, 503_default, /
 
-    acme_loc = next((loc for loc in default_server.locations if loc.path == "/.well-known/acme-challenge/"), None)
+    acme_loc = next(
+        (loc for loc in default_server.locations if loc.path.removeprefix("^~ ") == "/.well-known/acme-challenge/"),
+        None,
+    )
     assert acme_loc is not None
     assert acme_loc.alias == "/etc/nginx/acme-challenges/"  # This path is inside the container
     assert acme_loc.try_files == "$uri =404"

@@ -87,6 +87,7 @@ def start_backend(
     sleep=True,
     pytest_request=None,
     healthcheck=None,
+    replicas: int = 1,
 ) -> docker.models.containers.Container | docker.models.services.Service:
     image_name = "mesudip/test-backend:test"
 
@@ -118,6 +119,8 @@ def start_backend(
         service_kwargs = {}
         if healthcheck is not None:
             service_kwargs["healthcheck"] = healthcheck
+        if replicas != 1:
+            service_kwargs["mode"] = {"Replicated": {"Replicas": replicas}}
         backend = docker_client.services.create(
             image=image_name,
             env=env_list,
@@ -129,6 +132,8 @@ def start_backend(
         if sleep:
             time.sleep(5)
     else:
+        if replicas != 1:
+            raise ValueError("replicas is only supported for service backends")
         container_kwargs = {}
         if healthcheck is not None:
             container_kwargs["healthcheck"] = healthcheck

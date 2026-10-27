@@ -9,6 +9,9 @@ from nginx_proxy.pre_processors.virtual_host_processor import _validate_external
 
 _SAFE_STATIC_SITE_ROOT = re.compile(r"^[A-Za-z0-9_./-]+$")
 
+VHOST_CONFIG_FILENAME = "nginx_vhost.conf"
+_MAX_VHOST_CONFIG_BYTES = 64 * 1024
+
 
 def _is_safe_static_site_root(root: str) -> bool:
     return bool(_SAFE_STATIC_SITE_ROOT.fullmatch(root))
@@ -19,6 +22,44 @@ def _is_path_inside_root(path: str, root: str) -> bool:
         return os.path.commonpath([root, path]) == root
     except ValueError:
         return False
+
+
+def _read_vhost_config(domain: str, domain_path: str, root_realpath: str) -> str | None:
+    """
+    Read the optional per-domain nginx snippet at <domain>/nginx_vhost.conf.
+
+    It sits beside `current/` rather than inside it, so nginx never serves it to
+    clients and a deploy swapping the `current` symlink does not disturb it. The
+    contents are emitted verbatim into the location block, so whatever is written
+    here has to be valid inside `location { }`.
+    """
+    path = os.path.join(domain_path, VHOST_CONFIG_FILENAME)
+    try:
+        if not os.path.isfile(path):
+            return None
+        realpath = os.path.realpath(path)
+        if not _is_path_inside_root(realpath, root_realpath):
+            print(
+                f"[static-site] WARNING: Ignoring {VHOST_CONFIG_FILENAME} for {domain}: "
+                f"symlink target escapes STATIC_SITE_ROOT ({path} -> {realpath})",
+                file=sys.stderr,
+            )
+            return None
+        size = os.path.getsize(realpath)
+        if size > _MAX_VHOST_CONFIG_BYTES:
+            print(
+                f"[static-site] WARNING: Ignoring {VHOST_CONFIG_FILENAME} for {domain}: "
+                f"file is {size} bytes, limit is {_MAX_VHOST_CONFIG_BYTES}",
+                file=sys.stderr,
+            )
+            return None
+        with open(path, "r") as config_file:
+            content = config_file.read()
+    except OSError as e:
+        print(f"[static-site] WARNING: Could not read {path}, ignoring: {e}", file=sys.stderr)
+        return None
+
+    return content.strip() or None
 
 
 def process_static_sites(static_site_root: str = "/static") -> ProxyConfigData:
@@ -96,8 +137,14 @@ def process_static_sites(static_site_root: str = "/static") -> ProxyConfigData:
             backend_type="static_site",
         )
         host.add_container("/", backend, websocket=False, http=True)
+
+        vhost_config = _read_vhost_config(domain, domain_path, root_realpath)
+        if vhost_config:
+            host.locations["/"].update_extras({"vhost_config": vhost_config})
+
         hosts.add_host(host)
-        print(f"[static-site] Hosting {domain} from {current_path}")
+        suffix = f" with {VHOST_CONFIG_FILENAME}" if vhost_config else ""
+        print(f"[static-site] Hosting {domain} from {current_path}{suffix}")
 
     return hosts
 

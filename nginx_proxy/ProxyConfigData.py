@@ -3,6 +3,7 @@ from typing import Dict, Set, Generator, Tuple, Union
 from nginx_proxy.BackendTarget import BackendTarget
 from nginx_proxy.Host import Host
 from nginx_proxy.Location import Location
+from nginx_proxy.utils import short_id
 
 
 class ProxyConfigData:
@@ -128,13 +129,16 @@ class ProxyConfigData:
     def printextra(gap, extra):
         print(gap + "Extras:")
         for x in extra:
+            value = extra[x]
+            if x == "injected_by_backend" and isinstance(value, dict):
+                value = {short_id(backend_id): directives for backend_id, directives in value.items()}
             if x == "security" or type(x) in (set, list):
                 print(gap + "  " + x + ":")
-                for s in extra[x]:
+                for s in value:
                     print(gap + "    " + s)
             elif type(x) is dict:
                 print(gap + "  " + x + ":")
-                for s in extra[x]:
-                    print(gap + "    " + s + ":" + extra[x][s])
+                for s in value:
+                    print(gap + "    " + s + ":" + value[s])
             else:
-                print(gap + "  " + x + " : " + str(extra[x]))
+                print(gap + "  " + x + " : " + str(value))

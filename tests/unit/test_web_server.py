@@ -169,6 +169,31 @@ def test_register_static_sites_merges_root_with_existing_path_proxy(web_server):
     assert host.locations["/"].backends[0].type == "static_site"
 
 
+def test_register_static_sites_skips_only_the_site_that_fails_validation(web_server, capsys):
+    sites = ProxyConfigData()
+    for hostname in ("a.example.com", "bad.example.com", "c.example.com"):
+        sites.add_host(_static_site_config(hostname).getHost(hostname, 443))
+    web_server.config_data = ProxyConfigData()
+    web_server.config["default_ssl_domains"] = ["default.example.com"]
+    # nginx rejects any config that contains the broken site, e.g. a typo in its nginx_vhost.conf
+    web_server.nginx.validate_config.side_effect = lambda output: ("bad.example.com" not in output, "unknown directive")
+
+    def render(config_data, **kwargs):
+        return " ".join(host.hostname for host in config_data.host_list())
+
+    with (
+        patch("nginx_proxy.WebServer.pre_processors.process_static_sites", return_value=sites),
+        patch.object(web_server, "_render_config", side_effect=render),
+    ):
+        web_server._register_static_sites()
+
+    registered = {host.hostname for host in web_server.config_data.host_list()}
+    assert registered == {"a.example.com", "c.example.com", "default.example.com"}
+    assert "Ignoring static site bad.example.com because generated nginx config failed validation" in (
+        capsys.readouterr().err
+    )
+
+
 def test_register_static_sites_adds_default_ssl_domains(web_server):
     web_server.config["default_ssl_domains"] = ["*.xyz.com"]
 
@@ -198,9 +223,10 @@ def test_register_static_sites_generates_missing_default_ssl_selfsigned_files(we
 
     web_server.config["default_ssl_domains"] = [hostname]
 
-    def set_ssl_file(hosts, update_watch_domains=True):
+    def set_ssl_file(hosts, update_watch_domains=True, exclude_missing=True):
         for rendered_host in hosts:
             rendered_host.ssl_file = f"{rendered_host.hostname}.selfsigned"
+        return hosts
 
     def fake_openssl(command, **kwargs):
         with open(command[command.index("-out") + 1], "w") as cert_file:
@@ -431,9 +457,10 @@ def test_validation_prepares_missing_selfsigned_certificate_files(web_server, tm
     )
     candidate.add_host(host)
 
-    def set_ssl_file(hosts, update_watch_domains=True):
+    def set_ssl_file(hosts, update_watch_domains=True, exclude_missing=True):
         for rendered_host in hosts:
             rendered_host.ssl_file = f"{rendered_host.hostname}.selfsigned"
+        return hosts
 
     web_server.ssl_processor.process_ssl_certificates.side_effect = set_ssl_file
 
@@ -632,3 +659,17 @@ def test_rescan_prefer_local_keeps_health_gate_for_swarm_task(web_server):
         web_server.rescan_all_container(bypass_start_grace=True)
 
     mock_register.assert_not_called()
+
+
+def test_do_reload_forces_nginx_reload_only_when_certificate_files_changed(web_server):
+    web_server.ssl_processor.pop_certificate_changes.return_value = False
+    web_server._do_reload(forced=False)
+    assert web_server.nginx.update_config.call_args.kwargs["force"] is False
+
+    web_server.ssl_processor.pop_certificate_changes.return_value = True
+    web_server._do_reload(forced=False)
+    assert web_server.nginx.update_config.call_args.kwargs["force"] is True
+
+    web_server.ssl_processor.pop_certificate_changes.return_value = False
+    web_server._do_reload(forced=True)
+    assert web_server.nginx.update_config.call_args.kwargs["force"] is True

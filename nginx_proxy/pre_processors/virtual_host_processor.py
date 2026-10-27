@@ -6,6 +6,20 @@ from nginx_proxy.BackendTarget import BackendTarget, InvalidHostConfiguration, N
 from nginx_proxy.utils import split_url
 
 
+def host_config_values(env_map: dict, prefix: str) -> list:
+    """
+    Collect the non-blank values of every environment variable starting with `prefix`.
+
+    Shared with DockerEventListener so that both agree on what counts as a
+    configured route; a blank value is a misconfiguration, not a route.
+    """
+    return [
+        value.strip()
+        for key, value in env_map.items()
+        if key.startswith(prefix) and isinstance(value, str) and value.strip()
+    ]
+
+
 def _normalize_address(address):
     if not isinstance(address, str):
         return None
@@ -166,7 +180,7 @@ def _parse_host_entry(entry_string: str):
     return (h, external["location"] if external["location"] else "/", c, extras)
 
 
-def host_generator(backend: BackendTarget, known_networks: set = {}):
+def host_generator(backend: BackendTarget, known_networks: set):
     """
     :param backend:
     :param known_networks:
@@ -175,13 +189,12 @@ def host_generator(backend: BackendTarget, known_networks: set = {}):
     env_map = backend.env
 
     # List all the environment variables with VIRTUAL_HOST and list them.
-    virtual_hosts = [x[1] for x in env_map.items() if x[0].startswith("VIRTUAL_HOST")]
-    static_hosts = [x[1] for x in env_map.items() if x[0].startswith("STATIC_VIRTUAL_HOST")]
+    virtual_hosts = host_config_values(env_map, "VIRTUAL_HOST")
+    static_hosts = host_config_values(env_map, "STATIC_VIRTUAL_HOST")
     if len(virtual_hosts) == 0 and len(static_hosts) == 0:
         raise NoHostConfiguration()
 
     known_networks = set(known_networks)
-    unknown = True
 
     # We need a clean object to return that represents the target
     target_base = BackendTarget(
@@ -192,26 +205,21 @@ def host_generator(backend: BackendTarget, known_networks: set = {}):
         backend_type=backend.type,
         backup=backend.backup,
     )
-
+    has_common_network = False
     found_ip = None
 
     if hasattr(backend, "network_settings") and backend.network_settings:
         for name, detail in backend.network_settings.items():
             target_base.add_network(detail.get("NetworkID"))
-            if detail.get("NetworkID") and detail.get("NetworkID") in known_networks and unknown:
+            if detail.get("NetworkID") and detail.get("NetworkID") in known_networks:
+                has_common_network = True
                 found_ip = _normalize_address(detail.get("IPAddress"))
                 # if detail["Aliases"] is not None: ...
                 if found_ip:
                     break
 
-    if not found_ip:
-        # If checking against known networks failed or no common network
-        has_known_network = any(network in known_networks for network in target_base.networks)
-        raise UnreachableNetwork(
-            target_base.networks,
-            backend_type=backend.type,
-            vip_not_ready=backend.type == "service" and has_known_network,
-        )
+    if not has_common_network:
+        raise UnreachableNetwork(target_base.networks, backend_type=backend.type)
 
     for host_config in static_hosts:
         host, location, container_data, extras = _parse_host_entry(host_config)
@@ -237,6 +245,21 @@ def host_generator(backend: BackendTarget, known_networks: set = {}):
         if container_data.port is None:
             container_data.port = 443 if ("https" in container_data.scheme or "wss" in container_data.scheme) else 80
         yield (host, location, container_data, extras)
+
+    # STATIC_VIRTUAL_HOST names an explicit destination, so it never needs an
+    # allocated VIP and is already yielded above. The shared-network check it still
+    # goes through is inherited behaviour, not a reachability requirement.
+    if len(virtual_hosts) == 0:
+        return
+
+    if not found_ip:
+        # A shared network exists (checked above) but carries no usable address,
+        # which for a swarm service means its VIP has not been allocated yet.
+        raise UnreachableNetwork(
+            target_base.networks,
+            backend_type=backend.type,
+            vip_not_ready=backend.type == "service",
+        )
 
     override_ssl = False
     override_port = None

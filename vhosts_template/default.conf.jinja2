@@ -41,11 +41,14 @@ server{
         {% if config.enable_ipv6 %}listen [::]:{{ server.port }} {{ server.extras.default_server }};{% endif %}{% endif %}
       {% if server.is_redirect %}
         return 301 {{  "https" if server.secured else "http" }}://{{ server.full_redirect.hostname }}$request_uri;{% elif server.is_down %}
-        return 503;{% else %} {% if server.extras.security %}
+        location / {
+            return 503;
+        }{% else %} {% if server.extras.security %}
         auth_basic "Basic Auth Enabled";
         auth_basic_user_file {{ server.extras.security_file }};{% endif %} {% for location in server.locations.values() %}
         location {{ location.name if location.name else '/'}} { {% for injection in location.extras.injected %}
-            {{ injection }};{% endfor %} {% if location.extras.security %}
+            {{ injection }};{% endfor %}{% if location.extras.vhost_config %}
+{{ location.extras.vhost_config | indent(12, first=True) }}{% endif %} {% if location.extras.security %}
             auth_basic "Basic Auth Enabled";
             auth_basic_user_file {{ location.extras.security_file }};{% endif %} {% if location.container.type == "static_site" %}
             root {{ location.container.path }};
@@ -53,28 +56,24 @@ server{
             try_files $uri $uri/ /index.html =404;{% elif location.upstream %}
             proxy_pass {{ location.container.scheme }}://{{ location.upstream }}{{location.container.path}};    # {{ location.container.type }}: {{ location.container.id[:12] }}{% else %}
             proxy_pass {{location.container.scheme }}://{{ location.container.address }}:{{ location.container.port }}{{ location.container.path }};  # {{ location.container.type }}: {{ location.container.id[:12] }}{% endif %}{% if location.name != '/' %}
-            proxy_redirect $scheme://$http_host{{ location.container.path if location.container.path else '/' }} $scheme://$http_host{{location.name}};{% endif %} {% if location.websocket and location.http %}
-            proxy_set_header Host $http_host;
-            proxy_set_header Connection $connection_upgrade;
-            proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $proxy_x_forwarded_proto;
-            proxy_set_header X-Forwarded-Ssl $proxy_x_forwarded_ssl;
-            proxy_set_header X-Forwarded-Port $proxy_x_forwarded_port;{% elif location.websocket %}
+            proxy_redirect $scheme://$http_host{{ location.container.path if location.container.path else '/' }} $scheme://$http_host{{location.name}};{% endif %} {% if location.reinsert_global_config %}{% for header_name, header_value in location.reinserted_proxy_set_headers %}
+            proxy_set_header {{ header_name }} {{ header_value }};{% endfor %}{% for header_name, header_value in location.reinserted_add_headers %}
+            add_header {{ header_name }} {{ header_value }};{% endfor %}{% endif %}{% if location.websocket and not location.http %}
             proxy_http_version 1.1;
-            proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection "Upgrade";
             proxy_read_timeout  1h;
             proxy_send_timeout 1h;{% endif %}
         }{% endfor %} {% if server.extras.default_redirect_target %}
         location / {
             return 301 https://{{ server.extras.default_redirect_target.hostname }}{% if server.extras.default_redirect_target.port and server.extras.default_redirect_target.port != 443 %}:{{ server.extras.default_redirect_target.port }}{% endif %}$request_uri;
         }{% endif %} {% endif %}{% if server.port == 80 %}
-        location {{ config.wellknown_path }} { {% if config.certapi and config.nginx_resolvers %}
+        location ^~ {{ config.wellknown_path }} {
+            auth_basic off; {% if config.certapi and config.nginx_resolvers %}
             set $certapi_endpoint {{ config.certapi.endpoint }};
             proxy_pass {{ config.certapi.scheme }}://$certapi_endpoint;{% elif config.certapi %}
-            proxy_pass {{ config.certapi.url }};{% else %}
+            proxy_pass {{ config.certapi.url }};{% endif %}{% if config.certapi %}
+            proxy_ssl_server_name on;
+            proxy_ssl_name {{ config.certapi.host }};
+            proxy_set_header Host {{ config.certapi.host_header }};{% else %}
             alias {{ config.challenge_dir }};
             try_files $uri =404;{% endif %}
         }{% endif %}
@@ -84,10 +83,14 @@ server {
         listen 80 {{ server.extras.default_server }};{% if config.enable_ipv6 %}
         listen [::]:80 {{ server.extras.default_server }};{% endif %}
         server_name {{ server.hostname }};
-        location {{ config.wellknown_path }} { {% if config.certapi and config.nginx_resolvers %}
+        location ^~ {{ config.wellknown_path }} {
+            auth_basic off; {% if config.certapi and config.nginx_resolvers %}
             set $certapi_endpoint {{ config.certapi.endpoint }};
             proxy_pass {{ config.certapi.scheme }}://$certapi_endpoint;{% elif config.certapi %}
-            proxy_pass {{ config.certapi.url }};{% else %}
+            proxy_pass {{ config.certapi.url }};{% endif %}{% if config.certapi %}
+            proxy_ssl_server_name on;
+            proxy_ssl_name {{ config.certapi.host }};
+            proxy_set_header Host {{ config.certapi.host_header }};{% else %}
             alias {{ config.challenge_dir }};
             try_files $uri =404;{% endif %}
         }
@@ -101,10 +104,14 @@ server{
         listen 80 default_server;
         {% if config.enable_ipv6 %}listen [::]:80 default_server;{% endif %}
         server_name _ ;
-        location {{ config.wellknown_path }} { {% if config.certapi and config.nginx_resolvers %}
+        location ^~ {{ config.wellknown_path }} {
+            auth_basic off; {% if config.certapi and config.nginx_resolvers %}
             set $certapi_endpoint {{ config.certapi.endpoint }};
             proxy_pass {{ config.certapi.scheme }}://$certapi_endpoint;{% elif config.certapi %}
-            proxy_pass {{ config.certapi.url }};{% else %}
+            proxy_pass {{ config.certapi.url }};{% endif %}{% if config.certapi %}
+            proxy_ssl_server_name on;
+            proxy_ssl_name {{ config.certapi.host }};
+            proxy_set_header Host {{ config.certapi.host_header }};{% else %}
             alias {{ config.challenge_dir }};
             try_files $uri =404;{% endif %}
         }

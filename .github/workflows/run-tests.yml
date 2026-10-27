@@ -14,6 +14,11 @@ on:
 
 jobs:
   test:
+    # A PR from a branch the push trigger already tests would only repeat that run.
+    if: >-
+      github.event_name == 'push' ||
+      github.event.pull_request.head.repo.full_name != github.repository ||
+      !contains(fromJSON('["master", "dev", "develop"]'), github.head_ref)
     runs-on: ubuntu-latest
     concurrency:
       group: test-${{ github.event.pull_request.head.sha || github.sha }}
@@ -22,10 +27,10 @@ jobs:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -138,7 +143,7 @@ jobs:
 
       - name: Upload coverage reports to Codecov
         if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage.xml
@@ -147,7 +152,7 @@ jobs:
 
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: junit.xml

@@ -87,8 +87,8 @@ Control the default behavior of `nginx-proxy`:
 | `ENABLE_IPV6` | `false` | Enable IPv6 support on nginx. |
 | `DOCKER_SWARM` | `ignore` | Controls Docker Swarm discovery. Supported values are `ignore`, `exclude`, `enable`, `prefer-local`, and `strict`; see [Docker Swarm Support](#docker-swarm-support-preview). |
 | `SWARM_DOCKER_HOST` | - | URL of the Swarm manager socket (e.g., `tcp://manager:2375`). |
-| `CERTAPI_URL` | - | External Certificate API URL. Must start with `http://` or `https://`. |
-| `CERTAPI_BATCH_DOMAINS` | `true` | When using `CERTAPI_URL`, request safe domain batching (`batch_domains=true`) to avoid recursive domain-order errors. |
+| `CERTAPI_URL` | - | External Certificate API origin, e.g. `http://certapi:8080` or `https://certapi.example.com`. Paths, query strings, fragments, and embedded credentials are not supported. |
+| `CERTAPI_BATCH_DOMAINS` | `true` | Split certificate requests into safe batches, for `getssl` and for automatic issuance and renewal, with local ACME or `CERTAPI_URL`. With `false`, all due domains go into one certificate. |
 | `NGINX_RESOLVER` | `/etc/resolv.conf` nameservers | Resolver used by nginx for runtime DNS lookups when proxying ACME challenges to `CERTAPI_URL`. When no resolver is detected or configured, nginx renders the literal `CERTAPI_URL` in `proxy_pass` so startup fails visibly if that host cannot be resolved. Set this explicitly if automatic resolver detection is not correct for your network mode. |
 | `CHALLENGE_DIR` | `/etc/nginx/challenges/` | Base directory for acme challenge store, when requesting certificates with acme. `.well-known/acme-challenge` folder lives inside this.|
 | `CLOUDFLARE_API_KEY_KEY*` | - | Cloudflare api keys to issue DNS certificates.|
@@ -116,6 +116,8 @@ To expose a container, set the `VIRTUAL_HOST*` environment variable. The contain
 
 **Note:** Directives separated by `;` are injected into the Nginx `location` block.
 Example: `VIRTUAL_HOST=site.com; proxy_read_timeout 900;`
+
+`nginx-proxy` always reserves `/.well-known/acme-challenge/` on HTTP port 80 for ACME HTTP-01 validation. Other `/.well-known/...` routes are supported normally through path-based `VIRTUAL_HOST` entries because Nginx will prefer the more specific ACME location only for challenge requests.
 
 ### WebSockets
 WebSocket support requires explicit configuration if the protocol is not detected automatically.
@@ -149,6 +151,8 @@ Files are served from `$STATIC_SITE_ROOT/$domain/current`. For example, `/static
 
 `current` can be a symlink to an active release directory inside `STATIC_SITE_ROOT`, which allows versioned deploys by switching the symlink and issuing a reload/HUP. Symlinks that resolve outside `STATIC_SITE_ROOT` are ignored. Static site locations also render `disable_symlinks on from=$document_root;` so symlinks inside the served document root cannot expose files outside the site. Static site directories are scanned only during a full reload. Invalid domain directory names are ignored with a warning.
 
+An optional `nginx_vhost.conf` beside `current` (`$STATIC_SITE_ROOT/$domain/nginx_vhost.conf`) adds nginx directives to the site's `location /`, for example `expires 1h;`. It is included as written, so treat it like the proxy's own nginx configuration. Each static site is validated on its own: a site whose generated config fails `nginx -t` is skipped with a warning naming it, and the others are still served.
+
 Static sites are mounted at `/`. Container-backed proxy locations can still be configured on more specific paths such as `/api` or `/admin`. If a container configures `/` for the same domain, that container route overrides the static site root and `nginx-proxy` logs a warning.
 
 ## Docker Swarm Support [Preview]
@@ -160,7 +164,7 @@ Docker Swarm discovery is controlled by the `DOCKER_SWARM` environment variable 
 
 | `DOCKER_SWARM` value | Local containers | Swarm services | Use case |
 | :--- | :--- | :--- | :--- |
-| `ignore` | Included | Not discovered | Default Docker-only behavior. Swarm task containers are treated like standalone containers if they are visible on the local Docker socket. |
+| `ignore` | Included | Not discovered | **Default** Docker-only behavior. Swarm task containers are treated like standalone containers if they are visible on the local Docker socket. |
 | `exclude` | Included | Not discovered | Docker-only discovery while explicitly ignoring containers that belong to Swarm services. |
 | `enable` | Included | Included | Mixed mode. Use this when `nginx-proxy` should route both standalone containers and Swarm services. |
 | `prefer-local` | Included | Included | Mixed Swarm mode that prefers healthy local task containers and keeps the service VIP as a fallback. |
@@ -195,11 +199,23 @@ Redirect traffic from one domain to another.
 ```
 
 ### Sticky Sessions
-Enable session affinity (sticky sessions) for load balancing.
-Set `NGINX_STICKY_SESSION` on the **backend container**.
-- `true` or `ip_hash` – enable `ip_hash` balancing.
-- `false` – disable stickiness (round-robin).
-- Any other string – injected verbatim (e.g., `hash $cookie_sessionid consistent`).
+Set `NGINX_STICKY_SESSION` on every backend for a route that has multiple backends.
+
+- `true` or `ip_hash` enables simple client-IP affinity:
+  ```bash
+  docker run -e VIRTUAL_HOST=app.example.com -e NGINX_STICKY_SESSION=true ...
+  ```
+- `false` disables affinity and uses round-robin balancing.
+- An advanced value is inserted as an Nginx upstream directive. For application-managed
+  cookies, use `hash $cookie_sessionid consistent`; the application must set the
+  `sessionid` cookie. In Compose, escape the variable as
+  `NGINX_STICKY_SESSION: "hash $$cookie_sessionid consistent"`.
+
+All backends for the route must use the same value. `ip_hash` uses the client address
+seen by Nginx, so clients behind the same NAT or proxy may share an affinity target.
+In `prefer-local` mode, sticky balancing across multiple local tasks omits the
+incompatible service-VIP backup. Docker events restore VIP routing when local tasks
+disappear.
 
 ## SSL Support
 `nginx-proxy` automatically requests and renews Let's Encrypt certificates.
@@ -208,6 +224,8 @@ Set `NGINX_STICKY_SESSION` on the **backend container**.
 1. Expose ports 80 and 443 on `nginx-proxy`.
 2. Map `/etc/nginx/ssl` and `/etc/nginx/challenges`.
 3. Set `VIRTUAL_HOST` to start with `https://` in your containers.
+
+nginx never waits for certificates. On startup and on every reload it serves every host with the certificate already on disk, expired ones included, and a new host is served self-signed while its certificate is requested. A host with neither is left out until one exists. Issuance and renewal run on a background thread and nginx is reloaded again once the new certificate files are in place.
 
 ### Wildcard Certificates With Cloudflare DNS
 To issue wildcard certificates (e.g., `*.example.com`) or avoid exposing port 80, you can use DNS challenges via Cloudflare.
@@ -272,9 +290,17 @@ docker exec nginx-proxy verify www.example.com ## check if request routes back t
 
 docker exec nginx-proxy getssl www.example.com example.com www2.example.com # issue certificate
 
+docker exec nginx-proxy getssl --force www.example.com # skip the preliminary reachability check; ACME still validates
+
 docker exec nginx-proxy reload # rescan Docker state and reload nginx config
 
 ```
+
+`verify` checks every requested hostname by serving a temporary token and comparing the exact response from its HTTP port 80 challenge URL. With `CERTAPI_URL`, it calls CertAPI's `/api/verify`: the token is stored and checked by the CertAPI server through the public domain and nginx's challenge proxy. This requires CertAPI 1.1.17 or newer on both the proxy client and API server. Upgrade the CertAPI server before rebuilding/redeploying the proxy; older servers produce an explicit error. Verification does not request a certificate and does not use DNS-provider support as proof of HTTP routing. Wildcards cannot pass this HTTP check; wildcard issuance can still use a configured DNS solver.
+
+`verify` exits nonzero if any domain fails and prints the cause it can find for each one (invalid hostname, DNS, connection refused, timeout, redirect); with CertAPI, the server's log has the rest. `getssl` uses the same certificate backend as automatic issuance and renewal, enables self-verification by default, and exits nonzero for incomplete issuance or a failed nginx reload. Remote certificates, including reused and wildcard certificates, are saved into the proxy's local SSL directory before reload. `--force` skips the preliminary check in both local and CertAPI modes; it does not skip ACME validation. Known issue: `getssl` reloads nginx without re-rendering the configuration, so a host still served with its self-signed certificate keeps it until the next Docker event; run `docker exec nginx-proxy reload` afterwards.
+
+For local regression testing, `tests/test_certapi_routing.py` runs nginx and a temporary CertAPI service on loopback ports. It covers local challenges, HTTP and HTTPS CertAPI origins, runtime upstream routing, redirects, basic auth, unavailable backends, and certificate storage/reuse. Install nginx, pytest, flask, and flask-restx alongside the project dependencies to run it. Test certificates are signed by a temporary local CA.
 
 ## 🚀 Roadmap
 We are constantly improving `nginx-proxy` to make it the most robust and versatile zero-config reverse proxy solution. Here’s what’s coming next:

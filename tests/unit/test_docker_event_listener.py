@@ -155,7 +155,7 @@ def test_process_service_upsert_retries_when_service_is_not_found(web_server: We
 
 
 def test_process_service_upsert_retries_when_service_vip_is_not_reachable(
-    web_server: WebServer, docker_client, swarm_client
+    web_server: WebServer, docker_client, swarm_client, capsys
 ):
     web_server.networks = {"net1": "frontend", "frontend": "net1"}
     listener = DockerEventListener(web_server, docker_client, swarm_client)
@@ -166,7 +166,10 @@ def test_process_service_upsert_retries_when_service_vip_is_not_reachable(
         "Spec": {
             "Name": "service-name",
             "Labels": {},
-            "TaskTemplate": {"ContainerSpec": {"Env": ["VIRTUAL_HOST=service.example.com"]}},
+            "TaskTemplate": {
+                "ContainerSpec": {"Env": ["VIRTUAL_HOST=service.example.com"]},
+                "Networks": [{"Target": "net1"}],
+            },
         },
         "Endpoint": {
             "Ports": [{"Protocol": "tcp", "TargetPort": 80}],
@@ -180,6 +183,141 @@ def test_process_service_upsert_retries_when_service_vip_is_not_reachable(
 
     mock_schedule.assert_called_once_with(service_id, "create", 20, attempt=2)
     web_server.update_backend.assert_not_called()
+    assert "WARN: Service service1 (service-name) has no reachable VIP; retrying in 20s" in capsys.readouterr().err
+
+
+def test_process_service_upsert_does_not_retry_unconfigured_service(web_server: WebServer, docker_client, swarm_client):
+    web_server.networks = {"net1": "frontend", "frontend": "net1"}
+    listener = DockerEventListener(web_server, docker_client, swarm_client)
+    mock_service = MagicMock()
+    mock_service.id = "service1"
+    mock_service.attrs = {
+        "Spec": {
+            "Name": "worker-service",
+            "Labels": {},
+            "TaskTemplate": {"ContainerSpec": {"Env": ["WORKER_COUNT=2"]}},
+        },
+        "Endpoint": {"VirtualIPs": []},
+    }
+    swarm_client.services.get.return_value = mock_service
+
+    with patch.object(listener, "_schedule_service_processing") as mock_schedule:
+        listener._process_service_upsert("service1", "create", attempt=1)
+
+    mock_schedule.assert_not_called()
+    web_server.update_backend.assert_called_once()
+
+
+def test_process_service_upsert_does_not_retry_dynamic_host_on_unrelated_network(
+    web_server: WebServer, docker_client, swarm_client
+):
+    web_server.networks = {"net1": "frontend", "frontend": "net1"}
+    listener = DockerEventListener(web_server, docker_client, swarm_client)
+    mock_service = MagicMock()
+    mock_service.id = "service1"
+    mock_service.attrs = {
+        "Spec": {
+            "Name": "isolated-service",
+            "Labels": {},
+            "TaskTemplate": {
+                "ContainerSpec": {"Env": ["VIRTUAL_HOST=isolated.example.com"]},
+                "Networks": [{"Target": "backend-only"}],
+            },
+        },
+        "Endpoint": {"VirtualIPs": []},
+    }
+    swarm_client.services.get.return_value = mock_service
+
+    with patch.object(listener, "_schedule_service_processing") as mock_schedule:
+        listener._process_service_upsert("service1", "create", attempt=1)
+
+    mock_schedule.assert_not_called()
+    web_server.update_backend.assert_called_once()
+
+
+def test_process_service_upsert_does_not_retry_static_host_without_vip_on_shared_network(
+    web_server: WebServer, docker_client, swarm_client
+):
+    web_server.networks = {"net1": "frontend", "frontend": "net1"}
+    listener = DockerEventListener(web_server, docker_client, swarm_client)
+    mock_service = MagicMock()
+    mock_service.id = "service1"
+    mock_service.attrs = {
+        "Spec": {
+            "Name": "static-service",
+            "Labels": {},
+            "TaskTemplate": {
+                "ContainerSpec": {"Env": ["STATIC_VIRTUAL_HOST=static.example.com -> http://192.0.2.10:8080"]},
+                "Networks": [{"Target": "net1"}],
+            },
+        },
+        "Endpoint": {"VirtualIPs": []},
+    }
+    swarm_client.services.get.return_value = mock_service
+
+    with patch.object(listener, "_schedule_service_processing") as mock_schedule:
+        listener._process_service_upsert("service1", "create", attempt=1)
+
+    mock_schedule.assert_not_called()
+    web_server.update_backend.assert_called_once()
+
+
+def test_process_service_upsert_applies_static_host_before_retrying_mixed_host(
+    web_server: WebServer, docker_client, swarm_client
+):
+    web_server.networks = {"net1": "frontend", "frontend": "net1"}
+    listener = DockerEventListener(web_server, docker_client, swarm_client)
+    mock_service = MagicMock()
+    mock_service.id = "service1"
+    mock_service.attrs = {
+        "Spec": {
+            "Name": "mixed-service",
+            "Labels": {},
+            "TaskTemplate": {
+                "ContainerSpec": {
+                    "Env": [
+                        "STATIC_VIRTUAL_HOST=static.example.com -> http://192.0.2.10:8080",
+                        "VIRTUAL_HOST=dynamic.example.com",
+                    ]
+                },
+                "Networks": [{"Target": "net1"}],
+            },
+        },
+        "Endpoint": {"VirtualIPs": []},
+    }
+    swarm_client.services.get.return_value = mock_service
+
+    with patch.object(listener, "_schedule_service_processing") as mock_schedule:
+        listener._process_service_upsert("service1", "create", attempt=1)
+
+    web_server.update_backend.assert_called_once()
+    mock_schedule.assert_called_once_with("service1", "create", 20, attempt=2)
+
+
+def test_process_service_upsert_ignores_blank_virtual_host(web_server: WebServer, docker_client, swarm_client):
+    """A blank VIRTUAL_HOST must not be retried as a pending route; host_generator ignores it too."""
+    web_server.networks = {"net1": "frontend", "frontend": "net1"}
+    listener = DockerEventListener(web_server, docker_client, swarm_client)
+    mock_service = MagicMock()
+    mock_service.id = "service1"
+    mock_service.attrs = {
+        "Spec": {
+            "Name": "blank-host-service",
+            "Labels": {},
+            "TaskTemplate": {
+                "ContainerSpec": {"Env": ["VIRTUAL_HOST="]},
+                "Networks": [{"Target": "net1"}],
+            },
+        },
+        "Endpoint": {"VirtualIPs": []},
+    }
+    swarm_client.services.get.return_value = mock_service
+
+    with patch.object(listener, "_schedule_service_processing") as mock_schedule:
+        listener._process_service_upsert("service1", "create", attempt=1)
+
+    mock_schedule.assert_not_called()
+    web_server.update_backend.assert_called_once()
 
 
 def test_process_service_event_remove(web_server: WebServer, docker_client, swarm_client):

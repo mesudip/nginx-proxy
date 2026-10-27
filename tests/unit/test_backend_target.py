@@ -75,6 +75,43 @@ class TestBackendTargetFromService:
         assert bt.network_settings["net1"]["IPAddress"] == "10.0.0.5"
         assert "80/tcp" in bt.ports
 
+    def test_from_service_preserves_network_attachment_before_vip_is_allocated(self):
+        service = MagicMock()
+        service.id = "service-pending-vip"
+        service.attrs = {
+            "Spec": {
+                "Name": "pending-vip-service",
+                "TaskTemplate": {
+                    "ContainerSpec": {"Env": ["VIRTUAL_HOST=pending.example.com"]},
+                    "Networks": [{"Target": "frontend-id"}],
+                },
+            },
+            "Endpoint": {"VirtualIPs": []},
+        }
+
+        bt = BackendTarget.from_service(service)
+
+        assert bt.network_settings == {"frontend-id": {"NetworkID": "frontend-id", "IPAddress": ""}}
+
+    def test_from_service_prefers_allocated_vip_over_pending_attachment(self):
+        service = MagicMock()
+        service.id = "service-mixed-vip"
+        service.attrs = {
+            "Spec": {
+                "Name": "mixed-vip-service",
+                "TaskTemplate": {
+                    "ContainerSpec": {"Env": ["VIRTUAL_HOST=mixed.example.com"]},
+                    "Networks": [{"Target": "pending-id"}, {"Target": "frontend-id"}],
+                },
+            },
+            "Endpoint": {"VirtualIPs": [{"NetworkID": "frontend-id", "Addr": "10.0.0.7/16"}]},
+        }
+
+        bt = BackendTarget.from_service(service)
+
+        assert bt.network_settings["frontend-id"]["IPAddress"] == "10.0.0.7"
+        assert bt.network_settings["pending-id"]["IPAddress"] == ""
+
 
 class TestVirtualHostProcessorWithBackendTarget:
     def test_host_generator_with_backend_target(self):
@@ -377,6 +414,81 @@ class TestVirtualHostProcessorWithBackendTarget:
 
         config_data = process_virtual_hosts(bt, known_networks)
         assert len(list(config_data.host_list())) == 0
+
+    def test_process_static_virtual_host_requires_shared_docker_network(self):
+        bt = BackendTarget(
+            id="static-host-id",
+            name="static-host-test",
+            env={"STATIC_VIRTUAL_HOST": "static.example.com -> http://192.0.2.10:8080"},
+            network_settings={},
+            backend_type="service",
+        )
+
+        config_data = process_virtual_hosts(bt, {"frontend-id"})
+
+        assert len(list(config_data.host_list())) == 0
+
+    def test_process_static_virtual_host_does_not_require_vip_on_shared_network(self):
+        bt = BackendTarget(
+            id="static-host-id",
+            name="static-host-test",
+            env={"STATIC_VIRTUAL_HOST": "static.example.com -> http://192.0.2.10:8080"},
+            network_settings={"frontend": {"NetworkID": "frontend-id", "IPAddress": ""}},
+            backend_type="service",
+        )
+
+        config_data = process_virtual_hosts(bt, {"frontend-id"})
+
+        hosts = list(config_data.host_list())
+        assert len(hosts) == 1
+        proxied_backend = hosts[0].locations["/"].backends[0]
+        assert proxied_backend.address == "192.0.2.10"
+        assert proxied_backend.port == 8080
+
+    def test_process_mixed_hosts_keeps_static_route_while_service_vip_is_pending(self):
+        bt = BackendTarget(
+            id="mixed-host-id",
+            name="mixed-host-test",
+            env={
+                "STATIC_VIRTUAL_HOST": "static.example.com -> http://192.0.2.10:8080",
+                "VIRTUAL_HOST": "dynamic.example.com",
+            },
+            network_settings={"frontend": {"NetworkID": "frontend-id", "IPAddress": ""}},
+            backend_type="service",
+        )
+
+        config_data = process_virtual_hosts(bt, {"frontend-id"})
+
+        hosts = list(config_data.host_list())
+        assert [host.hostname for host in hosts] == ["static.example.com"]
+
+    def test_blank_virtual_host_is_treated_as_unconfigured(self, capsys):
+        """A blank VIRTUAL_HOST is a misconfiguration, not a route awaiting a VIP."""
+        bt = BackendTarget(
+            id="blank-host-id",
+            name="blank-host-test",
+            env={"VIRTUAL_HOST": "  "},
+            network_settings={"frontend": {"NetworkID": "frontend-id", "IPAddress": ""}},
+            backend_type="service",
+        )
+
+        config_data = process_virtual_hosts(bt, {"frontend-id"})
+
+        assert len(list(config_data.host_list())) == 0
+        assert "No VIRTUAL_HOST" in capsys.readouterr().out
+
+    def test_virtual_host_value_is_stripped(self):
+        bt = BackendTarget(
+            id="padded-host-id",
+            name="padded-host-test",
+            env={"VIRTUAL_HOST": "  padded.example.com  "},
+            network_settings={"my-net": {"NetworkID": "my-net-id", "IPAddress": "10.0.0.12"}},
+        )
+
+        config_data = process_virtual_hosts(bt, {"my-net-id"})
+
+        hosts = list(config_data.host_list())
+        assert [host.hostname for host in hosts] == ["padded.example.com"]
 
     def test_process_virtual_hosts_unreachable_network(self):
         bt = BackendTarget(

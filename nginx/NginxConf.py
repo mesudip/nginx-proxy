@@ -455,6 +455,15 @@ class LocationBlock:
         return headers
 
     @property
+    def add_headers(self) -> List[tuple[str, str]]:
+        headers = []
+        for d in self.block.get_directives("add_header"):
+            parts = " ".join(d.values).split(maxsplit=1)
+            if len(parts) == 2:
+                headers.append((parts[0], parts[1]))
+        return headers
+
+    @property
     def rewrite(self) -> Optional[str]:
         return self._get_directive_value("rewrite")
 

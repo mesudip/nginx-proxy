@@ -347,3 +347,26 @@ server{
     server = http_block.servers[0]
     assert server.listen == "80"
     assert server.server_names == ["example.com"]
+
+
+def test_quoted_nginx_syntax_characters_are_preserved_in_directive_values():
+    config = NginxConfig()
+    config.load(
+        """
+http {
+    server {
+        location / {
+            add_header X-Example "value; # still-a-value { yes }" always;
+            add_header Strict-Transport-Security "max-age=31536000" always;
+        }
+    }
+}
+"""
+    )
+
+    location = config.http.servers[0].locations[0]
+
+    assert location.add_headers == [
+        ("X-Example", '"value; # still-a-value { yes }" always'),
+        ("Strict-Transport-Security", '"max-age=31536000" always'),
+    ]

@@ -17,24 +17,37 @@ class UpstreamProcessor:
                     if prefer_local and local_service_ids:
                         self._align_service_backup_ports(location.backends)
 
+                    upstream_backends = location.backends
+                    sticky_value = self._sticky_value(location.backends)
+                    primary_backends = [backend for backend in location.backends if not backend.backup]
+                    if sticky_value and len(primary_backends) > 1:
+                        # nginx does not allow backup servers with hash/ip_hash. In
+                        # prefer-local mode, Docker events will restore direct VIP
+                        # routing when the local task backends disappear.
+                        upstream_backends = primary_backends
+                    elif any(backend.backup for backend in location.backends):
+                        sticky_value = None
+
                     backend_key = tuple(
-                        sorted([(str(b.address), str(b.port), bool(b.backup)) for b in location.backends])
+                        sorted([(str(b.address), str(b.port), bool(b.backup)) for b in upstream_backends])
+                        + [("sticky", sticky_value, False)]
                     )
                     if backend_key in global_upstreams:
                         location.upstream = global_upstreams[backend_key]["id"]
                     else:
+                        # Hash first, hostname last. nginx's built-in fallback is
+                        # `proxy_set_header Host $proxy_host`, which renders as this name,
+                        # so a leading hash makes a leaked Host header obviously not a real
+                        # hostname instead of a plausible-looking subdomain.
                         upstream_id = (
-                            host.hostname.strip()
-                            + "_"
-                            + hashlib.sha1(str(backend_key).encode("utf-8")).hexdigest()[:12]
+                            hashlib.sha1(str(backend_key).encode("utf-8")).hexdigest()[:12]
+                            + "-"
+                            + host.hostname.strip()
                         )
-                        sticky_value = None
-                        if not any(b.backup for b in location.backends):
-                            sticky_value = self._sticky_value(location.backends)
 
                         global_upstreams[backend_key] = {
                             "id": upstream_id,
-                            "containers": location.backends,
+                            "containers": upstream_backends,
                             "sticky": sticky_value,
                         }
                         location.upstream = upstream_id
