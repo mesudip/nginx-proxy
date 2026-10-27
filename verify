@@ -3,9 +3,44 @@ import argparse
 import os
 import sys
 
+import requests
+
 from certapi.client.cert_manager_client import CertManagerClient
-from nginx import Nginx
+from nginx import Nginx, Url
 from nginx_proxy.certapi_config import load_certapi_config
+
+DNS_ERRORS = (
+    "Name or service not known",
+    "nodename nor servname",
+    "Name does not resolve",
+    "Temporary failure in name resolution",
+    "NameResolutionError",
+)
+
+
+def failure_reason(domain: str, certapi: dict | None) -> str | None:
+    """Why a domain failed, where this proxy can tell. Local checks already print their own cause."""
+    if not Url.is_valid_hostname(domain):
+        return "not a valid hostname (wildcards cannot be checked over HTTP)"
+    if not certapi:
+        return None
+    # CertAPI keeps the cause in its own log. Probe the challenge path from here for the common ones.
+    url = f"http://{domain}/.well-known/acme-challenge/nginx-proxy-verify"
+    try:
+        response = requests.get(url, allow_redirects=False, timeout=3)
+    except requests.exceptions.Timeout:
+        return "no answer on port 80 within 3 seconds"
+    except requests.exceptions.ConnectionError as error:
+        if any(text in str(error) for text in DNS_ERRORS):
+            return "DNS lookup failed"
+        if "Connection refused" in str(error):
+            return "connection refused on port 80"
+        return f"connection failed: {error}"
+    except requests.exceptions.RequestException as error:
+        return str(error)
+    if response.is_redirect:
+        return f"port 80 redirects the challenge path ({response.status_code} to {response.headers.get('Location')})"
+    return f"reachable from this proxy (HTTP {response.status_code}), so the check from CertAPI failed; see its log"
 
 
 def main():
@@ -31,6 +66,10 @@ def main():
             result = nginx.verify_domain(domains)
         print("Verified Domains: " + str(result))
         failed = [domain for domain in domains if domain not in result]
+        for domain in failed:
+            reason = failure_reason(domain, certapi)
+            if reason:
+                print(f"[Error] [{domain}] {reason}", file=sys.stderr)
         if failed:
             print("Failed Domains: " + str(failed), file=sys.stderr)
             return 1

@@ -64,7 +64,8 @@ def main():
                 )
                 return 1
         if missing or failures:
-            print("Error: Could not obtain certificates for: " + ", ".join(missing), file=sys.stderr)
+            failed = missing or sorted({d for failure in failures for d in failure.domains})
+            print("Error: Could not obtain certificates for: " + ", ".join(failed), file=sys.stderr)
             return 1
         return 0
     except Exception as error:

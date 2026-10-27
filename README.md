@@ -223,7 +223,7 @@ disappear.
 2. Map `/etc/nginx/ssl` and `/etc/nginx/challenges`.
 3. Set `VIRTUAL_HOST` to start with `https://` in your containers.
 
-nginx never waits for certificates. On startup and on every reload it serves every host with the certificate already on disk, expired ones included, and a self-signed one when there is none yet. Issuance and renewal run on a background thread and nginx is reloaded again once the new certificate files are in place.
+nginx never waits for certificates. On startup and on every reload it serves every host with the certificate already on disk, expired and self-signed ones included. An https host with no certificate at all is left out until one is obtained. Issuance and renewal run on a background thread and nginx is reloaded again once the new certificate files are in place.
 
 ### Wildcard Certificates With Cloudflare DNS
 To issue wildcard certificates (e.g., `*.example.com`) or avoid exposing port 80, you can use DNS challenges via Cloudflare.
@@ -296,7 +296,7 @@ docker exec nginx-proxy reload # rescan Docker state and reload nginx config
 
 `verify` checks every requested hostname by serving a temporary token and comparing the exact response from its HTTP port 80 challenge URL. With `CERTAPI_URL`, it calls CertAPI's `/api/verify`: the token is stored and checked by the CertAPI server through the public domain and nginx's challenge proxy. This requires CertAPI 1.1.17 or newer on both the proxy client and API server. Upgrade the CertAPI server before rebuilding/redeploying the proxy; older servers produce an explicit error. Verification does not request a certificate and does not use DNS-provider support as proof of HTTP routing. Wildcards cannot pass this HTTP check; wildcard issuance can still use a configured DNS solver.
 
-`verify` exits nonzero if any domain fails. `getssl` uses the same certificate backend as automatic issuance and renewal, enables self-verification by default, and exits nonzero for incomplete issuance or a failed nginx reload. Remote certificates, including reused and wildcard certificates, are saved into the proxy's local SSL directory before reload. `--force` skips the preliminary check in both local and CertAPI modes; it does not skip ACME validation.
+`verify` exits nonzero if any domain fails and prints the cause it can find for each one (invalid hostname, DNS, connection refused, timeout, redirect); with CertAPI, the server's log has the rest. `getssl` uses the same certificate backend as automatic issuance and renewal, enables self-verification by default, and exits nonzero for incomplete issuance or a failed nginx reload. Remote certificates, including reused and wildcard certificates, are saved into the proxy's local SSL directory before reload. `--force` skips the preliminary check in both local and CertAPI modes; it does not skip ACME validation. Known issue: `getssl` reloads nginx without re-rendering the configuration, so a host still served with its self-signed certificate keeps it until the next Docker event; run `docker exec nginx-proxy reload` afterwards.
 
 For local regression testing, `tests/test_certapi_routing.py` runs nginx and a temporary CertAPI service on loopback ports. It covers local challenges, HTTP and HTTPS CertAPI origins, runtime upstream routing, redirects, basic auth, unavailable backends, and certificate storage/reuse. Install nginx, pytest, flask, and flask-restx alongside the project dependencies to run it. Test certificates are signed by a temporary local CA.
 

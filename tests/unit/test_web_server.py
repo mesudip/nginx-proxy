@@ -198,9 +198,10 @@ def test_register_static_sites_generates_missing_default_ssl_selfsigned_files(we
 
     web_server.config["default_ssl_domains"] = [hostname]
 
-    def set_ssl_file(hosts, update_watch_domains=True):
+    def set_ssl_file(hosts, update_watch_domains=True, exclude_missing=True):
         for rendered_host in hosts:
             rendered_host.ssl_file = f"{rendered_host.hostname}.selfsigned"
+        return hosts
 
     def fake_openssl(command, **kwargs):
         with open(command[command.index("-out") + 1], "w") as cert_file:
@@ -431,9 +432,10 @@ def test_validation_prepares_missing_selfsigned_certificate_files(web_server, tm
     )
     candidate.add_host(host)
 
-    def set_ssl_file(hosts, update_watch_domains=True):
+    def set_ssl_file(hosts, update_watch_domains=True, exclude_missing=True):
         for rendered_host in hosts:
             rendered_host.ssl_file = f"{rendered_host.hostname}.selfsigned"
+        return hosts
 
     web_server.ssl_processor.process_ssl_certificates.side_effect = set_ssl_file
 

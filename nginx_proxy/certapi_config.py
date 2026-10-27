@@ -22,10 +22,13 @@ def load_certapi_config(url: str | None = None) -> dict | None:
         raise ValueError("CERTAPI_URL port must be between 1 and 65535")
     port = port or (443 if parsed.scheme == "https" else 80)
     endpoint_host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+    default_port = 443 if parsed.scheme == "https" else 80
     return {
         "url": url,
         "host": parsed.hostname,
         "scheme": parsed.scheme,
         "port": port,
         "endpoint": f"{endpoint_host}:{port}",
+        # Host header for requests proxied to CertAPI, so a vhost-routed CertAPI sees its own name.
+        "host_header": endpoint_host if port == default_port else f"{endpoint_host}:{port}",
     }

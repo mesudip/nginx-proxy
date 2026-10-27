@@ -72,7 +72,8 @@ server{
             proxy_pass {{ config.certapi.scheme }}://$certapi_endpoint;{% elif config.certapi %}
             proxy_pass {{ config.certapi.url }};{% endif %}{% if config.certapi %}
             proxy_ssl_server_name on;
-            proxy_ssl_name {{ config.certapi.host }};{% else %}
+            proxy_ssl_name {{ config.certapi.host }};
+            proxy_set_header Host {{ config.certapi.host_header }};{% else %}
             alias {{ config.challenge_dir }};
             try_files $uri =404;{% endif %}
         }{% endif %}
@@ -88,7 +89,8 @@ server {
             proxy_pass {{ config.certapi.scheme }}://$certapi_endpoint;{% elif config.certapi %}
             proxy_pass {{ config.certapi.url }};{% endif %}{% if config.certapi %}
             proxy_ssl_server_name on;
-            proxy_ssl_name {{ config.certapi.host }};{% else %}
+            proxy_ssl_name {{ config.certapi.host }};
+            proxy_set_header Host {{ config.certapi.host_header }};{% else %}
             alias {{ config.challenge_dir }};
             try_files $uri =404;{% endif %}
         }
@@ -108,7 +110,8 @@ server{
             proxy_pass {{ config.certapi.scheme }}://$certapi_endpoint;{% elif config.certapi %}
             proxy_pass {{ config.certapi.url }};{% endif %}{% if config.certapi %}
             proxy_ssl_server_name on;
-            proxy_ssl_name {{ config.certapi.host }};{% else %}
+            proxy_ssl_name {{ config.certapi.host }};
+            proxy_set_header Host {{ config.certapi.host_header }};{% else %}
             alias {{ config.challenge_dir }};
             try_files $uri =404;{% endif %}
         }

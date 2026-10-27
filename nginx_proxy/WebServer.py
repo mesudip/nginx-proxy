@@ -153,9 +153,13 @@ class WebServer:
         )
         self.proxy_header_processor.process(hosts)
         self.basic_auth_processor.process_basic_auth(hosts, dry_run=dry_run, created_files=dry_run_auth_files)
-        self.ssl_processor.process_ssl_certificates(hosts, update_watch_domains=update_ssl_watch_domains)
+        hosts = self.ssl_processor.process_ssl_certificates(
+            hosts, update_watch_domains=update_ssl_watch_domains, exclude_missing=not dry_run
+        )
         if dry_run:
             self._ensure_selfsigned_certificate_files(hosts)
+        # An excluded https host may have been the one carrying default_server.
+        has_default = any("default_server" in host.extras for host in hosts)
         hosts = self._ensure_https_redirects(hosts)
         render_config["default_server"] = not has_default
         if not dry_run:

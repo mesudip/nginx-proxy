@@ -94,11 +94,12 @@ def test_processor_does_not_obtain_directly_and_triggers_renewal_once(monkeypatc
     processor.key_store.find_key_and_cert_by_domain.return_value = None
 
     hosts = [Host("api.example.com", 443, {"https"}), Host("www.example.com", 443, {"https"})]
-    processor.process_ssl_certificates(hosts)
+    rendered = processor.process_ssl_certificates(hosts)
 
-    # The render thread does not wait for certapi, it serves self-signed until the renewal thread is done.
-    assert hosts[0].ssl_file == "api.example.com.selfsigned"
-    assert hosts[1].ssl_file == "www.example.com.selfsigned"
+    # The render thread does not wait for certapi. Hosts without any certificate on disk are left out
+    # until the renewal thread has one, so nginx never references a missing file.
+    assert rendered == []
+    assert hosts[0].ssl_file is None and hosts[1].ssl_file is None
     renewal.update_watch_domains.assert_not_called()
 
     processor.start()

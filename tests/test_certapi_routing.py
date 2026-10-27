@@ -19,7 +19,7 @@ import requests
 from jinja2 import Template
 
 pytest.importorskip("flask_restx")
-from flask import Flask
+from flask import Flask, request
 from flask_restx import Api, Namespace
 from werkzeug.serving import make_server
 from cryptography import x509
@@ -87,8 +87,11 @@ def test_commands_through_real_nginx_and_certapi(tmp_path, monkeypatch, backend_
     api.add_namespace(namespace)
     create_api_resources(namespace, manager)
 
+    challenge_hosts = []
+
     @app.get("/.well-known/acme-challenge/<token>")
     def challenge(token):
+        challenge_hosts.append(request.host)
         value = solver.get_challenge(token)
         return (value, 200) if value is not None else ("", 404)
 
@@ -141,9 +144,18 @@ def test_commands_through_real_nginx_and_certapi(tmp_path, monkeypatch, backend_
         rendered = rendered.replace("listen 80", f"listen 127.0.0.1:{proxy_port}").replace(
             "access_log /var/log/nginx/access.log;", "access_log off;"
         )
+        # Wrap the vhosts in the real http block so inherited directives (proxy_set_header Host, maps) apply.
+        main_conf = Template((ROOT / "vhosts_template/nginx.conf.jinja2").read_text()).render(
+            worker_processes=1, worker_connections=64, **config
+        )
+        http_block = main_conf[main_conf.index("http {") + len("http {") : main_conf.rindex("}")]
+        http_block = "\n".join(
+            line for line in http_block.splitlines() if not line.strip().startswith(("include ", "access_log "))
+        )
         conf = tmp_path / "nginx.conf"
         conf.write_text(
-            f"pid {tmp_path / 'nginx.pid'};\nerror_log {tmp_path / 'error.log'};\nevents {{}}\nhttp {{\n{rendered}\n}}"
+            f"pid {tmp_path / 'nginx.pid'};\nerror_log {tmp_path / 'error.log'};\nevents {{}}\n"
+            f"http {{\naccess_log off;\n{http_block}\n{rendered}\n}}"
         )
         check = subprocess.run(
             [nginx_binary, "-e", str(tmp_path / "error.log"), "-t", "-p", str(tmp_path), "-c", str(conf)],
@@ -202,6 +214,9 @@ def test_commands_through_real_nginx_and_certapi(tmp_path, monkeypatch, backend_
         monkeypatch.setattr(sys, "argv", ["verify", *domains])
         assert runpy.run_path(str(ROOT / "verify"))["main"]() == 0
         assert seen == domains
+        if certapi:
+            # CertAPI is addressed by its own name, not by the domain being verified.
+            assert challenge_hosts and set(challenge_hosts) == {certapi["host_header"]}
         assert list((tmp_path / "challenges").iterdir()) == []
         assert session.get(f"http://127.0.0.1:{proxy_port}/", headers={"Host": "down.example"}).status_code == 503
         assert session.get(f"http://127.0.0.1:{proxy_port}/", headers={"Host": "protected.example"}).status_code == 401
@@ -229,9 +244,10 @@ def test_commands_through_real_nginx_and_certapi(tmp_path, monkeypatch, backend_
             )
             try:
                 host = Host("protected.example", 443, {"https"})
-                processor.process_ssl_certificates([host])
-                # The render does not wait for CertAPI: self-signed first, forced reload once the cert is in.
-                assert host.ssl_file == "protected.example.selfsigned"
+                # The render does not wait for CertAPI: the host is left out until its certificate is on
+                # disk, then a forced reload brings it in.
+                assert processor.process_ssl_certificates([host]) == []
+                assert host.ssl_file is None
                 processor.start()
                 wait_for(lambda: processor.server.enqueue_reload.called)
                 processor.server.enqueue_reload.assert_called_once_with(force=True)

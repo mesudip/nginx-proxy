@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+import requests
 
 from certapi.errors import CertApiException
 from certapi.http.types import CertificateResponse, IssuedCert, FailedDomains
@@ -44,11 +45,49 @@ def test_verify_certapi_checks_requested_domains_without_local_files(monkeypatch
 
 @pytest.mark.parametrize("result", [[], ["good.example"]])
 def test_verify_partial_or_total_failure_exits_nonzero(monkeypatch, env, result, capsys):
+    monkeypatch.setattr("requests.get", Mock(return_value=Mock(is_redirect=False, status_code=404)))
     client = Mock()
     client.verify_domains.return_value = result
     monkeypatch.setattr("certapi.client.cert_manager_client.CertManagerClient", Mock(return_value=client))
     assert command("verify", ["good.example", "bad.example"], monkeypatch) == 1
     assert "bad.example" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "probe,reason",
+    [
+        (requests.ConnectionError("Failed to resolve 'bad.example' (Name or service not known)"), "DNS lookup failed"),
+        (requests.ConnectionError("[Errno 111] Connection refused"), "connection refused on port 80"),
+        (requests.Timeout("read timed out"), "no answer on port 80 within 3 seconds"),
+        (
+            Mock(is_redirect=True, status_code=301, headers={"Location": "https://bad.example/"}),
+            "port 80 redirects the challenge path (301 to https://bad.example/)",
+        ),
+        (Mock(is_redirect=False, status_code=404), "reachable from this proxy (HTTP 404)"),
+    ],
+)
+def test_verify_certapi_failure_explains_the_cause(monkeypatch, env, capsys, probe, reason):
+    get = Mock(side_effect=probe) if isinstance(probe, Exception) else Mock(return_value=probe)
+    monkeypatch.setattr("requests.get", get)
+    client = Mock()
+    client.verify_domains.return_value = ["good.example"]
+    monkeypatch.setattr("certapi.client.cert_manager_client.CertManagerClient", Mock(return_value=client))
+    assert command("verify", ["good.example", "bad.example"], monkeypatch) == 1
+    assert f"[Error] [bad.example] {reason}" in capsys.readouterr().err
+    get.assert_called_once()
+    assert get.call_args.args[0].startswith("http://bad.example/.well-known/acme-challenge/")
+
+
+def test_verify_reports_invalid_hostnames_without_probing(monkeypatch, env, capsys):
+    monkeypatch.delenv("CERTAPI_URL")
+    get = Mock()
+    monkeypatch.setattr("requests.get", get)
+    nginx = Mock()
+    nginx.verify_domain.return_value = []
+    monkeypatch.setattr("nginx.Nginx.Nginx", Mock(return_value=nginx))
+    assert command("verify", ["*.example.com"], monkeypatch) == 1
+    assert "[Error] [*.example.com] not a valid hostname" in capsys.readouterr().err
+    get.assert_not_called()
 
 
 def test_verify_remote_errors_exit_nonzero(monkeypatch, env, capsys):
@@ -103,6 +142,11 @@ def test_getssl_backend_flags_and_reload(monkeypatch, env, remote, force):
             failed=[FailedDomains(domains=["bad.example"], message="verification failed")],
         ),
         CertificateResponse(existing=[IssuedCert(domains=["good.example"])]),
+        # Older servers can report a failed batch for names another certificate already covers.
+        CertificateResponse(
+            issued=[IssuedCert(domains=["good.example", "bad.example"])],
+            failed=[FailedDomains(domains=["bad.example"], message="verification failed")],
+        ),
     ],
 )
 def test_getssl_empty_partial_and_failed_results_exit_nonzero(monkeypatch, env, result, capsys):
@@ -116,7 +160,9 @@ def test_getssl_empty_partial_and_failed_results_exit_nonzero(monkeypatch, env, 
     nginx.reload.return_value = True
     monkeypatch.setattr("nginx.Nginx.Nginx", Mock(return_value=nginx))
     assert command("getssl", ["good.example", "bad.example"], monkeypatch) == 1
-    assert "bad.example" in capsys.readouterr().err
+    error = capsys.readouterr().err
+    summary = next(line for line in error.splitlines() if line.startswith("Error: Could not obtain"))
+    assert "bad.example" in summary
     assert nginx.reload.call_count == bool(result.issued or result.existing)
 
 

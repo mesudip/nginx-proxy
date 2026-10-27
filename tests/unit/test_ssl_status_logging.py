@@ -4,6 +4,8 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import pytest
+
 from nginx_proxy.Host import Host
 from nginx_proxy.post_processors.ssl_certificate_processor import SslCertificateProcessor
 
@@ -96,7 +98,7 @@ def test_status_table_lists_each_domain_with_remaining_time_and_state(capsys):
     assert rows["old.example.net"].startswith("EXPIRED 2 days, 00:00:0") and rows["old.example.net"].endswith(" ago")
     assert rows["soon.example.net"].startswith("4 days, 23:59:5")
     assert "new.example.net" not in rows
-    assert lines[-1] == "[SSL Refresh Thread] Selfsigned: new.example.net"
+    assert lines[-1] == "[SSL Refresh Thread] Not served until a certificate is obtained: new.example.net"
     # Earliest real certificate is soon.example.net, already inside the threshold -> refresh needed.
     assert any(
         line.startswith(
@@ -142,7 +144,7 @@ def test_status_is_only_logged_when_something_changed(capsys):
     processor.process_ssl_certificates(hosts + [Host("www.example.com", 443, {"https"})])
     third = capsys.readouterr().out
     assert "SSL certificate status" in third
-    assert "[SSL Refresh Thread] Selfsigned: www.example.com" in third
+    assert "[SSL Refresh Thread] Not served until a certificate is obtained: www.example.com" in third
 
     processor.log_certificate_status(hosts, force=True)
     assert "SSL certificate status" in capsys.readouterr().out
@@ -279,3 +281,71 @@ def test_new_or_dry_run_files_do_not_flag_a_certificate_change():
     expiries["api.example.com"] = now + timedelta(days=89)
     processor.process_ssl_certificates(hosts, update_watch_domains=False)
     assert processor.pop_certificate_changes() is False
+
+
+@pytest.mark.parametrize(
+    "remaining_hosts",
+    [[], [Host("web.example.com", 80, {"http"})]],
+    ids=["no-hosts", "http-only"],
+)
+def test_removing_every_https_host_clears_the_renewal_watch_set(remaining_hosts):
+    now = datetime.now(timezone.utc)
+    processor, renewal = _build_processor({"api.example.com": now + timedelta(days=20)})
+    processor.process_ssl_certificates([Host("api.example.com", 443, {"https"})])
+    processor.start()
+    _wait_for(lambda: renewal.update_watch_domains.call_count == 1)
+
+    # The last https container is gone.
+    processor.process_ssl_certificates(remaining_hosts)
+    _wait_for(lambda: renewal.update_watch_domains.call_count == 2)
+    renewal.update_watch_domains.assert_called_with([])
+
+    # A later renewal signal must not renew the domain that is no longer served.
+    processor.ssl_renewal_callback()
+    _wait_for(lambda: renewal.update_watch_domains.call_count == 3)
+    renewal.update_watch_domains.assert_called_with([])
+    processor.shutdown()
+
+
+def test_unchanged_domain_set_does_not_queue_a_pass_and_a_pass_takes_one_snapshot():
+    now = datetime.now(timezone.utc)
+    processor, renewal = _build_processor({"api.example.com": now + timedelta(days=40)})
+    hosts = [Host("api.example.com", 443, {"https"})]
+    processor.process_ssl_certificates(hosts)
+    processor.start()
+    _wait_for(lambda: renewal.update_watch_domains.call_count == 1)
+
+    # Renders with the same https domains (every Docker event) leave the schedule to certapi.
+    processor.process_ssl_certificates(hosts)
+    processor.process_ssl_certificates(hosts)
+    time.sleep(0.05)
+    assert renewal.update_watch_domains.call_count == 1
+
+    # A pass reuses the previous pass's result instead of sweeping the domains before and after.
+    with patch.object(processor, "_certificate_snapshot", wraps=processor._certificate_snapshot) as snapshot:
+        processor.ssl_renewal_callback()
+        _wait_for(lambda: renewal.update_watch_domains.call_count == 2)
+        _wait_for(lambda: snapshot.call_count == 2)
+    assert [c.args[0] for c in snapshot.call_args_list] == [[], ["api.example.com"]]
+    processor.shutdown()
+
+
+def test_https_host_without_any_certificate_is_left_out_until_one_exists():
+    now = datetime.now(timezone.utc)
+    expiries = {"old.example.com.selfsigned": now + timedelta(days=300)}
+    processor, renewal = _build_processor(expiries)
+    waiting, self_signed = Host("new.example.com", 443, {"https"}), Host("old.example.com", 443, {"https"})
+    plain = Host("web.example.com", 80, {"http"})
+
+    assert processor.process_ssl_certificates([waiting, self_signed, plain]) == [self_signed, plain]
+    assert self_signed.ssl_file == "old.example.com.selfsigned"
+
+    renewal.update_watch_domains.side_effect = lambda domains: expiries.update(
+        {"new.example.com": now + timedelta(days=90)}
+    )
+    processor.start()
+    _wait_for(lambda: processor.server.enqueue_reload.called)
+    processor.server.enqueue_reload.assert_called_once_with(force=True)
+    assert processor.process_ssl_certificates([waiting, self_signed, plain]) == [waiting, self_signed, plain]
+    assert waiting.ssl_file == "new.example.com"
+    processor.shutdown()

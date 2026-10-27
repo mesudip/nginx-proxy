@@ -50,6 +50,8 @@ class SslCertificateProcessor:
         self._renewal_requested = False
         self._renewal_thread: Optional[threading.Thread] = None
         self._renewal_running = False
+        # Certificate file and expiry per domain after the last renewal pass (renewal thread only).
+        self._last_snapshot: dict = {}
         # Expiry of every certificate file seen in the last pass, used to detect files replaced by a
         # renewal so that nginx is reloaded even when the rendered configuration text is unchanged.
         self._known_file_expiry: dict = {}
@@ -82,6 +84,9 @@ class SslCertificateProcessor:
     def _request_renewal_pass(self, domains: Optional[List[str]] = None):
         with self._renewal_lock:
             if domains is not None:
+                if domains == self._renewal_domains:
+                    # Unchanged set: certapi's own schedule signals the callback when something is due.
+                    return
                 self._renewal_domains = domains
             if self._renewal_domains is None:
                 return
@@ -102,9 +107,13 @@ class SslCertificateProcessor:
     def run_renewal_pass(self, domains: List[str]):
         """Let certapi obtain or renew what is due for the domains, then reload nginx if certificate files changed."""
         try:
-            before = self._certificate_snapshot(domains)
+            # The previous pass's result is the state nginx was last reloaded for; only new domains need a look.
+            before = {d: self._last_snapshot[d] for d in domains if d in self._last_snapshot}
+            before.update(self._certificate_snapshot([d for d in domains if d not in before]))
             self.renewal_manager.update_watch_domains(domains)
-            if self.server is None or self._certificate_snapshot(domains) == before:
+            after = self._certificate_snapshot(domains)
+            self._last_snapshot = after
+            if self.server is None or after == before:
                 return
             print("[SSL Refresh Thread] Certificates changed on disk, requesting forced nginx reload")
             # Forced on purpose: a renewal replaces certificate file contents, not paths, so the rendered
@@ -176,24 +185,35 @@ class SslCertificateProcessor:
 
         return hostname + ".selfsigned"
 
-    def process_ssl_certificates(self, hosts: List[Host], update_watch_domains: bool = True):
-        if not hosts:
-            return
-
+    def process_ssl_certificates(
+        self, hosts: List[Host], update_watch_domains: bool = True, exclude_missing: bool = True
+    ) -> List[Host]:
+        """
+        Select the certificate file for every https host and return the hosts that can be rendered.
+        With exclude_missing, a host that has neither a certificate nor a self-signed one on disk yet is
+        left out, so nginx never references a missing file. The renewal pass obtains one and forces a
+        reload that brings the host in.
+        """
         secured_hosts = [host for host in hosts if host.secured]
-        if not secured_hosts:
-            return
-
         for host in secured_hosts:
             self._prepare_host_for_ssl(host)
 
+        excluded = set()
         for host in secured_hosts:
-            host.ssl_file = self._select_ssl_file(host.hostname)
+            ssl_file = self._select_ssl_file(host.hostname)
+            if exclude_missing and ssl_file.endswith(".selfsigned") and self._certificate_expiry(ssl_file) is None:
+                host.ssl_file = None
+                excluded.add(id(host))
+            else:
+                host.ssl_file = ssl_file
 
         if update_watch_domains:
+            # Published even when empty, so domains that are no longer served stop being renewed.
             self._request_renewal_pass(sorted({host.hostname for host in secured_hosts}))
-            self.log_certificate_status(secured_hosts)
-            self._detect_certificate_changes()
+            if secured_hosts:
+                self.log_certificate_status(secured_hosts)
+                self._detect_certificate_changes()
+        return [host for host in hosts if id(host) not in excluded]
 
     def _detect_certificate_changes(self):
         """Flag a forced reload when a certificate file already in use now carries a different expiry."""
@@ -328,8 +348,9 @@ class SslCertificateProcessor:
                 return
             self._last_logged_status = snapshot
 
-            real_rows = [row for row in self._status_rows if not row[1].endswith(".selfsigned")]
+            real_rows = [row for row in self._status_rows if row[1] and not row[1].endswith(".selfsigned")]
             self_signed = [row[0] for row in self._status_rows if row[1].endswith(".selfsigned")]
+            waiting = [row[0] for row in self._status_rows if not row[1]]
             print("[SSL Refresh Thread] SSL certificate status:")
             max_size = max([len(d) for d, _, _ in real_rows] + [0])
             for domain, ssl_file, expiry in real_rows:
@@ -337,6 +358,8 @@ class SslCertificateProcessor:
             self._log_next_check(now)
             if self_signed:
                 print(f"[SSL Refresh Thread] Selfsigned: {', '.join(self_signed)}")
+            if waiting:
+                print(f"[SSL Refresh Thread] Not served until a certificate is obtained: {', '.join(waiting)}")
         except Exception as e:  # logging must never break a reload
             print(f"[SSL Refresh Thread] Could not render certificate status: {e.__class__.__name__}: {e}")
 
