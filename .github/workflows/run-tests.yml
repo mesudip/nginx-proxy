@@ -14,6 +14,11 @@ on:
 
 jobs:
   test:
+    # A PR from a branch the push trigger already tests would only repeat that run.
+    if: >-
+      github.event_name == 'push' ||
+      github.event.pull_request.head.repo.full_name != github.repository ||
+      !contains(fromJSON('["master", "dev", "develop"]'), github.head_ref)
     runs-on: ubuntu-latest
     concurrency:
       group: test-${{ github.event.pull_request.head.sha || github.sha }}
