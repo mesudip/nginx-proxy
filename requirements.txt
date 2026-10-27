@@ -1,6 +1,6 @@
-docker==7.1.0
+docker==7.2.0
 Jinja2==3.1.6
-pydevd==3.1.0
+pydevd==3.5.0
 bcrypt==4.3.0 # 5.0.0 requires rust so ignoring
 certapi>=1.1.17
-requests==2.33.0
+requests==2.34.2

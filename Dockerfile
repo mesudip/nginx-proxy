@@ -1,15 +1,15 @@
 # This provides nginx and python together in a container
-FROM ghcr.io/mesudip/python-nginx:py3.13.13-nginx1.30.1-alpine3.23
+FROM ghcr.io/mesudip/python-nginx:py3.13.18-nginx1.31.8-alpine3.24
 
 RUN pip install --upgrade pip
 
 HEALTHCHECK --interval=10s --timeout=2s --start-period=10s --retries=3 CMD pgrep nginx &&  pgrep python3 >> /dev/null  || exit 1
 CMD ["sh","-e" ,"/docker-entrypoint.sh"]
 COPY ./requirements.txt /requirements.txt
-RUN apk --no-cache add  openssl && \
+RUN apk upgrade --no-cache && apk --no-cache add  openssl && \
     apk add --no-cache --virtual .build-deps \
     gcc libc-dev openssl-dev linux-headers libffi-dev && \
-    pip install --no-cache-dir -r /requirements.txt &&  \
+    pip install --no-cache-dir -r /requirements.txt && pip uninstall -y pip && \
     rm -f /requirements.txt && apk del .build-deps && \
     ln -s /app/getssl /bin/getssl && ln -s /app/verify /bin/verify && ln -s /app/reload /bin/reload && \
     mv /docker-entrypoint.sh /nginx-entrypoint.sh  && \

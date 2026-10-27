@@ -2,14 +2,28 @@
 
 ## Unreleased
 
+### Features
+- **Docker Compose Examples**: Added `compose.yaml` and `compose-swarm.yaml` (with CertAPI).
+- **Certificate Status Log**: The SSL Refresh Thread prints each domain's certificate, time left and next check whenever the watched set changes.
+
 ### Fixes
 - **Startup Blocked By Certificate Renewal**: nginx no longer returns 503 until due certificates are renewed. It starts with the certificates on disk (expired, or self-signed if missing), and a background thread renews them and reloads nginx once the files change, so Docker events no longer wait on ACME.
 - **ACME Challenges On Every Host**: The challenge location takes precedence (`^~`) and skips basic auth, and unavailable hosts return 503 only from `location /`, so challenges work behind basic auth, HTTPS redirects, or without a running backend. Challenges proxied to an HTTPS `CERTAPI_URL` send SNI.
 - **Certificate Commands**: With `CERTAPI_URL`, `verify` checks routing through CertAPI's `/api/verify` instead of only pinging the server. `getssl --force` also skips the local reachability check. Both exit nonzero on partial failure.
 - **CERTAPI_URL Validation**: Only an origin (`scheme://host[:port]`) is accepted; anything else fails at startup.
+- **Proxy Headers**: Locations with their own `proxy_set_header` keep the global forwarding headers, and websocket locations send the full `Host` and `X-Forwarded-*` set.
+- **Sticky Sessions**: `NGINX_STICKY_SESSION` works in every `DOCKER_SWARM` mode; set the same value on every backend of a route.
+- **Swarm Services**: A service whose VIP is still pending is retried without holding back its `STATIC_VIRTUAL_HOST` routes, and a blank `VIRTUAL_HOST` counts as unset.
+- **Upstream Names**: Use `-` instead of `_` and lead with a hash, so a `Host` header that falls back to the upstream name is valid but clearly not a real hostname.
+
+### CI/CD
+- Images are built and pushed on every push to `dev`; tag builds skip the layer cache.
+- Updated GitHub Actions (checkout v7, setup-python v7, codecov v7); test backends run on Node 24.
 
 ### Dependencies
-- Requires `certapi>=1.1.17`.
+- Base image with nginx 1.31.8, Python 3.13.18 and Alpine 3.24; Alpine packages are upgraded at build time.
+- The image no longer includes pip; a derived image can restore it with `python3 -m ensurepip`.
+- `certapi>=1.1.17`, `docker` 7.2.0, `requests` 2.34.2, `pydevd` 3.5.0, `pytest` 9.1.1.
 
 ---
 
