@@ -1,3 +1,5 @@
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -8,6 +10,13 @@ from nginx_proxy.post_processors.ssl_certificate_processor import SslCertificate
 
 def _cert(expiry: datetime):
     return SimpleNamespace(not_valid_after_utc=expiry)
+
+
+def _wait_for(condition, timeout=2):
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, "timed out waiting for the renewal thread"
+        time.sleep(0.01)
 
 
 def _build_processor(cert_expiries: dict, threshold_days=30):
@@ -173,36 +182,64 @@ def test_start_without_certificates_reports_nothing_to_watch(capsys):
     assert "watching 0 domains" in capsys.readouterr().out
 
 
-def test_renewal_callback_queues_only_one_reload_until_it_has_run(capsys):
+def test_renewal_runs_on_its_own_thread_and_reloads_only_when_files_changed(capsys):
     now = datetime.now(timezone.utc)
-    processor, _ = _build_processor({"api.example.com": now + timedelta(days=40)})
+    expiries = {"api.example.com": now + timedelta(days=20)}
+    processor, renewal = _build_processor(expiries)
     hosts = [Host("api.example.com", 443, {"https"})]
 
-    # The renewal worker ticks once a second while a renewal pass is in flight.
-    for _ in range(5):
-        processor.ssl_renewal_callback()
-
-    processor.server.enqueue_reload.assert_called_once_with(force=True)
-    assert capsys.readouterr().out.count("Renewal due, requesting forced nginx reload") == 1
-
-    # The queued reload runs and refreshes the watch set, after which a new renewal may queue again.
+    # Rendering only publishes the domain set, certapi is never called on the render thread.
     processor.process_ssl_certificates(hosts)
+    renewal.update_watch_domains.assert_not_called()
+
+    processor.start()
+    _wait_for(lambda: renewal.update_watch_domains.call_count == 1)
+    renewal.update_watch_domains.assert_called_with(["api.example.com"])
+    processor.server.enqueue_reload.assert_not_called()  # nothing changed on disk
+
+    started, release = threading.Event(), threading.Event()
+
+    def renew(domains):
+        started.set()
+        release.wait(timeout=2)
+        expiries["api.example.com"] = now + timedelta(days=89)  # renewal replaced the file on disk
+
+    renewal.update_watch_domains.side_effect = renew
+    # The renewal worker signals the callback repeatedly while a pass is in flight: one more pass, not five.
     processor.ssl_renewal_callback()
-    assert processor.server.enqueue_reload.call_count == 2
-
-
-def test_renewal_callback_pending_flag_is_released_when_enqueue_fails():
-    now = datetime.now(timezone.utc)
-    processor, _ = _build_processor({"api.example.com": now + timedelta(days=40)})
-    processor.server.enqueue_reload.side_effect = [RuntimeError("queue closed"), True]
-
-    try:
+    _wait_for(started.is_set)
+    for _ in range(4):
         processor.ssl_renewal_callback()
-    except RuntimeError:
-        pass
-    processor.ssl_renewal_callback()
+    release.set()
 
-    assert processor.server.enqueue_reload.call_count == 2
+    _wait_for(lambda: processor.server.enqueue_reload.call_count == 1)
+    processor.server.enqueue_reload.assert_called_once_with(force=True)
+    assert "Certificates changed on disk, requesting forced nginx reload" in capsys.readouterr().out
+    _wait_for(lambda: renewal.update_watch_domains.call_count == 3)
+    time.sleep(0.05)
+    assert renewal.update_watch_domains.call_count == 3
+    assert processor.server.enqueue_reload.call_count == 1
+    processor.shutdown()
+
+
+def test_renewal_thread_survives_a_failed_reload_request(capsys):
+    now = datetime.now(timezone.utc)
+    expiries = {"api.example.com": now + timedelta(days=20)}
+    processor, renewal = _build_processor(expiries)
+    processor.server.enqueue_reload.side_effect = [RuntimeError("queue closed"), True]
+    renewed_days = iter([89, 90])
+    renewal.update_watch_domains.side_effect = lambda domains: expiries.update(
+        {"api.example.com": now + timedelta(days=next(renewed_days))}
+    )
+
+    processor.process_ssl_certificates([Host("api.example.com", 443, {"https"})])
+    processor.start()
+    _wait_for(lambda: processor.server.enqueue_reload.call_count == 1)
+    assert "Renewal pass failed: RuntimeError: queue closed" in capsys.readouterr().err
+
+    processor.ssl_renewal_callback()
+    _wait_for(lambda: processor.server.enqueue_reload.call_count == 2)
+    processor.shutdown()
 
 
 def test_certificate_change_is_flagged_once_when_a_used_file_gets_a_new_expiry(capsys):

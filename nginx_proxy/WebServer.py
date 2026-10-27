@@ -45,7 +45,9 @@ class WebServer:
         self.throttler = Throttler(self.reload_interval)
         NginxClass = DummyNginx if self.config["dummy_nginx"] else Nginx
         self.nginx: Nginx | DummyNginx = NginxClass(
-            self.config["conf_dir"] + "/conf.d/nginx-proxy.conf", self.config["challenge_dir"]
+            self.config["conf_dir"] + "/conf.d/nginx-proxy.conf",
+            self.config["challenge_dir"],
+            **({"create_challenge_dir": not self.config.get("certapi")} if NginxClass is Nginx else {}),
         )
         self.config_data = ProxyConfigData()
         self._reload_dispatcher: Callable | None = None
@@ -251,8 +253,8 @@ class WebServer:
         """
         # print("web_server._do_reload(forced="+str(forced)+")")
         output = self._render_config(self.config_data, update_ssl_watch_domains=True)
-        # Backstop for renewals that happen inside an ordinary (non-forced) reload, e.g. a docker event
-        # whose pass found a due certificate: the file contents changed but the rendered text did not.
+        # Backstop for certificate files replaced outside the renewal thread (getssl, hand-copied certs):
+        # the file contents changed but the rendered text did not.
         if self.ssl_processor.pop_certificate_changes():
             forced = True
         response = self.nginx.update_config(output, force=forced, validate=validate)

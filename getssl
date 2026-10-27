@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 import argparse
-import sys
 import os
+import sys
+
+from certapi.domain_matching import domain_matches_cert_domain
 from nginx import Nginx
 from nginx_proxy.certificate_backend import build_certificate_backend
-from urllib.parse import urlparse
+from nginx_proxy.certapi_config import load_certapi_config
 
 
 def parse_args():
@@ -15,83 +17,60 @@ def parse_args():
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Skip certapi/nginx-proxy self-verification before requesting the certificate.",
+        help="Skip certapi/nginx-proxy self-verification before requesting the certificate. ACME validation still runs.",
     )
     parser.add_argument("domains", nargs="+", help="Domain(s) to include in the certificate.")
     return parser.parse_args()
 
 
-def flatten_2d_array(two_d_array):
-    return [item for sublist in two_d_array for item in sublist]
-
-
-if __name__ == "__main__":
+def main():
     args = parse_args()
-
-    # Load configuration from environment variables (consistent with NginxProxyApp)
-    def _strip_end(s: str, char="/") -> str:
-        return s[:-1] if s.endswith(char) else s
-
-    ssl_dir = _strip_end(os.getenv("SSL_DIR", "/etc/ssl").strip())
-    conf_dir = _strip_end(os.getenv("NGINX_CONF_DIR", "/etc/nginx").strip())
-    challenge_dir = _strip_end(os.getenv("CHALLENGE_DIR", "/etc/nginx/challenges").strip()) + "/"
-    cert_renew_threshold_days = int(os.getenv("CERT_RENEW_THRESHOLD_DAYS", "30").strip())
-    
-    # CertAPI Configuration
-    certapi_url = os.getenv("CERTAPI_URL", "").strip()
-    mock_server_config = {}
-    
-    if certapi_url:
-        parsed = urlparse(certapi_url)
-        port = parsed.port
-        if port is None:
-            port = 443 if parsed.scheme == "https" else 80
-        
-        mock_server_config["certapi"] = {"url": certapi_url, "host": parsed.hostname, "scheme": parsed.scheme, "port": port}
-
-    config_path = os.path.join(conf_dir, "conf.d/gen-ssl-direct.conf")
-    # Make sure challenge dir exists for local mode
-    if not os.path.exists(challenge_dir):
-         try:
-            os.makedirs(challenge_dir, exist_ok=True)
-         except OSError:
-            pass # Might fail if readonly, but then Nginx might scream
-
-    nginx = Nginx.Nginx(config_path, challenge_dir=challenge_dir)
-
-    backend_info = build_certificate_backend(
-        ssl_dir,
-        nginx,
-        config=mock_server_config,
-        renew_threshold_days=max(10, cert_renew_threshold_days),
-    )
-    
     try:
+        ssl_dir = os.getenv("SSL_DIR", "/etc/ssl").strip().rstrip("/")
+        conf_dir = os.getenv("NGINX_CONF_DIR", "/etc/nginx").strip().rstrip("/")
+        challenge_dir = os.getenv("CHALLENGE_DIR", "/etc/nginx/challenges").strip().rstrip("/") + "/"
+        renew_threshold_days = int(os.getenv("CERT_RENEW_THRESHOLD_DAYS", "30").strip())
+        certapi = load_certapi_config()
+        nginx = Nginx.Nginx(
+            os.path.join(conf_dir, "conf.d/gen-ssl-direct.conf"),
+            challenge_dir=challenge_dir,
+            create_challenge_dir=certapi is None,
+        )
+        backend_info = build_certificate_backend(
+            ssl_dir, nginx, config={"certapi": certapi}, renew_threshold_days=max(10, renew_threshold_days)
+        )
         result = backend_info.backend.obtain(
             args.domains,
             key_type="ecdsa",
             batch_domains=backend_info.batch_domains,
             self_verify=not args.force,
+            skip_failing=False,
+            renew_threshold_days=max(10, renew_threshold_days),
         )
-        if len(result.issued):
-            print(
-                "[ New Certificates      ] : ",
-                ", ".join(flatten_2d_array(sorted([x.domains for x in result.issued]))),
-            )
-        if len(result.existing):
-            print(
-                "[ Reuse Existing        ] : ",
-                ", ".join(flatten_2d_array(sorted([x.domains for x in result.existing]))),
-            )
-        # Attempt to reload nginx to pick up changes (if running)
-        print("Reloading nginx...")
-        if not nginx.reload():
-             print("Warning: Failed to reload nginx. Changes may not apply immediately.")
-    except Exception as e:
-        print(f"Error obtaining certificate: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
-    finally:
-        if os.path.exists(config_path):
-            os.remove(config_path)
+        for label, certificates in (("New Certificates", result.issued), ("Reuse Existing", result.existing)):
+            if certificates:
+                print(f"[ {label} ] : " + ", ".join(sorted({d for cert in certificates for d in cert.domains})))
+        covered = [domain for cert in result.issued + result.existing for domain in cert.domains]
+        missing = [d for d in args.domains if not any(domain_matches_cert_domain(c, d) for c in covered)]
+        failures = getattr(result, "failed", [])
+        for failure in failures:
+            print(f"[ Failed ] {', '.join(failure.domains)}: {failure.message}", file=sys.stderr)
+        # Apply certificates that were saved even if an older server returned partial success.
+        if covered:
+            print("Reloading nginx...")
+            if not nginx.reload():
+                print(
+                    "Error: Failed to reload nginx; certificates have been saved but are not applied.", file=sys.stderr
+                )
+                return 1
+        if missing or failures:
+            print("Error: Could not obtain certificates for: " + ", ".join(missing), file=sys.stderr)
+            return 1
+        return 0
+    except Exception as error:
+        print(f"Error obtaining certificate: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

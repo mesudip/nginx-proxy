@@ -7,6 +7,7 @@ from certapi.client.cert_manager_client import CertManagerClient
 from certapi.issuers import AcmeCertIssuer
 from nginx.Nginx import Nginx
 from nginx.NginxChallengeSolver import NginxChallengeSolver
+from nginx_proxy.certapi_config import load_certapi_config
 
 
 @dataclass
@@ -32,12 +33,10 @@ def build_certificate_backend(
     certapi_url = ""
     use_certapi_server = False
 
-    if config.get("certapi"):
+    certapi = load_certapi_config(config["certapi"]["url"] if config.get("certapi") else None)
+    if certapi:
         use_certapi_server = True
-        certapi_url = config["certapi"]["url"]
-    elif os.environ.get("CERTAPI_URL"):
-        use_certapi_server = True
-        certapi_url = os.environ.get("CERTAPI_URL").strip()
+        certapi_url = certapi["url"]
 
     key_store = FileSystemKeyStore(ssl_path, keys_dir_name="private")
 

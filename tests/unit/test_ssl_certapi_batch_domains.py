@@ -1,5 +1,6 @@
 import runpy
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -7,8 +8,14 @@ from unittest.mock import Mock, patch
 from nginx_proxy.Host import Host
 from nginx_proxy.post_processors.ssl_certificate_processor import SslCertificateProcessor
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _wait_for(condition, timeout=2):
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, "timed out waiting for the renewal thread"
+        time.sleep(0.01)
 
 
 def _make_server():
@@ -89,11 +96,17 @@ def test_processor_does_not_obtain_directly_and_triggers_renewal_once(monkeypatc
     hosts = [Host("api.example.com", 443, {"https"}), Host("www.example.com", 443, {"https"})]
     processor.process_ssl_certificates(hosts)
 
+    # The render thread does not wait for certapi, it serves self-signed until the renewal thread is done.
+    assert hosts[0].ssl_file == "api.example.com.selfsigned"
+    assert hosts[1].ssl_file == "www.example.com.selfsigned"
+    renewal.update_watch_domains.assert_not_called()
+
+    processor.start()
+    _wait_for(lambda: renewal.update_watch_domains.called)
     renewal.update_watch_domains.assert_called_once_with(["api.example.com", "www.example.com"])
     renewal.trigger_now.assert_not_called()
     backend.obtain.assert_not_called()
-    assert hosts[0].ssl_file == "api.example.com.selfsigned"
-    assert hosts[1].ssl_file == "www.example.com.selfsigned"
+    processor.shutdown()
 
 
 def test_ssl_starts_and_stops_certapi_renewal_manager(monkeypatch):
@@ -104,16 +117,21 @@ def test_ssl_starts_and_stops_certapi_renewal_manager(monkeypatch):
     renewal.stop.assert_called_once_with()
 
 
-def test_ssl_renewal_callback_enqueues_server_reload(monkeypatch):
-    server = _make_server()
+def test_ssl_renewal_callback_reruns_the_pass_on_the_renewal_thread(monkeypatch):
     processor, _backend, renewal = _build_processor(monkeypatch, None)
-    processor.server = server
+    processor.key_store.find_key_and_cert_by_domain.return_value = None
+    processor.process_ssl_certificates([Host("api.example.com", 443, {"https"})])
+    processor.start()
+    _wait_for(lambda: renewal.update_watch_domains.call_count == 1)
 
     processor.ssl_renewal_callback()
 
-    renewal.update_watch_domains.assert_not_called()
-    server.enqueue_reload.assert_called_once_with(force=True)
-    server.reload.assert_not_called()
+    _wait_for(lambda: renewal.update_watch_domains.call_count == 2)
+    renewal.update_watch_domains.assert_called_with(["api.example.com"])
+    # Certificate files did not change, so nginx is left alone.
+    processor.server.enqueue_reload.assert_not_called()
+    processor.server.reload.assert_not_called()
+    processor.shutdown()
 
 
 def test_ssl_renewal_callback_ignores_missing_server(monkeypatch):
@@ -127,7 +145,9 @@ def test_ssl_renewal_callback_ignores_missing_server(monkeypatch):
 
 def test_getssl_force_passes_self_verify_false_to_remote_backend(monkeypatch, tmp_path):
     backend = Mock()
-    backend.obtain.return_value = SimpleNamespace(issued=[], existing=[])
+    backend.obtain.return_value = SimpleNamespace(
+        issued=[], existing=[SimpleNamespace(domains=["api.example.com"])], failed=[]
+    )
     backend_info = SimpleNamespace(
         backend=backend,
         key_store=Mock(),
@@ -152,14 +172,23 @@ def test_getssl_force_passes_self_verify_false_to_remote_backend(monkeypatch, tm
         patch("nginx.Nginx.Nginx", return_value=nginx),
         patch("nginx_proxy.certificate_backend.build_certificate_backend", return_value=backend_info),
     ):
-        runpy.run_path(str(REPO_ROOT / "getssl"), run_name="__main__")
+        assert runpy.run_path(str(REPO_ROOT / "getssl"))["main"]() == 0
 
-    backend.obtain.assert_called_once_with(["api.example.com"], key_type="ecdsa", batch_domains=True, self_verify=False)
+    backend.obtain.assert_called_once_with(
+        ["api.example.com"],
+        key_type="ecdsa",
+        batch_domains=True,
+        self_verify=False,
+        skip_failing=False,
+        renew_threshold_days=10,
+    )
 
 
 def test_getssl_passes_self_verify_true_to_local_backend_by_default(monkeypatch, tmp_path):
     backend = Mock()
-    backend.obtain.return_value = SimpleNamespace(issued=[], existing=[])
+    backend.obtain.return_value = SimpleNamespace(
+        issued=[], existing=[SimpleNamespace(domains=["api.example.com"])], failed=[]
+    )
     backend_info = SimpleNamespace(
         backend=backend,
         key_store=Mock(),
@@ -184,6 +213,13 @@ def test_getssl_passes_self_verify_true_to_local_backend_by_default(monkeypatch,
         patch("nginx.Nginx.Nginx", return_value=nginx),
         patch("nginx_proxy.certificate_backend.build_certificate_backend", return_value=backend_info),
     ):
-        runpy.run_path(str(REPO_ROOT / "getssl"), run_name="__main__")
+        assert runpy.run_path(str(REPO_ROOT / "getssl"))["main"]() == 0
 
-    backend.obtain.assert_called_once_with(["api.example.com"], key_type="ecdsa", batch_domains=True, self_verify=True)
+    backend.obtain.assert_called_once_with(
+        ["api.example.com"],
+        key_type="ecdsa",
+        batch_domains=True,
+        self_verify=True,
+        skip_failing=False,
+        renew_threshold_days=10,
+    )

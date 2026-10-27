@@ -140,12 +140,10 @@ def expect_server_down(nginx: DummyNginx, server_name: str):
     server = expect_server(nginx, server_name)
     config = HttpBlock.parse(nginx.current_config)
     all_servers_str = "\n".join([str(s) for s in config.servers])
-    # Filter out acme challenge location
-    locations = [l for l in server.locations if l.path != "/.well-known/acme-challenge/"]
-    assert (
-        len(locations) == 0
-    ), f"Server for {server_name} should have no locations (except acme). All servers:\n{all_servers_str}"
-    assert server.return_code == "503", f"Server for {server_name} should return 503. All servers:\n{all_servers_str}"
+    locations = [l for l in server.locations if l.path.removeprefix("^~ ") != "/.well-known/acme-challenge/"]
+    assert len(locations) == 1 and locations[0].path == "/", all_servers_str
+    assert locations[0].return_code == "503", all_servers_str
+    assert server.return_code is None, "Server-level return would block ACME challenges"
 
 
 def test_webserver_initialization(webserver: WebServer, nginx: DummyNginx):
@@ -442,6 +440,45 @@ def test_webserver_add_container_with_ssl(docker_client: DockerTestClient, nginx
     assert http_redirect_location.return_code == "308 https://ssl.example.com$request_uri"
 
 
+def test_startup_does_not_wait_for_certificate_renewal(docker_client: DockerTestClient):
+    """Every host must be served right away while certificates are still being obtained or renewed."""
+    hostname = "renewing.example.com"
+    docker_client.networks.create("frontend")
+    docker_client.containers.run(
+        "nginx:alpine",
+        name="renewing_container",
+        environment={"VIRTUAL_HOST": f"https://{hostname}"},
+        network="frontend",
+    )
+    renewal_started, release_renewal = threading.Event(), threading.Event()
+
+    def slow_renewal(self, domains):
+        renewal_started.set()
+        release_renewal.wait(timeout=5)
+
+    webserver = None
+
+    def build():
+        nonlocal webserver
+        webserver = WebServer(docker_client, get_test_config(), nginx_update_throtle_sec=0.1)
+
+    with (
+        patch("certapi.manager.acme_cert_manager.AcmeCertManager.setup", return_value=None),
+        patch("certapi.client.renewal_manager.RenewalManager.update_watch_domains", slow_renewal),
+    ):
+        builder = threading.Thread(target=build, daemon=True)
+        builder.start()
+        assert renewal_started.wait(timeout=2)
+        # The renewal is still blocked here: startup must be over and the host already in the config.
+        builder.join(timeout=2)
+        assert not builder.is_alive(), "startup waited for certificate renewal"
+        servers = expect_servers(webserver.nginx, hostname, 2, attempts=1, interval=0.5)
+        https_server = next(s for s in servers if "443" in s.listen)
+        assert https_server.ssl_certificate.endswith(f"/{hostname}.selfsigned.crt")
+        release_renewal.set()
+        webserver.cleanup()
+
+
 def test_proxy_full_redirect_uses_existing_https_target(docker_client: DockerTestClient, nginx: DummyNginx):
     target_hostname = "redirect-target.example.com"
     source_hostname = "redirect-source.example.com"
@@ -552,7 +589,9 @@ def test_application_well_known_route_coexists_with_acme_location(docker_client:
 
     time.sleep(0.2)
     server = expect_server_up(nginx, hostname)
-    acme_location = next((l for l in server.locations if l.path == "/.well-known/acme-challenge/"), None)
+    acme_location = next(
+        (l for l in server.locations if l.path.removeprefix("^~ ") == "/.well-known/acme-challenge/"), None
+    )
     app_location = next((l for l in server.locations if l.path == "/.well-known"), None)
 
     assert acme_location is not None

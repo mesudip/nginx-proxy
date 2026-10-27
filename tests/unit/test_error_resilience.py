@@ -40,6 +40,13 @@ def get_test_config() -> NginxProxyAppConfig:
     )
 
 
+def _wait_for(condition, timeout=2):
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, "timed out waiting for the renewal thread"
+        time.sleep(0.01)
+
+
 @pytest.fixture()
 def docker_client():
     return DockerTestClient()
@@ -296,6 +303,7 @@ def test_failed_initial_request_delegates_fallback_to_renewal_manager(webserver_
         patch.object(processor.renewal_manager, "update_watch_domains") as mock_update_watch_domains,
     ):
         processor.process_ssl_certificates(hosts)
+        _wait_for(lambda: mock_update_watch_domains.called)
 
     mock_obtain.assert_not_called()
     mock_update_watch_domains.assert_any_call(["test-fallback-delegated.example.com"])
@@ -336,6 +344,7 @@ def test_wildcard_cert_error_handling(webserver_for_error_tests):
 
         # Should fallback to self-signed
         assert hosts[0].ssl_file == "*.wildcard-test.example.com.selfsigned"
+        _wait_for(lambda: mock_update_watch_domains.called)
         mock_update_watch_domains.assert_any_call(["*.wildcard-test.example.com"])
 
 
@@ -357,6 +366,7 @@ def test_fresh_wildcard_cert_remains_preferred(webserver_for_error_tests):
         patch.object(webserver.ssl_processor.renewal_manager, "update_watch_domains") as mock_update_watch_domains,
     ):
         webserver.ssl_processor.process_ssl_certificates(hosts)
+        _wait_for(lambda: mock_update_watch_domains.called)
 
     assert hosts[0].ssl_file == "*.example.com"
     assert hosts[1].ssl_file == "*.example.com"
@@ -386,6 +396,7 @@ def test_fresh_wildcard_is_preferred_over_existing_specific_cert(webserver_for_e
         patch.object(webserver.ssl_processor.renewal_manager, "update_watch_domains") as mock_update_watch_domains,
     ):
         webserver.ssl_processor.process_ssl_certificates(hosts)
+        _wait_for(lambda: mock_update_watch_domains.called)
 
     assert hosts[0].ssl_file == wildcard
     assert hosts[1].ssl_file == wildcard
@@ -410,6 +421,7 @@ def test_wildcard_near_expiry_is_not_preferred(webserver_for_error_tests):
         patch.object(webserver.ssl_processor.renewal_manager, "update_watch_domains") as mock_update_watch_domains,
     ):
         webserver.ssl_processor.process_ssl_certificates(hosts)
+        _wait_for(lambda: mock_update_watch_domains.called)
 
     assert hosts[0].ssl_file == "*.example.com"
     assert hosts[1].ssl_file == "*.example.com"
@@ -456,6 +468,7 @@ def test_initial_failure_for_existing_cert_delegates_retry_to_renewal_manager(we
         patch.object(processor.renewal_manager, "update_watch_domains") as mock_update_watch_domains,
     ):
         processor.process_ssl_certificates([Host(hostname=hostname, port=443, scheme={"https"})])
+        _wait_for(lambda: mock_update_watch_domains.called)
 
     mock_obtain.assert_not_called()
     mock_update_watch_domains.assert_called_once_with([hostname])
@@ -481,6 +494,7 @@ def test_failed_wildcard_with_existing_cert_gets_concrete_individual_cert(webser
         patch.object(processor.renewal_manager, "update_watch_domains") as mock_update_watch_domains,
     ):
         webserver.ssl_processor.process_ssl_certificates(hosts)
+        _wait_for(lambda: mock_update_watch_domains.called)
 
     assert hosts[0].ssl_file == wildcard
     assert hosts[1].ssl_file == wildcard
@@ -515,7 +529,15 @@ def test_stale_wildcard_switches_to_specific_cert_after_successful_renewal(webse
     with (
         patch.object(processor.key_store, "find_key_and_cert_by_domain", side_effect=find_cert),
         patch.object(processor.renewal_manager, "update_watch_domains", side_effect=update_watch_domains),
+        patch.object(webserver, "enqueue_reload") as mock_enqueue_reload,
     ):
+        webserver.ssl_processor.process_ssl_certificates(hosts)
+        # nginx keeps the stale wildcard until the renewal thread has the specific certificate on disk.
+        assert hosts[0].ssl_file == wildcard
+        assert hosts[1].ssl_file == wildcard
+
+        _wait_for(lambda: mock_enqueue_reload.called)
+        mock_enqueue_reload.assert_called_once_with(force=True)
         webserver.ssl_processor.process_ssl_certificates(hosts)
 
     assert hosts[0].ssl_file == wildcard
@@ -544,6 +566,7 @@ def test_failed_wildcard_expiring_within_48h_triggers_individual_dependent_issua
         patch.object(processor.renewal_manager, "update_watch_domains") as mock_update_watch_domains,
     ):
         processor.process_ssl_certificates(hosts)
+        _wait_for(lambda: mock_update_watch_domains.called)
 
     assert hosts[0].ssl_file == wildcard
     assert hosts[1].ssl_file == wildcard

@@ -7,7 +7,7 @@ import threading  # Re-adding threading for start_background
 import traceback
 import time
 from typing import TypedDict
-from urllib.parse import urlparse
+from nginx_proxy.certapi_config import load_certapi_config
 
 import docker
 from docker import DockerClient
@@ -90,29 +90,11 @@ class NginxProxyApp:
         """
         Load application configuration from environment variables.
         """
-        certapi_url = os.getenv("CERTAPI_URL", "").strip()
-        certapi = None
-
-        if certapi_url:
-            parsed = urlparse(certapi_url)
-            if parsed.scheme not in ("http", "https"):
-                print("[ERROR] CERTAPI_URL must start with http:// or https://", file=sys.stderr)
-                sys.exit(1)
-            if not parsed.hostname:
-                print("[ERROR] CERTAPI_URL must include a hostname", file=sys.stderr)
-                sys.exit(1)
-            port = parsed.port
-            if port is None:
-                port = 443 if parsed.scheme == "https" else 80
-
-            endpoint_host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
-            certapi = {
-                "url": certapi_url,
-                "host": parsed.hostname,
-                "scheme": parsed.scheme,
-                "port": port,
-                "endpoint": f"{endpoint_host}:{port}",
-            }
+        try:
+            certapi = load_certapi_config()
+        except ValueError as error:
+            print(f"[ERROR] {error}", file=sys.stderr)
+            sys.exit(1)
 
         wellknown_path = os.getenv("WELLKNOWN_PATH", "/.well-known/acme-challenge/").strip()
         # Ensure wellknown_path starts with / and ends with /

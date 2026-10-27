@@ -1,3 +1,4 @@
+import sys
 import threading
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
@@ -40,10 +41,15 @@ class SslCertificateProcessor:
         )
         self._status_rows: List[Tuple[str, str, Optional[datetime]]] = []
         self._last_logged_status: Optional[Tuple] = None
-        # The renewal worker may invoke the callback repeatedly (once a second) while a renewal pass is
-        # still in flight on the reload thread. Only one forced reload is queued until that reload has run.
-        self._renewal_reload_lock = threading.Lock()
-        self._renewal_reload_pending = False
+        # Certificate issuance and renewal never run on the reload thread. Rendering picks whatever is on
+        # disk (expired certificates included) so nginx is reloaded right away, and only publishes the
+        # https domain set here. The renewal thread works through the latest published set and forces a
+        # reload once the certificate files nginx would use have actually changed.
+        self._renewal_lock = threading.Condition()
+        self._renewal_domains: Optional[List[str]] = None
+        self._renewal_requested = False
+        self._renewal_thread: Optional[threading.Thread] = None
+        self._renewal_running = False
         # Expiry of every certificate file seen in the last pass, used to detect files replaced by a
         # renewal so that nginx is reloaded even when the rendered configuration text is unchanged.
         self._known_file_expiry: dict = {}
@@ -53,6 +59,13 @@ class SslCertificateProcessor:
             self.start()
 
     def start(self):
+        with self._renewal_lock:
+            if self._renewal_thread is None:
+                self._renewal_running = True
+                self._renewal_thread = threading.Thread(
+                    target=self._renewal_worker, name="SSL Refresh Thread", daemon=True
+                )
+                self._renewal_thread.start()
         self.renewal_manager.start()
         backend = f"certapi {self.certapi_url}" if self.use_certapi_server else "local ACME"
         print(
@@ -62,21 +75,51 @@ class SslCertificateProcessor:
         )
 
     def ssl_renewal_callback(self):
-        if self.server is None:
-            return
-        with self._renewal_reload_lock:
-            if self._renewal_reload_pending:
+        # certapi found a watched certificate due. Only flag it here: the renewal thread runs the pass and
+        # reloads nginx afterwards, once the files on disk have changed.
+        self._request_renewal_pass()
+
+    def _request_renewal_pass(self, domains: Optional[List[str]] = None):
+        with self._renewal_lock:
+            if domains is not None:
+                self._renewal_domains = domains
+            if self._renewal_domains is None:
                 return
-            self._renewal_reload_pending = True
-        print("[SSL Refresh Thread] Renewal due, requesting forced nginx reload")
+            self._renewal_requested = True
+            self._renewal_lock.notify_all()
+
+    def _renewal_worker(self):
+        while True:
+            with self._renewal_lock:
+                while self._renewal_running and not self._renewal_requested:
+                    self._renewal_lock.wait()
+                if not self._renewal_running:
+                    return
+                self._renewal_requested = False
+                domains = list(self._renewal_domains)
+            self.run_renewal_pass(domains)
+
+    def run_renewal_pass(self, domains: List[str]):
+        """Let certapi obtain or renew what is due for the domains, then reload nginx if certificate files changed."""
         try:
+            before = self._certificate_snapshot(domains)
+            self.renewal_manager.update_watch_domains(domains)
+            if self.server is None or self._certificate_snapshot(domains) == before:
+                return
+            print("[SSL Refresh Thread] Certificates changed on disk, requesting forced nginx reload")
             # Forced on purpose: a renewal replaces certificate file contents, not paths, so the rendered
-            # config is byte-identical and a plain reload would be skipped by the config diff.
+            # config may be byte-identical and a plain reload would be skipped by the config diff.
             self.server.enqueue_reload(force=True)
-        except Exception:
-            with self._renewal_reload_lock:
-                self._renewal_reload_pending = False
-            raise
+        except Exception as e:  # a failed pass must not kill the renewal thread
+            print(f"[SSL Refresh Thread] Renewal pass failed: {e.__class__.__name__}: {e}", file=sys.stderr)
+
+    def _certificate_snapshot(self, domains: List[str]) -> dict:
+        """Certificate file and expiry nginx would use for each domain right now."""
+        snapshot = {}
+        for domain in domains:
+            ssl_file = self._select_ssl_file(domain)
+            snapshot[domain] = (ssl_file, self._certificate_expiry(ssl_file))
+        return snapshot
 
     def _find_certificate_for_domain(self, domain: str) -> None | Tuple[str, Key, List[Certificate]]:
         if hasattr(self.key_store, "find_key_and_cert_covering_domain"):
@@ -117,21 +160,21 @@ class SslCertificateProcessor:
             return False
         return not self._has_fresh_wildcard_certificate(host.hostname)
 
-    def _select_ssl_file(self, host: Host) -> str:
-        if not host.hostname.startswith("*."):
-            wildcard = self.wildcard_domain_name(host.hostname)
+    def _select_ssl_file(self, hostname: str) -> str:
+        if not hostname.startswith("*."):
+            wildcard = self.wildcard_domain_name(hostname)
             if wildcard is not None and self.is_certificate_fresh(wildcard):
                 return wildcard
 
-        result = self._find_certificate_for_domain(host.hostname)
+        result = self._find_certificate_for_domain(hostname)
         if result is not None:
             return result[0]
 
-        wildcard = self.wildcard_domain_name(host.hostname)
+        wildcard = self.wildcard_domain_name(hostname)
         if wildcard is not None and self.has_certificate(wildcard):
             return wildcard
 
-        return host.hostname + ".selfsigned"
+        return hostname + ".selfsigned"
 
     def process_ssl_certificates(self, hosts: List[Host], update_watch_domains: bool = True):
         if not hosts:
@@ -144,18 +187,11 @@ class SslCertificateProcessor:
         for host in secured_hosts:
             self._prepare_host_for_ssl(host)
 
-        secured_domains = sorted({host.hostname for host in secured_hosts})
-        if update_watch_domains:
-            try:
-                self.renewal_manager.update_watch_domains(secured_domains)
-            finally:
-                with self._renewal_reload_lock:
-                    self._renewal_reload_pending = False
-
         for host in secured_hosts:
-            host.ssl_file = self._select_ssl_file(host)
+            host.ssl_file = self._select_ssl_file(host.hostname)
 
         if update_watch_domains:
+            self._request_renewal_pass(sorted({host.hostname for host in secured_hosts}))
             self.log_certificate_status(secured_hosts)
             self._detect_certificate_changes()
 
@@ -311,4 +347,7 @@ class SslCertificateProcessor:
         return None
 
     def shutdown(self):
+        with self._renewal_lock:
+            self._renewal_running = False
+            self._renewal_lock.notify_all()
         self.renewal_manager.stop()

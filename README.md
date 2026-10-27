@@ -87,7 +87,7 @@ Control the default behavior of `nginx-proxy`:
 | `ENABLE_IPV6` | `false` | Enable IPv6 support on nginx. |
 | `DOCKER_SWARM` | `ignore` | Controls Docker Swarm discovery. Supported values are `ignore`, `exclude`, `enable`, `prefer-local`, and `strict`; see [Docker Swarm Support](#docker-swarm-support-preview). |
 | `SWARM_DOCKER_HOST` | - | URL of the Swarm manager socket (e.g., `tcp://manager:2375`). |
-| `CERTAPI_URL` | - | External Certificate API URL. Must start with `http://` or `https://`. |
+| `CERTAPI_URL` | - | External Certificate API origin, e.g. `http://certapi:8080` or `https://certapi.example.com`. Paths, query strings, fragments, and embedded credentials are not supported. |
 | `CERTAPI_BATCH_DOMAINS` | `true` | When using `CERTAPI_URL`, request safe domain batching (`batch_domains=true`) to avoid recursive domain-order errors. |
 | `NGINX_RESOLVER` | `/etc/resolv.conf` nameservers | Resolver used by nginx for runtime DNS lookups when proxying ACME challenges to `CERTAPI_URL`. When no resolver is detected or configured, nginx renders the literal `CERTAPI_URL` in `proxy_pass` so startup fails visibly if that host cannot be resolved. Set this explicitly if automatic resolver detection is not correct for your network mode. |
 | `CHALLENGE_DIR` | `/etc/nginx/challenges/` | Base directory for acme challenge store, when requesting certificates with acme. `.well-known/acme-challenge` folder lives inside this.|
@@ -223,6 +223,8 @@ disappear.
 2. Map `/etc/nginx/ssl` and `/etc/nginx/challenges`.
 3. Set `VIRTUAL_HOST` to start with `https://` in your containers.
 
+nginx never waits for certificates. On startup and on every reload it serves every host with the certificate already on disk, expired ones included, and a self-signed one when there is none yet. Issuance and renewal run on a background thread and nginx is reloaded again once the new certificate files are in place.
+
 ### Wildcard Certificates With Cloudflare DNS
 To issue wildcard certificates (e.g., `*.example.com`) or avoid exposing port 80, you can use DNS challenges via Cloudflare.
 
@@ -286,9 +288,17 @@ docker exec nginx-proxy verify www.example.com ## check if request routes back t
 
 docker exec nginx-proxy getssl www.example.com example.com www2.example.com # issue certificate
 
+docker exec nginx-proxy getssl --force www.example.com # skip the preliminary reachability check; ACME still validates
+
 docker exec nginx-proxy reload # rescan Docker state and reload nginx config
 
 ```
+
+`verify` checks every requested hostname by serving a temporary token and comparing the exact response from its HTTP port 80 challenge URL. With `CERTAPI_URL`, it calls CertAPI's `/api/verify`: the token is stored and checked by the CertAPI server through the public domain and nginx's challenge proxy. This requires CertAPI 1.1.17 or newer on both the proxy client and API server. Upgrade the CertAPI server before rebuilding/redeploying the proxy; older servers produce an explicit error. Verification does not request a certificate and does not use DNS-provider support as proof of HTTP routing. Wildcards cannot pass this HTTP check; wildcard issuance can still use a configured DNS solver.
+
+`verify` exits nonzero if any domain fails. `getssl` uses the same certificate backend as automatic issuance and renewal, enables self-verification by default, and exits nonzero for incomplete issuance or a failed nginx reload. Remote certificates, including reused and wildcard certificates, are saved into the proxy's local SSL directory before reload. `--force` skips the preliminary check in both local and CertAPI modes; it does not skip ACME validation.
+
+For local regression testing, `tests/test_certapi_routing.py` runs nginx and a temporary CertAPI service on loopback ports. It covers local challenges, HTTP and HTTPS CertAPI origins, runtime upstream routing, redirects, basic auth, unavailable backends, and certificate storage/reuse. Install nginx, pytest, flask, and flask-restx alongside the project dependencies to run it. Test certificates are signed by a temporary local CA.
 
 ## 🚀 Roadmap
 We are constantly improving `nginx-proxy` to make it the most robust and versatile zero-config reverse proxy solution. Here’s what’s coming next:

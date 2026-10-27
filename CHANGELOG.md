@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+- **Startup Blocked By Certificate Renewal**: nginx no longer returns 503 until due certificates are renewed. It starts with the certificates on disk (expired, or self-signed if missing), and a background thread renews them and reloads nginx once the files change, so Docker events no longer wait on ACME.
+- **ACME Challenges On Every Host**: The challenge location takes precedence (`^~`) and skips basic auth, and unavailable hosts return 503 only from `location /`, so challenges work behind basic auth, HTTPS redirects, or without a running backend. Challenges proxied to an HTTPS `CERTAPI_URL` send SNI.
+- **Certificate Commands**: With `CERTAPI_URL`, `verify` checks routing through CertAPI's `/api/verify` instead of only pinging the server. `getssl --force` also skips the local reachability check. Both exit nonzero on partial failure.
+- **CERTAPI_URL Validation**: Only an origin (`scheme://host[:port]`) is accepted; anything else fails at startup.
+
+### Dependencies
+- Requires `certapi>=1.1.17`.
+
+---
+
 ## v3.2.0
 
 ### Features
