@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v3.3.0
 
 ### Breaking
 - **CERTAPI_URL**: Must be an origin, `scheme://host[:port]`. A trailing `/`, `?` or `#` is dropped; a path, query, fragment, credentials or an invalid host name fails at startup.
