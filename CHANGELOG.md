@@ -1,5 +1,16 @@
 # Changelog
 
+## v3.3.1
+
+### Fixes
+- **Repeated Directives In One VIRTUAL_HOST**: A directive given more than once in the same `VIRTUAL_HOST` value is kept each time, in order. `allow 172.31.0.0/16; allow 10.0.0.0/8; deny all;` used to keep only the last `allow`, and repeated `proxy_set_header` or `add_header` lost all but the last. `client_max_body_size` and the proxy timeouts still resolve to the largest value.
+
+### Dependencies
+- **Base Image**: nginx 1.31.9 (was 1.31.8), Python 3.13.18, Alpine 3.24.
+- `pytest` 9.2.0. Runtime dependencies and the GitHub Actions are already on their latest releases.
+
+---
+
 ## v3.3.0
 
 ### Breaking
