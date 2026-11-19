@@ -403,6 +403,23 @@ class TestVirtualHostProcessorWithBackendTarget:
         assert "proxy_set_header X-Two two" in injections
         assert "key=proxy_set_header" not in output
 
+    def test_repeated_directives_in_one_virtual_host_are_preserved_in_order(self):
+        backend = BackendTarget(
+            id="acl-one",
+            name="acl-one",
+            env={
+                "VIRTUAL_HOST": "acl.example.com; allow 172.31.0.0/16; allow 10.0.0.0/8; deny all;"
+                " client_max_body_size 1m; client_max_body_size 5m"
+            },
+            network_settings={"shared": {"NetworkID": "shared-net-id", "IPAddress": "10.0.0.11"}},
+        )
+
+        config = process_virtual_hosts(backend, {"shared-net-id"})
+        injections = config.getHost("acl.example.com").locations["/"].extras.get("injected", [])
+        assert injections[:3] == ["allow 172.31.0.0/16", "allow 10.0.0.0/8", "deny all"]
+        assert "client_max_body_size 5m" in injections
+        assert "client_max_body_size 1m" not in injections
+
     def test_process_virtual_hosts_no_virtual_host(self):
         bt = BackendTarget(
             id="no-host-id",
@@ -642,25 +659,29 @@ class TestVirtualHostProcessorWithBackendTarget:
     def test_parse_host_entry_with_extras(self):
         h, loc, c, extras = _parse_host_entry("example.com; client_max_body_size 100M; proxy_read_timeout 120")
         assert h.hostname == "example.com"
-        assert extras["client_max_body_size"] == "100M"
-        assert extras["proxy_read_timeout"] == "120"
+        assert ("client_max_body_size", "100M") in extras
+        assert ("proxy_read_timeout", "120") in extras
 
     def test_parse_host_entry_with_equals_extra_syntax(self):
         h, loc, c, extras = _parse_host_entry("example.com; client_max_body_size=2g; proxy_read_timeout=120")
         assert h.hostname == "example.com"
-        assert extras["client_max_body_size"] == "2g"
-        assert extras["proxy_read_timeout"] == "120"
+        assert ("client_max_body_size", "2g") in extras
+        assert ("proxy_read_timeout", "120") in extras
 
     def test_parse_host_entry_with_spaced_equals_extra_syntax(self):
         h, loc, c, extras = _parse_host_entry("example.com; client_max_body_size = 2g; proxy_read_timeout = 120")
         assert h.hostname == "example.com"
-        assert extras["client_max_body_size"] == "2g"
-        assert extras["proxy_read_timeout"] == "120"
+        assert ("client_max_body_size", "2g") in extras
+        assert ("proxy_read_timeout", "120") in extras
 
     def test_parse_host_entry_preserves_equals_after_whitespace_splitter(self):
         h, loc, c, extras = _parse_host_entry("example.com; proxy_set_header Cookie=session=a=b")
         assert h.hostname == "example.com"
-        assert extras["proxy_set_header"] == "Cookie=session=a=b"
+        assert ("proxy_set_header", "Cookie=session=a=b") in extras
+
+    def test_parse_host_entry_keeps_repeated_directives(self):
+        h, loc, c, extras = _parse_host_entry("example.com; allow 172.31.0.0/16; allow 10.0.0.0/8; deny all;")
+        assert extras == [("allow", "172.31.0.0/16"), ("allow", "10.0.0.0/8"), ("deny", "all")]
 
     def test_remove_backend_cleans_only_its_injected_directives(self):
         known_networks = {"shared-net-id"}

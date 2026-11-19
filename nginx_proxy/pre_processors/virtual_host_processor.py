@@ -98,7 +98,7 @@ def process_virtual_hosts(backend: BackendTarget, known_networks: set) -> ProxyC
                 host.add_container(location, proxied_backend, websocket=websocket, http=http)
                 if len(extras):
                     injections = []
-                    for k, v in extras.items():
+                    for k, v in extras:
                         if v is None:
                             injections.append(k)
                         else:
@@ -151,16 +151,17 @@ def _parse_host_entry(entry_string: str):
     """
 
     :param entry_string:
-    :return: (dict,dict)
+    :return: (Host, str, BackendTarget, list of (directive, value))
     """
     configs = entry_string.split(";", 1)
-    extras = {}
+    # A list, not a dict: directives such as allow, deny or proxy_set_header can repeat.
+    extras = []
     if len(configs) > 1:
         entry_string = configs[0]
         for x in configs[1].split(";"):
             k, v = _parse_extra_directive(x)
             if k:
-                extras[k] = v
+                extras.append((k, v))
     host_list = entry_string.strip().split("->")
     external, internal = host_list if len(host_list) == 2 else (host_list[0], "")
     external, internal = (split_url(external), split_url(internal))
