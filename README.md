@@ -270,6 +270,10 @@ Set `PROXY_BASIC_AUTH` environment variable.
 
 - **Per-Host:** `example.com -> user:password`
 - **Per-Path:** `example.com/admin -> user:password`
+- **Per-Scheme or Port:** `https://example.com -> user:password`, `example.com:8443 -> user:password`
+
+Without a scheme or port, the credentials apply to every port the host is served on. For an https-only
+`VIRTUAL_HOST`, where http only redirects, `http://` or `:80` entries apply to the https server.
 
 **Note:** Passwords should not be base64 encoded; the proxy handles hashing.
 
