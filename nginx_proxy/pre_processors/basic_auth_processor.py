@@ -39,7 +39,7 @@ def process_basic_auth(backend: BackendTarget, environments: map, vhost_map: Dic
             if len(host_list) == 2:
                 url = host_list[0]
                 keys = get_auth_map(host_list[1])
-                auth_list.append((Url.parse(url, default_location="/", default_port=80), keys))
+                auth_list.append((Url.parse(url, default_location="/"), keys))
             elif len(host_list) == 1:
                 keys = get_auth_map(auth_entry)
                 if len(keys):
@@ -55,17 +55,20 @@ def process_basic_auth(backend: BackendTarget, environments: map, vhost_map: Dic
                         update_security()
             elif basic_auth_host.hostname in vhost_map:
                 port_map = vhost_map[basic_auth_host.hostname]
-                if basic_auth_host.port in port_map:
-                    host = port_map[basic_auth_host.port]
-                    update_security()
+                ports = _matching_ports(basic_auth_host, port_map)
+                if ports:
+                    for port in ports:
+                        host = port_map[port]
+                        update_security()
                 else:
                     print(
                         "Basic Auth for "
-                        + basic_auth_host.hostname
-                        + ":"
-                        + str(basic_auth_host.port)
-                        + " in container with "
-                        + str(list(vhost_map.keys()))
+                        + str(basic_auth_host)
+                        + " ignored: no matching vhost port in container "
+                        + backend.name
+                        + " (available ports: "
+                        + ", ".join(str(p) for p in sorted(port_map.keys()))
+                        + ")"
                     )
             else:
                 print(
@@ -74,3 +77,38 @@ def process_basic_auth(backend: BackendTarget, environments: map, vhost_map: Dic
                     + "+ in PROXY_BASIC_AUTH in container: "
                     + backend.name
                 )
+
+
+def _matching_ports(auth_url: Url, port_map: Dict[int, Host]) -> List[int]:
+    """
+    Resolve which vhost ports a PROXY_BASIC_AUTH entry applies to.
+
+    - explicit port (example.com:8443): only that port
+    - scheme without port (https://example.com): the scheme's default port
+    - neither (example.com): every port the hostname is served on, so that
+      an https-only VIRTUAL_HOST is protected on 443
+    - port 80 on a host that only serves 443 (http is redirected): 443
+    """
+    if auth_url.port is not None:
+        try:
+            port = int(auth_url.port)
+        except (TypeError, ValueError):
+            return []
+    else:
+        # Url.parse yields the scheme as a str when present, otherwise an empty list.
+        scheme = auth_url.scheme
+        schemes = {scheme.lower()} if isinstance(scheme, str) else {s.lower() for s in scheme or []}
+        if schemes & {"https", "wss"}:
+            port = 443
+        elif schemes & {"http", "ws"}:
+            port = 80
+        else:
+            return list(port_map.keys())
+
+    if port in port_map:
+        return [port]
+    # Port 80 of an https-only vhost is just a redirect to 443: protect the
+    # secure vhost the request ends up on.
+    if port == 80 and 443 in port_map:
+        return [443]
+    return []

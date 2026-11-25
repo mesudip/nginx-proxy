@@ -116,6 +116,7 @@ To expose a container, set the `VIRTUAL_HOST*` environment variable. The contain
 
 **Note:** Directives separated by `;` are injected into the Nginx `location` block.
 Example: `VIRTUAL_HOST=site.com; proxy_read_timeout 900;`
+A directive can repeat and keeps its order, e.g. `VIRTUAL_HOST=site.com; allow 10.0.0.0/8; allow 172.16.0.0/12; deny all;`.
 
 `nginx-proxy` always reserves `/.well-known/acme-challenge/` on HTTP port 80 for ACME HTTP-01 validation. Other `/.well-known/...` routes are supported normally through path-based `VIRTUAL_HOST` entries because Nginx will prefer the more specific ACME location only for challenge requests.
 
@@ -269,6 +270,10 @@ Set `PROXY_BASIC_AUTH` environment variable.
 
 - **Per-Host:** `example.com -> user:password`
 - **Per-Path:** `example.com/admin -> user:password`
+- **Per-Scheme or Port:** `https://example.com -> user:password`, `example.com:8443 -> user:password`
+
+Without a scheme or port, the credentials apply to every port the host is served on. For an https-only
+`VIRTUAL_HOST`, where http only redirects, `http://` or `:80` entries apply to the https server.
 
 **Note:** Passwords should not be base64 encoded; the proxy handles hashing.
 

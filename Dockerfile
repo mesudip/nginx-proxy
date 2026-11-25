@@ -1,5 +1,5 @@
 # This provides nginx and python together in a container
-FROM ghcr.io/mesudip/python-nginx:py3.13.18-nginx1.31.8-alpine3.24
+FROM ghcr.io/mesudip/python-nginx:py3.13.18-nginx1.31.10-alpine3.24
 
 RUN pip install --upgrade pip
 
