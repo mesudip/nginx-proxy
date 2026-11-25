@@ -684,3 +684,19 @@ def test_webserver_restart_container_extras_do_not_duplicate_servers(
         if active_container is not None:
             active_container.remove(force=True)
             time.sleep(0.5)
+
+
+@pytest.mark.parametrize(
+    "auth_entry",
+    ["auth.example.com -> admin:secret-password", "https://auth.example.com -> admin:secret-password"],
+)
+def test_basic_auth_is_rendered_on_https_only_host(docker_client: DockerTestClient, nginx: DummyNginx, auth_entry):
+    hostname = "auth.example.com"
+    env = {"VIRTUAL_HOST": f"https://{hostname}", "PROXY_BASIC_AUTH": auth_entry}
+    docker_client.containers.run("nginx:alpine", name="auth_container", environment=env, network="frontend")
+
+    servers = expect_servers(nginx, hostname, 2)
+
+    https_server = next(s for s in servers if "443" in s.listen)
+    assert https_server.block.get_directives("auth_basic"), str(https_server.block)
+    assert https_server.block.get_directives("auth_basic_user_file"), str(https_server.block)
